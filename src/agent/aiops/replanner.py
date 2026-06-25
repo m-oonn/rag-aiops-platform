@@ -115,8 +115,8 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
         final = result.response
         logger.info(f"[replanner] 报告生成完成,长度 {len(final)}")
         return {"response": final}
-    except Exception as e:
-        logger.error(f"[replanner] 生成报告失败,用兜底: {e}")
+    except Exception:
+        logger.exception("[replanner] 生成报告失败,用兜底")
         steps_md = "\n".join(f"- {s}: {str(r)[:200]}" for s, r in past_steps) or "无"
         return {
             "response": dedent(

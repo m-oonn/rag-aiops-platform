@@ -112,6 +112,6 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         logger.info(f"[planner] 计划已生成,共 {len(steps)} 步")
         return {"plan": steps}
 
-    except Exception as e:
-        logger.error(f"[planner] 生成计划失败,用默认计划: {e}", exc_info=True)
+    except Exception:
+        logger.exception("[planner] 生成计划失败,用默认计划")
         return {"plan": ["收集相关指标和日志", "分析数据定位问题", "生成诊断报告"]}
