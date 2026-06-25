@@ -186,6 +186,6 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
         # continue
         return {}
 
-    except Exception as e:
-        logger.error(f"[replanner] 评估失败,继续原计划: {e}")
+    except Exception:
+        logger.exception("[replanner] 评估失败,继续原计划")
         return {}

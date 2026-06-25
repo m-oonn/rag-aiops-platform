@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     #   qwen-max / deepseek-v3 均支持 function calling;
     #   deepseek-chat 在阿里不存在(404,那是 DeepSeek 自家平台名);
     #   deepseek-r1 是推理模型,不返回 tool_calls,严禁用于 Agent。
-    AGENT_MODEL: str = "deepseek-v3"        # Agent 主推理模型(改成 qwen-max 即可一键切回通义)
+    AGENT_MODEL: str = "qwen-max"             # Agent 主推理模型(qwen-max 通义旗舰,function calling 稳定)
     AGENT_MODEL_SIMPLE: str = "qwen-turbo"  # 简单意图(闲聊/分类/路由)降本用,Phase 3 Supervisor 启用
 
     MILVUS_HOST: str = "localhost"
