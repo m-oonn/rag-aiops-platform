@@ -8,7 +8,7 @@ if str(project_root) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.settings import settings
-from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage
+from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage, aiops
 from src.database.sql_session import engine, Base
 
 # Create Tables
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(monitor.router, prefix=settings.API_PREFIX + "/monitor", tags=["Monitor"])
     app.include_router(storage.router, prefix=settings.API_PREFIX + "/storage", tags=["MinIO Storage"])
     app.include_router(chat.router, prefix=settings.API_PREFIX + "/chat", tags=["RAG Chat"])
+    app.include_router(aiops.router, prefix=settings.API_PREFIX + "/aiops", tags=["AIOps Agent"])
     app.include_router(evaluation.router, prefix=settings.API_PREFIX + "/evaluations", tags=["Evaluation"])
     app.include_router(loadfile.router, prefix=settings.API_PREFIX + "/upload", tags=["File Management"]) # Legacy
 
