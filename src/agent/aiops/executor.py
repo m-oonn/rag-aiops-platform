@@ -1,10 +1,9 @@
 """Executor 节点:执行计划中的下一个步骤。
 
-用 LangGraph 的 ToolNode 自动处理工具调用:
-  1. LLM bind_tools 后决定是否调工具;
-  2. 有 tool_calls 则 ToolNode 执行,结果回填再让 LLM 总结;
-  3. 无 tool_calls 则直接用 LLM 输出。
-执行完移除该步、把 (步骤, 结果) 追加进 past_steps。
+设计取舍:
+  - 无工具时让 LLM 基于现有信息直接分析,不反问用户(反问在 demo 里是坏体验);
+  - 有工具时 bind_tools + ToolNode 自动工具调用;
+  - 执行完移除该步、把 (步骤, 结果) 追加进 past_steps。
 """
 
 from typing import Any, Dict
@@ -17,18 +16,14 @@ from src.agent.aiops.tools import load_agent_tools
 from src.agent.aiops_llm import create_agent_llm
 from src.utils.logger import logger
 
-_EXECUTOR_SYSTEM = """你是运维诊断执行器,负责执行单个诊断步骤。
+_EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步骤。
 
-对每个步骤:
+原则:
 1. 理解步骤目标;
-2. 若已指定工具就用指定工具,否则选合适工具;
-3. 调用工具获取真实数据;
-4. 返回执行结果。
-
-注意:
-- 工具调用失败要说明原因,不要编造数据;
-- 只返回实际获取的信息,结果要清晰准确;
-- 专注当前步骤,不考虑其他任务。"""
+2. 有可用工具就调用工具获取真实数据;无工具则基于你的运维知识给出合理分析;
+3. 结果要具体可操作,不要反问用户或要求提供更多信息;
+4. 只返回实际获取的信息或基于知识的分析,不要编造数据;
+5. 专注当前步骤,不考虑其他任务。"""
 
 
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
