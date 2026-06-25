@@ -102,27 +102,27 @@ async def main() -> int:
     # ── 5. 图流式执行 ──
     print("\n── 5. 图流式执行(完整循环) ──")
     count = 0
-    async for node_name, node_output in aiops_service.graph.astream(
+    graph_config = {"configurable": {"thread_id": "verify"}}
+    async for event_chunk in aiops_service.graph.astream(
         input={
             "input": "CPU 97% 持续 10 分钟,诊断并出报告",
             "plan": [],
             "past_steps": [],
             "response": "",
         },
-        config={"configurable": {"thread_id": "verify"}},
+        config=graph_config,
         stream_mode="updates",
     ):
-        for node, out in node_output.items():
+        for node_name, node_output in event_chunk.items():
             count += 1
-            otype = out.get("type", "?") if isinstance(out, dict) else "raw"
+            otype = node_output.get("type", "?") if isinstance(node_output, dict) else "raw"
             msg = (
-                out.get("message", "")[:80]
-                if isinstance(out, dict)
-                else str(out)[:80]
+                node_output.get("message", "")[:80]
+                if isinstance(node_output, dict)
+                else str(node_output)[:80]
             )
-            print(f"  [{node}] {otype}: {msg}")
+            print(f"  [{node_name}] {otype}: {msg}")
         if count > 30:
-            print("  ...(截断)")
             break
     print(f"  事件数: {count},  ✅ 图流式执行正常")
 
