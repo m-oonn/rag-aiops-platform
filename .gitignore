@@ -1,0 +1,37 @@
+# ─── Secrets (NEVER commit) ───
+.env
+*.key
+*.pem
+
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── Virtualenv / deps ───
+node_modules/
+
+# ─── Data & generated artifacts ───
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── IDE / OS ───
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ─── Build ───
+dist/
+build/
+*.log
