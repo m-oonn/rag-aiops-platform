@@ -2,14 +2,18 @@
 
 设计取舍:
   - 无工具时让 LLM 基于现有信息直接分析,不反问用户(反问在 demo 里是坏体验);
-  - 有工具时 bind_tools + ToolNode 自动工具调用;
+  - 有工具时 bind_tools + 手动工具执行(绕过 ToolNode 与 langchain-mcp-adapters
+    的配置键兼容问题);
   - 执行完移除该步、把 (步骤, 结果) 追加进 past_steps。
+
+注意:langchain-mcp-adapters 0.2.1 的 MCP 工具(StructuredTool)不含 config 属性,
+而 langgraph-prebuilt>=1.1 的 ToolNode 强制要求 config → Missing required
+config key 'N/A' for 'tools'。故手写工具调用,不依赖 ToolNode。
 """
 
 from typing import Any, Dict
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tools import load_agent_tools
@@ -24,6 +28,35 @@ _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步
 3. 结果要具体可操作,不要反问用户或要求提供更多信息;
 4. 只返回实际获取的信息或基于知识的分析,不要编造数据;
 5. 专注当前步骤,不考虑其他任务。"""
+
+
+def _build_tool_map(tools: list) -> dict[str, Any]:
+    """把工具列表建成 {name: tool} 字典,便于按 name 查找。"""
+    return {t.name: t for t in tools}
+
+
+async def _run_tool_calls(tool_calls: list, tool_map: dict) -> list:
+    """手动执行多个工具调用,返回 ToolMessage 列表。"""
+    tool_messages = []
+    for tc in tool_calls:
+        tool_name = tc.get("name", "")
+        tool_args = tc.get("args", {})
+        tool_id = tc.get("id", "")
+        tool = tool_map.get(tool_name)
+
+        if not tool:
+            content = f"工具 '{tool_name}' 不存在,跳过"
+        else:
+            try:
+                result = await tool.ainvoke(tool_args)
+                content = str(result) if not isinstance(result, str) else result
+            except Exception as e:
+                content = f"工具 '{tool_name}' 调用失败: {e}"
+
+        tool_messages.append(ToolMessage(content=content, tool_call_id=tool_id))
+        logger.info(f"[executor] 工具 '{tool_name}' 调用完成,结果长度 {len(content)}")
+
+    return tool_messages
 
 
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
@@ -42,6 +75,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         if err:
             logger.warning(f"[executor] MCP 工具加载失败: {err}")
 
+        tool_map = _build_tool_map(tools)
         llm = create_agent_llm(temperature=0)
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         messages = [
@@ -50,18 +84,20 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         ]
 
         llm_response = await llm_with_tools.ainvoke(messages)
+        tool_calls = getattr(llm_response, "tool_calls", None)
 
-        if getattr(llm_response, "tool_calls", None):
-            logger.info(f"[executor] 检测到 {len(llm_response.tool_calls)} 个工具调用")
-            tool_node = ToolNode(tools)
+        if tool_calls:
+            logger.info(f"[executor] 检测到 {len(tool_calls)} 个工具调用")
+            # 手动执行工具(绕过 ToolNode)
             messages.append(llm_response)
-            tool_result = await tool_node.ainvoke({"messages": messages})
-            messages.extend(tool_result["messages"])
+            tool_msgs = await _run_tool_calls(tool_calls, tool_map)
+            messages.extend(tool_msgs)
+            # 工具结果回填给 LLM 生成最终答案
             final = await llm_with_tools.ainvoke(messages)
-            result = final.content
+            result = final.content if hasattr(final, "content") else str(final)
         else:
             logger.info("[executor] 未调用工具,直接返回 LLM 输出")
-            result = llm_response.content
+            result = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
 
         result = result if isinstance(result, str) else str(result)
         logger.info(f"[executor] 步骤完成,结果长度 {len(result)}")
