@@ -334,7 +334,9 @@ def list_documents(
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge Base not found")
-    
+    if kb.owner_id != current_user.id and not kb.is_public:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     return db.query(KnowledgeDocument).filter(KnowledgeDocument.kb_id == kb_id).all()
 
 @router.post("/documents/{doc_id}/generate-qa", response_model=List[QAPairOut])

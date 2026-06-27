@@ -10,11 +10,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.settings import settings
 from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage, aiops
 from src.database.sql_session import engine, Base
+from src.utils.logger import logger
 
 # Create Tables
 Base.metadata.create_all(bind=engine)
 
+
+def _validate_secrets() -> None:
+    if not settings.SECRET_KEY:
+        logger.critical("SECRET_KEY 未设置!请在 .env 中填入 SECRET_KEY=<强随机字符串>")
+        raise RuntimeError("SECRET_KEY 必须设置,不能为空")
+    if settings.SECRET_KEY == "unsafe-secret-key":
+        logger.critical("SECRET_KEY 仍为不安全默认值!请填入强随机字符串")
+        raise RuntimeError("请修改 .env 中的 SECRET_KEY")
+
+
+def _build_cors_origins() -> list[str]:
+    if settings.APP_ENV == "production":
+        logger.warning("CORS 不允许通配;如有多前端域名请在 .env 中配置 ALLOWED_ORIGINS")
+        return []
+    return ["*"]
+
 def create_app() -> FastAPI:
+    _validate_secrets()
     app = FastAPI(
         title=settings.APP_NAME,
         version="1.0.0",
@@ -24,7 +42,7 @@ def create_app() -> FastAPI:
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_build_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

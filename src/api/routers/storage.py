@@ -2,15 +2,22 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from typing import List, Optional
 from src.services.storage import storage_service
 from src.utils.logger import logger
+from src.api.dependencies import get_current_user
+from src.database.models import User
 from pydantic import BaseModel
 
 router = APIRouter()
 
+
 class BatchDeleteRequest(BaseModel):
     object_names: List[str]
 
+
 @router.get("/files")
-async def list_files(prefix: str = "", sort_by: str = "last_modified", order: str = "desc", search_query: str = ""):
+async def list_files(
+    prefix: str = "", sort_by: str = "last_modified", order: str = "desc",
+    search_query: str = "", current_user: User = Depends(get_current_user),
+):
     """List files in the MinIO bucket."""
     try:
         files = storage_service.list_files(prefix, sort_by, order, search_query)
@@ -20,7 +27,7 @@ async def list_files(prefix: str = "", sort_by: str = "last_modified", order: st
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/download/{object_name:path}")
-async def download_file(object_name: str):
+async def download_file(object_name: str, current_user: User = Depends(get_current_user)):
     """Download a file from MinIO."""
     try:
         response = storage_service.get_file_stream(object_name)
@@ -52,7 +59,7 @@ async def download_file(object_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/preview/{object_name:path}")
-async def preview_file(object_name: str):
+async def preview_file(object_name: str, current_user: User = Depends(get_current_user)):
     """Preview a file from MinIO (inline)."""
     try:
         import tempfile
@@ -87,7 +94,10 @@ async def preview_file(object_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...), prefix: str = ""):
+async def upload_file(
+    file: UploadFile = File(...), prefix: str = "",
+    current_user: User = Depends(get_current_user),
+):
     """Upload a file to MinIO."""
     try:
         content = await file.read()
@@ -99,7 +109,9 @@ async def upload_file(file: UploadFile = File(...), prefix: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/batch-delete")
-async def batch_delete_files(request: BatchDeleteRequest):
+async def batch_delete_files(
+    request: BatchDeleteRequest, current_user: User = Depends(get_current_user),
+):
     """Batch delete files from MinIO."""
     try:
         storage_service.batch_delete_files(request.object_names)
@@ -109,7 +121,7 @@ async def batch_delete_files(request: BatchDeleteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/url/{object_name:path}")
-async def get_file_url(object_name: str):
+async def get_file_url(object_name: str, current_user: User = Depends(get_current_user)):
     """Get a presigned URL for a file."""
     url = storage_service.get_file_url(object_name)
     if not url:

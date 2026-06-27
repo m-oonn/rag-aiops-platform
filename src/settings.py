@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     PROCESSED_DIR: Path = BASE_DIR / "data" / "processed"
     VECTOR_DIR: Path = BASE_DIR / "data" / "vectors"
 
-    SECRET_KEY: str = "unsafe-secret-key"
+    SECRET_KEY: str = ""  # 必须从环境变量或 .env 填;留空则启动报错
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
     DASHSCOPE_API_KEY: Optional[str] = None
