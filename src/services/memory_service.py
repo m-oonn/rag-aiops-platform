@@ -5,12 +5,25 @@ from src.settings import settings
 from src.utils.logger import logger
 from src.database.vector_db import MilvusClient
 
+
+_redis_pool: redis.ConnectionPool | None = None
+
+
+def _get_redis() -> redis.Redis:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(settings.REDIS_URL)
+    return redis.Redis(connection_pool=_redis_pool)
+
 class MemorySystem:
     def __init__(self):
-        self.redis_client = redis.from_url(settings.REDIS_URL)
-        self.milvus_client = MilvusClient() # Use existing Milvus client for long term
+        self.milvus_client = MilvusClient()
         self.ttl = settings.SHORT_TERM_MEMORY_TTL
         self.history_limit = settings.MEMORY_HISTORY_LIMIT
+
+    @property
+    def redis_client(self):
+        return _get_redis()
 
     # --- Short Term Memory (Redis) ---
     
@@ -55,16 +68,9 @@ class MemorySystem:
         key = f"session:{session_id}:history"
         self.redis_client.delete(key)
 
-    # --- Long Term Memory (Milvus) ---
-    # Note: This is a simplified version using the existing Milvus setup
-    # In a full implementation, we might want a separate collection for "insights"
-
+    # 长期记忆接口预留;当前阶段未实现,待 Phase 3 补
     def add_long_term_memory(self, user_id: str, insight: str, vector: List[float]):
-        """Store important insights in Milvus for long-term retrieval."""
-        # For now, we'll reuse the rag_documents collection or a similar structure
-        # In a real system, you'd have a 'memory' collection
         pass
 
     def retrieve_long_term_memory(self, query_vector: List[float], top_k: int = 3) -> List[Dict[str, Any]]:
-        """Retrieve relevant long-term memories based on vector similarity."""
         return self.milvus_client.search(query_vector, top_k=top_k)
