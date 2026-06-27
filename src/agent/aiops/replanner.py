@@ -84,10 +84,37 @@ response_prompt = ChatPromptTemplate.from_messages(
 )
 
 
-def _format_steps(past_steps: list) -> str:
-    return "\n".join(
-        f"步骤: {step}\n结果: {str(result)[:_STEP_PREVIEW]}" for step, result in past_steps
-    )
+def _battlefield_summary(
+    input_text: str, past_steps: list, plan: list, max_steps: int, no_replan_after: int,
+) -> str:
+    """结构化战场摘要:不喂 raw past_steps,给 Replanner 一张"当前状态地图"。
+
+    对标 Manus todo.md 模式——Agent 自己维护一份持续更新的计划文件,推入最近的注意力窗口。
+    诊断场景专化:每条已执行步骤压缩为一行关键发现,附加硬限制提示。
+    """
+    done = len(past_steps)
+    remain = len(plan)
+
+    lines = [
+        "## 当前战场状态",
+        f"- 原始任务: {input_text[:200]}",
+        f"- 进度: 已执行 {done} 步, 剩余 {remain} 步 (上限 {max_steps} 步)",
+    ]
+    if done >= no_replan_after:
+        lines.append(f"- ⚠️ 已执行 {done} 步 >= {no_replan_after}, 禁止 replan, 只能 continue 或 respond")
+
+    for i, (step, result) in enumerate(past_steps, 1):
+        summary = str(result)[:200].replace("\n", " ")
+        lines.append(f"- [已完成 {i}] {step[:120]}")
+        lines.append(f"  结果摘要: {summary}")
+
+    if remain:
+        next_up = plan[0][:120]
+        lines.append(f"- 下一步: {next_up}")
+        if len(plan) > 1:
+            lines.append(f"- 之后还有 {len(plan) - 1} 步: {' → '.join(s[:40] for s in plan[1:4])}")
+
+    return "\n".join(lines)
 
 
 async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
@@ -153,14 +180,13 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
 
     llm = create_agent_llm(temperature=0)
     try:
+        summary = _battlefield_summary(input_text, past_steps, plan, MAX_STEPS, NO_REPLAN_AFTER)
         act = await ainvoke_structured(
             llm, Act, replanner_prompt,
             {
                 "messages": [
-                    ("user", f"原始任务: {input_text}"),
-                    ("user", f"已执行步骤:\n{_format_steps(past_steps)}"),
-                    ("user", f"剩余计划: {', '.join(plan)}"),
-                    ("user", f"提示: 已执行 {len(past_steps)} 步,优先考虑信息是否已足够 respond"),
+                    ("user", summary),
+                    ("user", "请根据以上战场状态决定下一步行动"),
                 ]
             }
         )
