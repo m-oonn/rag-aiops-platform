@@ -11,6 +11,7 @@
 config key 'N/A' for 'tools'。故手写工具调用,不依赖 ToolNode。
 """
 
+import time
 from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -29,10 +30,30 @@ _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步
 4. 只返回实际获取的信息或基于知识的分析,不要编造数据;
 5. 专注当前步骤,不考虑其他任务。"""
 
+_TOOLS_CACHE_TTL = 30.0  # 工具列表缓存过期时间(秒)
+_tools_cache: tuple[list, str | None] | None = None
+_tools_cache_at: float = 0.0
+
 
 def _build_tool_map(tools: list) -> dict[str, Any]:
     """把工具列表建成 {name: tool} 字典,便于按 name 查找。"""
     return {t.name: t for t in tools}
+
+
+async def _get_tools_cached() -> tuple[list, str | None]:
+    """获取工具列表,30s TTL 模块级缓存。"""
+    global _tools_cache, _tools_cache_at
+    now = time.monotonic()
+    if _tools_cache is not None and (now - _tools_cache_at) < _TOOLS_CACHE_TTL:
+        return _tools_cache
+    tools, err = await load_agent_tools()
+    if err:
+        logger.warning(f"[executor] MCP 工具加载失败: {err}")
+        _tools_cache = ([], err)
+    else:
+        _tools_cache = (tools, None)
+    _tools_cache_at = now
+    return _tools_cache
 
 
 async def _run_tool_calls(tool_calls: list, tool_map: dict) -> list:
@@ -71,9 +92,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
     logger.info(f"[executor] 当前步骤: {task}")
 
     try:
-        tools, err = await load_agent_tools()
-        if err:
-            logger.warning(f"[executor] MCP 工具加载失败: {err}")
+        tools, err = await _get_tools_cached()
 
         tool_map = _build_tool_map(tools)
         llm = create_agent_llm(temperature=0)
