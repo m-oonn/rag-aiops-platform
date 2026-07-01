@@ -35,3 +35,11 @@ Thumbs.db
 dist/
 build/
 *.log
+
+# ─── 私人材料(不公开到简历仓) ───
+learning/
+docs/毕设选题说明.md
+rag-agent-curried-acorn.md
+fix_documents_db.py
+docker_error*.png
+^
