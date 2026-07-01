@@ -12,15 +12,18 @@ class StorageService:
             secure=settings.MINIO_SECURE
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
-        self._ensure_bucket()
+        self._available = self._ensure_bucket()
 
-    def _ensure_bucket(self):
+    def _ensure_bucket(self) -> bool:
+        """确保 bucket 存在;MinIO 不可用时降级(返回 False,不阻断启动)。"""
         try:
             if not self.client.bucket_exists(self.bucket_name):
                 self.client.make_bucket(self.bucket_name)
                 logger.info(f"Created bucket: {self.bucket_name}")
+            return True
         except Exception as e:
-            logger.error(f"Error checking/creating bucket: {e}")
+            logger.warning(f"MinIO 不可用({settings.MINIO_ENDPOINT}),文件存储降级: {e}")
+            return False
 
     def upload_file(self, object_name: str, file_data: bytes, content_type: str = "application/octet-stream"):
         try:

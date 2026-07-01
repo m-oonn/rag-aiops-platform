@@ -9,9 +9,23 @@ class MilvusClient:
 
     __init__ 时尝试连接 Milvus(host:port),失败则降级为不可用状态。
     之后调用 insert/search 自动跳过,不抛异常。
+
+    进程级单例: 多处 MilvusClient() 复用同一实例,避免 Milvus 不可用时
+    每次 new 都等一遍连接超时(本地无 Milvus 时曾拖慢启动 ~1 分钟)。
     """
 
+    _instance: "MilvusClient | None" = None
+    _initialized: bool = False
+
+    def __new__(cls) -> "MilvusClient":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self) -> None:
+        if type(self)._initialized:
+            return
+        type(self)._initialized = True
         self.host = settings.MILVUS_HOST
         self.port = settings.MILVUS_PORT
         self.collection_name = settings.MILVUS_COLLECTION_NAME

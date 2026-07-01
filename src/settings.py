@@ -79,8 +79,9 @@ class Settings(BaseSettings):
     # 运维 Agent 通过这些 URL 连到独立运行的 MCP 工具进程,只认 URL、不 import 服务端代码
     # (客户端-服务端解耦,这样将来 Mock→真实 只改地址、不动 Agent)。
     # 本地 FastMCP 用 streamable_http;键名(monitor/cls)即 MultiServerMCPClient 里的 server_name。
-    MCP_MONITOR_URL: str = "http://127.0.0.1:8004/mcp"  # 指标服务: query_cpu_metrics / query_memory_metrics
-    MCP_CLS_URL: str = "http://127.0.0.1:8003/mcp"      # 日志服务: search_topic_by_service_name / search_log
+    # 注意: 端口避开 Windows 保留段(7911-8010,Hyper-V/WSL 动态占用),否则撞 winerror 10013。
+    MCP_MONITOR_URL: str = "http://127.0.0.1:8104/mcp"  # 指标服务: query_cpu_metrics / query_memory_metrics
+    MCP_CLS_URL: str = "http://127.0.0.1:8103/mcp"      # 日志服务: search_topic_by_service_name / search_log
 
     @property
     def MCP_SERVERS(self) -> dict:

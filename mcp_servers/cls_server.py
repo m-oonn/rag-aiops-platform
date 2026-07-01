@@ -8,7 +8,7 @@
 埋点:mock 日志故意全是 INFO、没有 ERROR —— 让"查日志查不出异常"成为
 逼 Agent 重新规划(Replan)的触发器,是 Plan-Execute-Replan 的演示素材。
 
-独立进程运行: python mcp_servers/cls_server.py  (默认 127.0.0.1:8003)
+独立进程运行: python mcp_servers/cls_server.py  (默认 127.0.0.1:8103)
 """
 
 import functools
@@ -133,5 +133,6 @@ def search_log(topic_id: str, start_time: int, end_time: int,
 
 
 if __name__ == "__main__":
-    # streamable-http 模式: Agent 通过 http://127.0.0.1:8003/mcp 连接调用
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=8003, path="/mcp")
+    # streamable-http 模式: Agent 通过 http://127.0.0.1:8103/mcp 连接调用
+    # 端口 8103 避开 Windows 保留段 7911-8010(否则 winerror 10013)
+    mcp.run(transport="streamable-http", host="127.0.0.1", port=8103, path="/mcp")

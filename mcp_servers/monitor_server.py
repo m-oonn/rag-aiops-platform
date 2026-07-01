@@ -5,7 +5,7 @@
 链路跑通、演示可复现;后续把内部数据生成逻辑换成真实 Prometheus 查询即可,
 Agent 侧代码无需改动 —— 这就是"先 Mock 后真实"策略的技术地基。
 
-独立进程运行: python mcp_servers/monitor_server.py  (默认 127.0.0.1:8004)
+独立进程运行: python mcp_servers/monitor_server.py  (默认 127.0.0.1:8104)
 """
 
 import functools
@@ -143,7 +143,8 @@ def query_memory_metrics(service_name: str, start_time: Optional[str] = None,
 
 
 if __name__ == "__main__":
-    # streamable-http 模式: Agent 通过 http://127.0.0.1:8004/mcp 连接调用
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=8004, path="/mcp")
+    # streamable-http 模式: Agent 通过 http://127.0.0.1:8104/mcp 连接调用
+    # 端口 8104 避开 Windows 保留段 7911-8010(否则 winerror 10013)
+    mcp.run(transport="streamable-http", host="127.0.0.1", port=8104, path="/mcp")
 
 

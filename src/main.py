@@ -67,4 +67,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
+    # 端口 8200 避开 Windows 保留段 7911-8010(Hyper-V/WSL 占用,否则 winerror 10013)
+    uvicorn.run("src.main:app", host="0.0.0.0", port=8200, reload=True)
