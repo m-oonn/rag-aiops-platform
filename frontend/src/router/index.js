@@ -7,6 +7,7 @@ import KnowledgeBaseDetail from '../views/KnowledgeBaseDetail.vue'
 import Evaluation from '../views/Evaluation.vue'
 import Assistant from '../views/Assistant.vue'
 import Agent from '../views/Agent.vue'
+import AIOps from '../views/AIOps.vue'
 import Monitor from '../views/Monitor.vue'
 
 const routes = [
@@ -19,6 +20,7 @@ const routes = [
   { path: '/evaluation', component: Evaluation, meta: { requiresAuth: true } },
   { path: '/assistants', component: Assistant, meta: { requiresAuth: true } },
   { path: '/agents', component: Agent, meta: { requiresAuth: true } },
+  { path: '/aiops', component: AIOps, meta: { requiresAuth: true } },
   { path: '/monitor', component: Monitor, meta: { requiresAuth: true } },
 ]
 

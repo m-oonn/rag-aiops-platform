@@ -22,6 +22,10 @@
           <el-icon><Cpu /></el-icon>
           <span>Agents</span>
         </el-menu-item> -->
+        <el-menu-item index="/aiops">
+          <el-icon><Cpu /></el-icon>
+          <span>AIOps 诊断</span>
+        </el-menu-item>
         <el-menu-item index="/monitor">
           <el-icon><Monitor /></el-icon>
           <span>Monitor</span>

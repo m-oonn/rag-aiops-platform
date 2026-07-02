@@ -36,7 +36,7 @@ echo "=== [3/4] FastAPI 后端 (0.0.0.0:8200) ==="
 .venv/Scripts/python.exe -m uvicorn src.main:app --host 0.0.0.0 --port 8200 --reload &
 PIDS+=($!)
 
-echo "=== [4/4] Vue 前端 (5173) ==="
+echo "=== [4/4] Vue 前端 (5273) ==="
 if [ -d frontend/node_modules ]; then
     ( cd frontend && npm run dev ) &
     PIDS+=($!)
@@ -47,7 +47,7 @@ fi
 sleep 3
 echo ""
 echo "════════════════════════════════════════════════"
-echo "  前端界面 : http://localhost:5173"
+echo "  前端界面 : http://localhost:5273"
 echo "  API 文档 : http://localhost:8200/docs"
 echo "  诊断端点 : POST http://localhost:8200/api/v1/aiops"
 echo "════════════════════════════════════════════════"
