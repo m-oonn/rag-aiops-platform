@@ -1,7 +1,7 @@
 <template>
   <div>
     <h2>Dashboard</h2>
-    <p>Welcome to the RAG System.</p>
+    <p>Welcome to the AIOps Agent Platform.</p>
     <el-row :gutter="20">
       <el-col :span="8">
         <el-card shadow="hover" @click="$router.push('/knowledge-bases')">

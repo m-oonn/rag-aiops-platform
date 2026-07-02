@@ -1,6 +1,6 @@
 <template>
   <div class="evaluation-container">
-    <h2>RAG System Evaluation</h2>
+    <h2>Evaluation</h2>
     
     <el-tabs v-model="activeTab" type="border-card">
       <!-- Configuration Tab -->

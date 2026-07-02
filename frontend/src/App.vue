@@ -43,7 +43,7 @@
     <el-container>
       <el-header v-if="!isLoginPage">
         <div class="header-content">
-          <h2>RAG System</h2>
+          <h2>AIOps Agent Platform</h2>
           <el-tooltip :content="username" placement="bottom">
              <el-avatar>
                 <el-icon><User /></el-icon>
