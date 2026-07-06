@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 from src.settings import settings
 from src.utils.logger import logger
 from src.models.vector import VectorRecord, SearchResult
+from src.database.local_vector_store import LocalVectorStore
 
 
 class MilvusClient:
@@ -33,6 +34,7 @@ class MilvusClient:
         self.collection = None
         self._available = False
         self.has_kb_id = False
+        self._local_store = LocalVectorStore()  # 本地内存降级存储
         try:
             self._connect()
             self._init_collection()
@@ -41,7 +43,7 @@ class MilvusClient:
         except Exception:
             logger.warning(
                 f"Milvus 不可用({self.host}:{self.port}),"
-                " 向量检索将返回空(不影响诊断流程)"
+                " 向量检索将降级到本地内存存储"
             )
 
     # ── 连接 ──────────────────────────────────────────
@@ -104,8 +106,15 @@ class MilvusClient:
 
     # ── 插入 ──────────────────────────────────────────
     def insert(self, records: List[VectorRecord]) -> None:
-        if not self._available or not records:
+        if not records:
             return
+
+        # 始终写入本地存储作为降级备份（Milvus 重启后数据仍在本地）
+        self._local_store.insert(records)
+
+        if not self._available:
+            return
+
         try:
             ids = [r.id for r in records]
             embeddings = [r.values for r in records]
@@ -118,7 +127,7 @@ class MilvusClient:
             self.collection.insert(data)
             logger.info(f"Milvus 插入 {len(records)} 条")
         except Exception:
-            logger.exception("Milvus insert 失败")
+            logger.exception("Milvus insert 失败，数据已存入本地降级存储")
 
     # ── 检索 ──────────────────────────────────────────
     def search(
@@ -128,7 +137,9 @@ class MilvusClient:
         expr: Optional[str] = None,
     ) -> List[SearchResult]:
         if not self._available:
-            return []
+            # Milvus 不可用，降级到本地内存存储
+            return self._local_store.search(vector, top_k=top_k, expr=expr)
+
         try:
             output_fields = ["text", "metadata"]
             if self.has_kb_id:
@@ -155,5 +166,20 @@ class MilvusClient:
                     ))
             return search_results
         except Exception:
-            logger.exception("Milvus search 失败")
-            return []
+            logger.exception("Milvus search 失败，降级到本地存储")
+            return self._local_store.search(vector, top_k=top_k, expr=expr)
+
+    # ── 按 KB 删除 ─────────────────────────────────────
+    def delete_by_kb_id(self, kb_id: int) -> None:
+        """删除指定 KB 在 Milvus 和本地存储中的所有向量。"""
+        # 始终清理本地存储
+        self._local_store.delete_by_kb_id(kb_id)
+
+        if not self._available or not self.has_kb_id:
+            return
+        try:
+            expr = f"kb_id == {int(kb_id)}"
+            self.collection.delete(expr)
+            logger.info(f"Milvus 已删除 KB {kb_id} 的向量")
+        except Exception:
+            logger.exception(f"Milvus 删除 KB {kb_id} 向量失败")

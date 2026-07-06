@@ -5,8 +5,9 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from src.settings import settings
 from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage, aiops
 from src.database.sql_session import engine, Base
@@ -31,8 +32,67 @@ def _build_cors_origins() -> list[str]:
         return []
     return ["*"]
 
+def _migrate_schema() -> None:
+    """检测已有表是否缺少 Model 定义的列，缺则 ALTER TABLE 补齐。
+
+    Base.metadata.create_all() 只建新表、不改旧表；
+    模型新增列后 SQLite 不会自动迁移，导致 INSERT 500。
+    此函数在启动时做列级 diff + ALTER，保证 schema 与模型一致。
+    """
+    from sqlalchemy import inspect, text
+
+    _TYPE_MAP = {
+        "INTEGER": "INTEGER",
+        "SMALLINT": "INTEGER",
+        "BIGINT": "INTEGER",
+        "VARCHAR": "VARCHAR",
+        "TEXT": "TEXT",
+        "BOOLEAN": "BOOLEAN",
+        "FLOAT": "FLOAT",
+        "JSON": "JSON",
+        "DATETIME": "DATETIME",
+    }
+
+    def _sql_type(col):
+        compiled = col.type.compile(dialect=engine.dialect)
+        upper = compiled.upper() if compiled else "TEXT"
+        for key, val in _TYPE_MAP.items():
+            if key in upper:
+                return val
+        return "TEXT"
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with engine.connect() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            existing_cols = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing_cols:
+                    sql_type = _sql_type(col)
+                    default = "NULL"
+                    if col.default is not None and hasattr(col.default, "arg"):
+                        arg = col.default.arg
+                        if isinstance(arg, bool):
+                            default = "1" if arg else "0"
+                        elif isinstance(arg, (int, float)):
+                            default = str(arg)
+                        elif isinstance(arg, str):
+                            default = f"'{arg}'"
+                    stmt = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {sql_type} DEFAULT {default}'
+                    try:
+                        conn.execute(text(stmt))
+                        conn.commit()
+                        logger.info(f"[schema-migrate] {table.name}.{col.name} ({sql_type}) 已补齐")
+                    except Exception as e:
+                        logger.warning(f"[schema-migrate] ALTER {table.name}.{col.name} 失败: {e}")
+
+
 def create_app() -> FastAPI:
     _validate_secrets()
+    _migrate_schema()
     app = FastAPI(
         title=settings.APP_NAME,
         version="1.0.0",
@@ -47,6 +107,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 全局异常处理:防止未捕获的异常返回英文堆栈给前端
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error("未捕获异常: %s %s", request.url, exc, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务处理异常，请稍后重试"},
+        )
 
     # Routers
     app.include_router(health.router, prefix=settings.API_PREFIX + "/health", tags=["Health"])

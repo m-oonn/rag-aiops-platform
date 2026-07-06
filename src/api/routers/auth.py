@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.database.sql_session import get_db
 from src.database.models import User
@@ -15,7 +15,7 @@ router = APIRouter()
 class UserCreate(BaseModel):
     username: str
     email: str
-    password: str
+    password: str = Field(..., min_length=6, description="Password must be at least 6 characters")
 
 class Token(BaseModel):
     access_token: str
@@ -27,7 +27,7 @@ class UserOut(BaseModel):
     email: str
     is_active: bool
 
-@router.post("/register", response_model=UserOut)
+@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     user = db.query(User).filter(
         or_(User.username == user_in.username, User.email == user_in.email)
@@ -39,7 +39,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
             detail = "The user with this email already exists in the system."
             
         raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail=detail,
         )
     user = User(
@@ -58,9 +58,9 @@ def login_access_token(
 ) -> Any:
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     elif not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
     
     access_token_expires = settings.ACCESS_TOKEN_EXPIRE_MINUTES
     return {

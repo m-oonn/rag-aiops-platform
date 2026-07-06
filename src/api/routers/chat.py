@@ -1,14 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import uuid
+import json
 
-from src.database.sql_session import get_db
-from src.database.models import ChatSession, ChatInteraction, User, KnowledgeBase, Assistant
+from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool, iterate_in_threadpool
+
+from src.database.sql_session import get_db, SessionLocal
+from src.database.models import ChatSession, ChatInteraction, User, KnowledgeBase, Assistant, Agent
 from src.services.rag_service import RAGService
 from src.services.memory_service import MemorySystem
 from src.api.dependencies import get_current_user
+from src.utils.logger import logger
 
 router = APIRouter()
 rag_service = RAGService()
@@ -34,19 +39,17 @@ class SessionOut(BaseModel):
     created_at: Any
     assistant_id: Optional[int]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MessageOut(BaseModel):
     query: str
     answer: str
     created_at: Any
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("/", response_model=ChatResponse)
-def chat(
+async def chat(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -106,7 +109,11 @@ def chat(
         if chat_session.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not authorized to access this session")
 
-    # 3. Call RAG Service
+    # 3. Pre-load linked Agents if any
+    agents = []
+    if assistant and assistant.agent_ids:
+        agents = db.query(Agent).filter(Agent.id.in_(assistant.agent_ids)).all()
+
     # Pass assistant config if available
     assistant_config = {
         "llm_model": assistant.llm_model if assistant else "qwen-max",
@@ -115,10 +122,11 @@ def chat(
         "memory_config": assistant.memory_config if assistant else None,
         "rag_config": assistant.rag_config if assistant else None,
         "tool_config": assistant.tool_config if assistant else None,
-        "agent_ids": assistant.agent_ids if assistant else None
+        "agent_ids": assistant.agent_ids if assistant else None,
+        "agents": agents,
     }
-    
-    result = rag_service.query(
+
+    result = await rag_service.query(
         query_text=request.query,
         top_k=request.top_k,
         session_id=session_uid,
@@ -144,6 +152,114 @@ def chat(
         answer=result["answer"],
         source_documents=result.get("source_documents", [])
     )
+
+def _resolve_plain_session(request: ChatRequest, current_user: User, db: Session) -> ChatSession:
+    """纯聊天会话解析: 复用 chat() 的 session_uid 创建/查找逻辑(assistant_id 恒为 None)。"""
+    session_uid = request.session_id
+    if session_uid:
+        chat_session = db.query(ChatSession).filter(ChatSession.session_uid == session_uid).first()
+        if chat_session:
+            if chat_session.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Not authorized to access this session")
+            return chat_session
+
+    chat_session = ChatSession(
+        session_uid=session_uid or str(uuid.uuid4()),
+        user_id=current_user.id,
+        assistant_id=None,
+        title=request.query[:50]
+    )
+    db.add(chat_session)
+    db.commit()
+    db.refresh(chat_session)
+    return chat_session
+
+def _save_chat_interaction(session_db_id: int, query_text: str, answer: str) -> None:
+    """保存一条 ChatInteraction(同步 DB 操作,供 run_in_threadpool 丢线程池)。"""
+    db = SessionLocal()
+    try:
+        interaction = ChatInteraction(
+            session_id=session_db_id,
+            kb_id=None,
+            query=query_text,
+            answer=answer,
+            retrieved_docs=[],
+            metrics={},
+        )
+        db.add(interaction)
+        db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """纯聊天流式端点(无知识库/助手)。逐 token 推送 SSE。
+
+    带 assistant_id / kb_id 的 RAG 路径仍走同步 POST /chat/,不经过这里。
+
+    async 端点 + iterate_in_threadpool: 把同步阻塞的 LLM stream 推到线程池,
+    不阻塞 asyncio 事件循环,SSE 帧才能被及时发送到浏览器。
+    """
+    chat_session = _resolve_plain_session(request, current_user, db)
+    session_uid = chat_session.session_uid
+    session_db_id = chat_session.id
+    query_text = request.query
+
+    async def event_generator():
+        full_answer = ""
+        try:
+            # 取短期记忆拼 context
+            history = memory_system.get_short_term_memory(session_uid, limit=10)
+            context = ""
+            if history:
+                history_str = "\n".join(
+                    f"{m['role']}: {m['content']}" for m in history
+                )
+                context = f"历史对话:\n{history_str}"
+
+            # iterate_in_threadpool: 同步生成器的每次 next() 在线程池执行,
+            # 不阻塞 asyncio 事件循环 → SSE 帧实时发出,浏览器可增量渲染。
+            async for token in iterate_in_threadpool(
+                rag_service.llm_client.generate_general_response_stream(
+                    query_text, context
+                )
+            ):
+                full_answer += token
+                yield {
+                    "event": "message",
+                    "data": json.dumps(
+                        {"type": "token", "content": token}, ensure_ascii=False
+                    ),
+                }
+
+            # 收尾: 更新短期记忆 + 落库(同步操作丢线程池)
+            memory_system.add_short_term_memory(session_uid, "user", query_text)
+            memory_system.add_short_term_memory(session_uid, "assistant", full_answer)
+            await run_in_threadpool(
+                _save_chat_interaction, session_db_id, query_text, full_answer
+            )
+
+            yield {
+                "event": "message",
+                "data": json.dumps(
+                    {"type": "done", "session_id": session_uid}, ensure_ascii=False
+                ),
+            }
+        except Exception as e:
+            logger.error(f"[chat/stream] SSE 流异常: {e}", exc_info=True)
+            yield {
+                "event": "message",
+                "data": json.dumps(
+                    {"type": "error", "message": f"聊天异常: {e}"}, ensure_ascii=False
+                ),
+            }
+
+    return EventSourceResponse(event_generator())
 
 @router.get("/sessions", response_model=List[SessionOut])
 def list_sessions(

@@ -5,7 +5,8 @@ import shutil
 import os
 import re
 from datetime import datetime
-from pydantic import BaseModel
+from pathlib import Path
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import StreamingResponse, FileResponse
 import io
 
@@ -15,11 +16,29 @@ from src.utils.security import create_access_token
 from src.settings import settings
 from src.api.dependencies import get_current_user
 from src.services.qa_generator import qa_generator
-from src.worker.tasks import process_document_task
+from src.worker.tasks import process_document_task, process_document
 from src.services.storage import storage_service
+from src.database.vector_db import MilvusClient
 from src.utils.preview_utils import get_preview_response
+from src.utils.logger import logger
 
 router = APIRouter()
+vector_db_client = MilvusClient()
+
+
+def _try_celery_delay(doc_id: int):
+    """尝试通过 Celery 分发任务；broker 不可用时 5s 内抛异常，由调用方降级。"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+    def _do_delay():
+        return process_document_task.delay(doc_id)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_do_delay)
+        return future.result(timeout=5)
+    finally:
+        pool.shutdown(wait=False)
 
 # --- Pydantic Models ---
 
@@ -45,8 +64,7 @@ class KBOut(BaseModel):
     created_at: datetime
     owner_id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DocumentOut(BaseModel):
     id: int
@@ -57,8 +75,7 @@ class DocumentOut(BaseModel):
     file_size: int
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class QAPairOut(BaseModel):
     id: int
@@ -67,8 +84,7 @@ class QAPairOut(BaseModel):
     qa_type: str
     created_at: Any
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class QAPairCreate(BaseModel):
     question: str
@@ -86,15 +102,35 @@ class ChunkOut(BaseModel):
     content: str
     page_num: Optional[int]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv",
+    ".pptx", ".ppt", ".md", ".html", ".htm", ".txt",
+}
+
 
 def sanitize_filename(filename: str) -> str:
-    # Remove dangerous characters
-    # Keep alphanumeric, dot, dash, underscore, and chinese characters
-    # Simplified regex
-    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    return filename
+    """清洗文件名，拒绝路径穿越并移除危险字符。"""
+    if not filename:
+        raise HTTPException(status_code=400, detail="Filename cannot be empty")
+
+    # 拒绝任何包含路径分隔符或 .. 的文件名
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(
+            status_code=400, detail="Invalid filename: path traversal detected"
+        )
+
+    # 仅保留基础名称，防止绝对路径
+    base_name = Path(filename).name
+    if not base_name or base_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # 移除剩余危险字符
+    safe_name = re.sub(r'[\\/*?:"<>|]', "", base_name)
+    return safe_name
 
 # --- Endpoints ---
 
@@ -140,13 +176,14 @@ def delete_knowledge_base(
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Logic to delete KB:
-    # 1. Delete Documents (and chunks)
-    # 2. Delete generated QAs
-    # 3. Delete KB
-    # Note: Vector DB deletion is harder, might need to delete by kb_id if Milvus supports it
-    
-    db.delete(kb) # Cascading delete should be configured in DB, or manual
-    # For simplicity, we assume models have cascade or we leave orphans for now
+    # 1. Delete Milvus vectors by kb_id
+    # 2. Delete Documents (and chunks) via SQLAlchemy cascade
+    # 3. Delete generated QAs via SQLAlchemy cascade
+    # 4. Delete KB
+
+    vector_db_client.delete_by_kb_id(kb.id)
+
+    db.delete(kb)
     db.commit()
     return {"message": "Knowledge Base deleted"}
 
@@ -192,6 +229,7 @@ def update_knowledge_base(
 @router.post("/{kb_id}/upload")
 def upload_document(
     kb_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -205,6 +243,24 @@ def upload_document(
     import uuid
     doc_uid = str(uuid.uuid4())
     safe_filename = sanitize_filename(file.filename)
+
+    # 前置文件类型白名单校验
+    ext = Path(safe_filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        )
+
+    # 先读取并校验文件大小，再落盘
+    file_content = file.file.read()
+    file_size = len(file_content)
+    if file_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {file_size} bytes exceeds limit of {MAX_UPLOAD_SIZE} bytes",
+        )
+
     file_path = settings.UPLOAD_DIR / f"{doc_uid}_{safe_filename}"
     
     # Ensure directory exists (again, to be safe)
@@ -215,7 +271,7 @@ def upload_document(
         abs_file_path = file_path.resolve()
         
         with open(abs_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(file_content)
             
         if not os.path.exists(abs_file_path):
              raise Exception("File saved but not found on disk immediately.")
@@ -254,13 +310,23 @@ def upload_document(
     db.refresh(doc)
     
     # Trigger Celery task
-    task = process_document_task.delay(doc.id)
-    
-    return {"message": "File uploaded successfully", "doc_id": doc.id, "task_id": task.id}
+    try:
+        task = _try_celery_delay(doc.id)
+        doc.celery_task_id = task.id
+        db.commit()
+        return {"message": "File uploaded successfully", "doc_id": doc.id, "task_id": task.id}
+    except Exception as e:
+        # broker 不可用(demo 无 RabbitMQ):转后台同步处理,上传立即成功,前端轮询状态
+        logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
+        background_tasks.add_task(process_document, doc.id)
+        doc.celery_task_id = None
+        db.commit()
+        return {"message": "File uploaded (sync mode)", "doc_id": doc.id, "task_id": None}
 
 @router.post("/documents/batch-retry")
 def batch_retry_documents(
     doc_ids: List[int],
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -272,9 +338,12 @@ def batch_retry_documents(
             doc.status = 0
             doc.error_msg = None
             db.commit()
-            process_document_task.delay(doc.id)
+            try:
+                _try_celery_delay(doc.id)
+            except Exception:
+                background_tasks.add_task(process_document, doc.id)
             restarted.append(doc.id)
-            
+
     return {"message": f"Restarted {len(restarted)} documents"}
 
 @router.delete("/documents/batch-delete")
@@ -303,17 +372,18 @@ def batch_delete_documents(
 @router.post("/documents/{doc_id}/retry")
 def retry_document(
     doc_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
     if not kb or kb.owner_id != current_user.id:
          raise HTTPException(status_code=403, detail="Not authorized")
-         
+
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=400, detail="Original file not found on server")
 
@@ -321,9 +391,18 @@ def retry_document(
     doc.status = 0
     doc.error_msg = None
     db.commit()
-    
-    task = process_document_task.delay(doc.id)
-    return {"message": "Retry started", "task_id": task.id}
+
+    try:
+        task = _try_celery_delay(doc.id)
+        doc.celery_task_id = task.id
+        db.commit()
+        return {"message": "Retry started", "task_id": task.id}
+    except Exception as e:
+        logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
+        background_tasks.add_task(process_document, doc.id)
+        doc.celery_task_id = None
+        db.commit()
+        return {"message": "Retry started (sync mode)", "task_id": None}
 
 @router.get("/{kb_id}/documents", response_model=List[DocumentOut])
 def list_documents(
@@ -516,6 +595,7 @@ def get_document_chunks(
 @router.post("/documents/{doc_id}/reprocess")
 def reprocess_document(
     doc_id: int,
+    background_tasks: BackgroundTasks,
     config: Optional[Dict[str, Any]] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -523,20 +603,29 @@ def reprocess_document(
     doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
     if kb.owner_id != current_user.id:
          raise HTTPException(status_code=403, detail="Not authorized")
-         
+
     if config:
         doc.chunking_config = config
-    
+
     doc.status = 0 # Reset status to pending
     doc.error_msg = None
     db.commit()
-    
-    process_document_task.delay(doc.id)
-    return {"message": "Reprocessing started", "doc_id": doc.id}
+
+    try:
+        task = _try_celery_delay(doc.id)
+        doc.celery_task_id = task.id
+        db.commit()
+        return {"message": "Reprocessing started", "doc_id": doc.id, "task_id": task.id}
+    except Exception as e:
+        logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
+        background_tasks.add_task(process_document, doc.id)
+        doc.celery_task_id = None
+        db.commit()
+        return {"message": "Reprocessing started (sync mode)", "doc_id": doc.id, "task_id": None}
 
 @router.get("/documents/{doc_id}/preview")
 def preview_document(

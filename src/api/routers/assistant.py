@@ -1,17 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 from src.database.sql_session import get_db
-from src.database.models import Assistant, User, KnowledgeBase, Agent
+from src.database.models import Assistant, AssistantVersion, User, KnowledgeBase, Agent
 from src.api.dependencies import get_current_user
 
 router = APIRouter()
-
-# Mock storage for versions until DB table is created
-MOCK_VERSIONS = {} # {assistant_id: [AssistantVersion]}
 
 class AssistantCreate(BaseModel):
     name: str
@@ -54,9 +51,8 @@ class AssistantOut(BaseModel):
     agent_ids: Optional[List[int]]
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("/", response_model=AssistantOut)
 def create_assistant(
@@ -132,10 +128,12 @@ def update_assistant(
     db.refresh(assistant)
     return assistant
 
-class AssistantVersion(BaseModel):
+class AssistantVersionOut(BaseModel):
     version: str
     config: dict
-    created_at: datetime = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 @router.delete("/{assistant_id}")
 def delete_assistant(
@@ -148,42 +146,49 @@ def delete_assistant(
         raise HTTPException(status_code=404, detail="Assistant not found")
     if assistant.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     db.delete(assistant)
     db.commit()
     return {"message": "Assistant deleted"}
 
-class AssistantVersion(BaseModel):
-    version: str
-    config: dict
-    created_at: datetime = None
-
 @router.post("/{assistant_id}/versions")
 def create_assistant_version(
     assistant_id: int,
-    version_data: dict = Body(...), # {version: "v1.0.1", config: {...}}
+    version_data: dict = Body(...),  # {version: "v1.0.1", config: {...}}
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Mock implementation until DB migration
-    # In real world, we save to AssistantVersion table
-    if assistant_id not in MOCK_VERSIONS:
-        MOCK_VERSIONS[assistant_id] = []
-    
-    version_entry = {
-        "version": version_data.get("version"),
-        "config": version_data.get("config"),
-        "created_at": datetime.now()
-    }
-    MOCK_VERSIONS[assistant_id].append(version_entry)
-    
-    return {"message": "Version saved (Mock)"}
+    assistant = db.query(Assistant).filter(Assistant.id == assistant_id).first()
+    if not assistant:
+        raise HTTPException(status_code=404, detail="Assistant not found")
+    if assistant.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
-@router.get("/{assistant_id}/versions")
+    version = AssistantVersion(
+        assistant_id=assistant_id,
+        version=version_data.get("version"),
+        config=version_data.get("config", {}),
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return {"message": "Version saved"}
+
+@router.get("/{assistant_id}/versions", response_model=List[AssistantVersionOut])
 def list_assistant_versions(
     assistant_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Mock return
-    return MOCK_VERSIONS.get(assistant_id, [])
+    assistant = db.query(Assistant).filter(Assistant.id == assistant_id).first()
+    if not assistant:
+        raise HTTPException(status_code=404, detail="Assistant not found")
+    if assistant.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return (
+        db.query(AssistantVersion)
+        .filter(AssistantVersion.assistant_id == assistant_id)
+        .order_by(AssistantVersion.created_at.desc())
+        .all()
+    )

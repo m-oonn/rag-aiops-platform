@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+import asyncio
 import json
 import os
 
@@ -41,18 +42,16 @@ class EvalTaskOut(BaseModel):
     total_count: Optional[int] = 0
     dataset_path: Optional[str]
     is_custom_dataset: bool
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 class DatasetItemOut(BaseModel):
     id: int
     question: str
     ground_truth: str
     qa_type: str
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 class DatasetItemUpdate(BaseModel):
     question: str
@@ -61,6 +60,7 @@ class DatasetItemUpdate(BaseModel):
 
 def generate_dataset_task(task_id: int, db_session_factory):
     db = db_session_factory()
+    task = None
     try:
         task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
         if not task: return
@@ -85,9 +85,7 @@ def generate_dataset_task(task_id: int, db_session_factory):
             
         if not docs:
             task.status = 3
-            task.error_msg = "No documents found" # This column doesn't exist on Task yet, assume added or handle error
-            # Actually I added error_msg to Result, not Task. 
-            # Let's just set status 3.
+            task.error_msg = "No documents found"
             db.commit()
             return
 
@@ -139,8 +137,10 @@ def generate_dataset_task(task_id: int, db_session_factory):
         
     except Exception as e:
         print(f"Dataset Gen Failed: {e}")
-        task.status = 3
-        db.commit()
+        if task:
+            task.status = 3
+            task.error_msg = str(e)
+            db.commit()
     finally:
         db.close()
 
@@ -178,7 +178,7 @@ def run_evaluation_execution(task_id: int, db_session_factory):
             
             try:
                 # Run RAG
-                rag_result = rag_service.query(item.question, top_k=5, kb_ids=[kb_id] if kb_id else None)
+                rag_result = asyncio.run(rag_service.query(item.question, top_k=5, kb_ids=[kb_id] if kb_id else None))
                 
                 # Evaluate
                 eval_res = evaluator.evaluate(
@@ -255,6 +255,7 @@ def run_evaluation_execution(task_id: int, db_session_factory):
         print(f"Evaluation failed: {e}")
         import traceback
         task.status = 3
+        task.error_msg = str(e)
         db.commit()
     finally:
         db.close()
@@ -271,8 +272,21 @@ def generate_evaluation_dataset(
     # If not custom upload, check KB
     if not config.is_custom_upload:
         kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == config.kb_id).first()
-        if not kb: raise HTTPException(status_code=404, detail="KB not found")
-        if kb.owner_id != current_user.id: raise HTTPException(status_code=403, detail="Not authorized")
+        if not kb: raise HTTPException(status_code=404, detail="知识库不存在")
+        if kb.owner_id != current_user.id: raise HTTPException(status_code=403, detail="无权操作该知识库")
+
+        # 前置校验：检查知识库是否有已处理完成的文档
+        ready_docs = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kb_id == config.kb_id,
+            KnowledgeDocument.status == 2,  # Completed
+            KnowledgeDocument.chunk_count > 0,
+        ).count()
+        if ready_docs == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="知识库为空或文档尚未处理完成，请先上传文档并等待处理完成",
+            )
+
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name = f"Eval-{kb.name}-{config.num_questions}-{timestamp}"
@@ -387,6 +401,7 @@ def update_dataset_item(
     item.ground_truth = item_in.ground_truth
     item.qa_type = item_in.qa_type
     db.commit()
+    db.refresh(item)
     return item
 
 @router.delete("/dataset-items/{item_id}")

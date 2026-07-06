@@ -1,57 +1,91 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from typing import List, Optional, Any
-from pydantic import BaseModel
+from typing import List, Optional, Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from datetime import datetime
 
 from src.database.sql_session import get_db
 from src.database.models import Agent, User
 from src.api.dependencies import get_current_user
+from src.services.agent_tool_service import execute_agent_query
 
 router = APIRouter()
 
-class AgentCreate(BaseModel):
+
+class MCPServerConfig(BaseModel):
+    """单个 MCP 服务器的配置。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    transport: Literal["streamable_http", "sse", "stdio"] = "streamable_http"
+    url: Optional[str] = None
+    command: Optional[str] = None
+    args: Optional[list[str]] = None
+    env: Optional[dict[str, str]] = None
+
+    @model_validator(mode="after")
+    def url_required_for_network_transports(self):
+        if self.transport in ("streamable_http", "sse") and not self.url:
+            raise ValueError(f"transport '{self.transport}' requires url")
+        return self
+
+
+class LLMConfig(BaseModel):
+    """Agent 专用 LLM 配置。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    model: Optional[str] = None
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(None, gt=0)
+    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class ExecutionConfig(BaseModel):
+    """Agent 执行策略配置。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    max_iterations: Optional[int] = Field(None, gt=0, le=20)
+    llm_timeout: Optional[float] = Field(None, gt=0.0)
+    tool_timeout: Optional[float] = Field(None, gt=0.0)
+    mcp_load_timeout: Optional[float] = Field(None, gt=0.0)
+
+
+class AgentConfigMixin(BaseModel):
+    """Agent 配置字段复用：Create 和 Update 共用同一套 schema。"""
+
+    system_prompt: Optional[str] = None
+    tools_config: Optional[dict[str, MCPServerConfig]] = None
+    knowledge_config: Optional[dict] = None
+    memory_config: Optional[dict] = None
+    reasoning_config: Optional[dict] = None
+    security_config: Optional[dict] = None
+    interaction_config: Optional[dict] = None
+    llm_config: Optional[LLMConfig] = None
+    execution_config: Optional[ExecutionConfig] = None
+
+
+class AgentCreate(AgentConfigMixin):
     name: str
     description: Optional[str] = None
     type: str = "function_call"
-    
-    # New Config Fields
-    system_prompt: Optional[str] = None
-    tools_config: Optional[dict] = None
-    knowledge_config: Optional[dict] = None
-    memory_config: Optional[dict] = None
-    reasoning_config: Optional[dict] = None
-    security_config: Optional[dict] = None
-    interaction_config: Optional[dict] = None
-    llm_config: Optional[dict] = None
-    execution_config: Optional[dict] = None
-    
-    # Legacy
     config: Optional[dict] = {}
 
-class AgentUpdate(BaseModel):
+
+class AgentUpdate(AgentConfigMixin):
     name: Optional[str] = None
     description: Optional[str] = None
     type: Optional[str] = None
-    
-    system_prompt: Optional[str] = None
-    tools_config: Optional[dict] = None
-    knowledge_config: Optional[dict] = None
-    memory_config: Optional[dict] = None
-    reasoning_config: Optional[dict] = None
-    security_config: Optional[dict] = None
-    interaction_config: Optional[dict] = None
-    llm_config: Optional[dict] = None
-    execution_config: Optional[dict] = None
-    
     config: Optional[dict] = None
+
 
 class AgentOut(BaseModel):
     id: int
     name: str
     description: Optional[str]
     type: str
-    
+
     system_prompt: Optional[str]
     tools_config: Optional[dict]
     knowledge_config: Optional[dict]
@@ -61,13 +95,17 @@ class AgentOut(BaseModel):
     interaction_config: Optional[dict]
     llm_config: Optional[dict]
     execution_config: Optional[dict]
-    
+
     config: Optional[dict]
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentExecute(BaseModel):
+    query: str
+
 
 @router.post("/", response_model=AgentOut)
 def create_agent(
@@ -80,17 +118,17 @@ def create_agent(
         description=agent_in.description,
         type=agent_in.type,
         user_id=current_user.id,
-        
+
         system_prompt=agent_in.system_prompt,
-        tools_config=agent_in.tools_config,
+        tools_config={k: v.model_dump() for k, v in agent_in.tools_config.items()} if agent_in.tools_config else None,
         knowledge_config=agent_in.knowledge_config,
         memory_config=agent_in.memory_config,
         reasoning_config=agent_in.reasoning_config,
         security_config=agent_in.security_config,
         interaction_config=agent_in.interaction_config,
-        llm_config=agent_in.llm_config,
-        execution_config=agent_in.execution_config,
-        
+        llm_config=agent_in.llm_config.model_dump() if agent_in.llm_config else None,
+        execution_config=agent_in.execution_config.model_dump() if agent_in.execution_config else None,
+
         config=agent_in.config
     )
     db.add(agent)
@@ -98,12 +136,14 @@ def create_agent(
     db.refresh(agent)
     return agent
 
+
 @router.get("/", response_model=List[AgentOut])
 def list_agents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return db.query(Agent).filter(Agent.user_id == current_user.id).all()
+
 
 @router.get("/{agent_id}", response_model=AgentOut)
 def get_agent(
@@ -118,6 +158,7 @@ def get_agent(
         raise HTTPException(status_code=403, detail="Not authorized")
     return agent
 
+
 @router.put("/{agent_id}", response_model=AgentOut)
 def update_agent(
     agent_id: int,
@@ -130,14 +171,23 @@ def update_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
-    update_data = agent_in.dict(exclude_unset=True)
+
+    update_data = agent_in.model_dump(exclude_unset=True)
+    # Pydantic 子模型需要再转一层 dict，方便 SQLAlchemy JSON 字段存储
+    if "tools_config" in update_data and update_data["tools_config"] is not None:
+        update_data["tools_config"] = {k: v.model_dump() if hasattr(v, "model_dump") else v for k, v in update_data["tools_config"].items()}
+    if "llm_config" in update_data and update_data["llm_config"] is not None:
+        update_data["llm_config"] = update_data["llm_config"].model_dump() if hasattr(update_data["llm_config"], "model_dump") else update_data["llm_config"]
+    if "execution_config" in update_data and update_data["execution_config"] is not None:
+        update_data["execution_config"] = update_data["execution_config"].model_dump() if hasattr(update_data["execution_config"], "model_dump") else update_data["execution_config"]
+
     for field, value in update_data.items():
         setattr(agent, field, value)
-        
+
     db.commit()
     db.refresh(agent)
     return agent
+
 
 @router.delete("/{agent_id}")
 def delete_agent(
@@ -150,7 +200,25 @@ def delete_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     db.delete(agent)
     db.commit()
     return {"message": "Agent deleted"}
+
+
+@router.post("/{agent_id}/execute")
+async def execute_agent(
+    agent_id: int,
+    payload: AgentExecute,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """执行 Agent 的 MCP 工具查询。Agent 的 tools_config 将用于连接 MCP 服务器并加载工具。"""
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    result = await execute_agent_query(agent, payload.query)
+    return result

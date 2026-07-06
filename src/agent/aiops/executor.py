@@ -11,6 +11,7 @@
 config key 'N/A' for 'tools'。故手写工具调用,不依赖 ToolNode。
 """
 
+import asyncio
 import time
 from typing import Any, Dict
 
@@ -30,9 +31,17 @@ _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步
 4. 只返回实际获取的信息或基于知识的分析,不要编造数据;
 5. 专注当前步骤,不考虑其他任务。"""
 
+_NO_TOOLS_WARNING = """
+⚠️ 重要提醒：当前没有可用的监控/日志工具，你无法获取任何真实系统数据。
+在回答时你必须：
+- 明确声明"以下分析基于通用运维经验，未获取到实际监控数据"；
+- 不要编造具体的 CPU 数值、内存数值、日志内容等；
+- 给出的建议应标注为"排查建议"而非"诊断结论"。"""
+
 _TOOLS_CACHE_TTL = 30.0  # 工具列表缓存过期时间(秒)
 _tools_cache: tuple[list, str | None] | None = None
 _tools_cache_at: float = 0.0
+_TOOL_INVOKE_TIMEOUT = 15.0  # 单个工具调用超时(秒)
 
 
 def _build_tool_map(tools: list) -> dict[str, Any]:
@@ -56,28 +65,43 @@ async def _get_tools_cached() -> tuple[list, str | None]:
     return _tools_cache
 
 
+async def _run_single_tool(tc: dict, tool_map: dict) -> ToolMessage:
+    """执行单个工具调用(带超时保护),返回 ToolMessage。"""
+    tool_name = tc.get("name", "")
+    tool_args = tc.get("args", {})
+    tool_id = tc.get("id", "")
+    tool = tool_map.get(tool_name)
+
+    if not tool:
+        content = f"工具 '{tool_name}' 不存在,跳过"
+    else:
+        try:
+            result = await asyncio.wait_for(
+                tool.ainvoke(tool_args),
+                timeout=_TOOL_INVOKE_TIMEOUT,
+            )
+            content = str(result) if not isinstance(result, str) else result
+        except asyncio.TimeoutError:
+            content = f"工具 '{tool_name}' 调用超时(>{_TOOL_INVOKE_TIMEOUT}s)，请检查该服务是否正常运行"
+            logger.warning("[executor] 工具 '%s' 调用超时", tool_name)
+        except ConnectionError as e:
+            content = f"工具 '{tool_name}' 连接失败(服务可能未启动): {e}"
+            logger.warning("[executor] 工具 '%s' 连接失败: %s", tool_name, e)
+        except Exception as e:
+            content = f"工具 '{tool_name}' 调用失败: {e}"
+            logger.warning("[executor] 工具 '%s' 调用异常: %s", tool_name, e)
+
+    logger.info(f"[executor] 工具 '{tool_name}' 调用完成,结果长度 {len(content)}")
+    return ToolMessage(content=content, tool_call_id=tool_id)
+
+
 async def _run_tool_calls(tool_calls: list, tool_map: dict) -> list:
-    """手动执行多个工具调用,返回 ToolMessage 列表。"""
-    tool_messages = []
-    for tc in tool_calls:
-        tool_name = tc.get("name", "")
-        tool_args = tc.get("args", {})
-        tool_id = tc.get("id", "")
-        tool = tool_map.get(tool_name)
+    """手动执行多个工具调用,返回 ToolMessage 列表。
 
-        if not tool:
-            content = f"工具 '{tool_name}' 不存在,跳过"
-        else:
-            try:
-                result = await tool.ainvoke(tool_args)
-                content = str(result) if not isinstance(result, str) else result
-            except Exception as e:
-                content = f"工具 '{tool_name}' 调用失败: {e}"
-
-        tool_messages.append(ToolMessage(content=content, tool_call_id=tool_id))
-        logger.info(f"[executor] 工具 '{tool_name}' 调用完成,结果长度 {len(content)}")
-
-    return tool_messages
+    独立的工具调用之间没有依赖,并发执行可以缩短多工具诊断链路耗时。
+    返回顺序与输入顺序一致,保证 LLM 回填时 tool_call_id 能对应上。
+    """
+    return await asyncio.gather(*(_run_single_tool(tc, tool_map) for tc in tool_calls))
 
 
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
@@ -97,8 +121,14 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         tool_map = _build_tool_map(tools)
         llm = create_agent_llm(temperature=0)
         llm_with_tools = llm.bind_tools(tools) if tools else llm
+
+        # 无工具时注入数据诚实性警告
+        sys_content = _EXECUTOR_SYSTEM
+        if not tools:
+            sys_content += _NO_TOOLS_WARNING
+
         messages = [
-            SystemMessage(content=_EXECUTOR_SYSTEM),
+            SystemMessage(content=sys_content),
             HumanMessage(content=f"请执行以下诊断步骤: {task}"),
         ]
 
@@ -123,5 +153,5 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         return {"plan": plan[1:], "past_steps": [(task, result)]}
 
     except Exception as e:
-        logger.error(f"[executor] 执行步骤失败: {e}", exc_info=True)
-        return {"plan": plan[1:], "past_steps": [(task, f"执行失败: {e}")]}
+        logger.warning("[executor] 执行步骤 '%s' 异常降级: %s", task, e)
+        return {"plan": plan[1:], "past_steps": [(task, f"执行步骤 '{task}' 时遇到异常: {e}")]}

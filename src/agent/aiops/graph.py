@@ -56,6 +56,17 @@ class AIOpsService:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式执行诊断,逐节点 yield SSE 事件。"""
         logger.info(f"[aiops][{session_id}] 开始诊断: {user_input}")
+
+        # 输入校验:空字符串无法制定有效诊断计划,提前返回错误事件
+        if not user_input or not user_input.strip():
+            logger.warning(f"[aiops][{session_id}] 输入为空,拒绝执行")
+            yield {
+                "type": "error",
+                "stage": "validation_error",
+                "message": "诊断输入不能为空,请描述当前遇到的故障现象",
+            }
+            return
+
         initial: PlanExecuteState = {
             "input": user_input,
             "plan": [],

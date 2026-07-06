@@ -6,6 +6,7 @@ from src.utils.logger import logger
 from src.settings import settings
 from src.services.question_analyzer import QuestionAnalyzer
 from src.services.memory_service import MemorySystem
+from src.services.agent_tool_service import execute_agent_query
 
 class RAGService:
     def __init__(self):
@@ -15,31 +16,33 @@ class RAGService:
         self.analyzer = QuestionAnalyzer(self.llm_client)
         self.memory = MemorySystem()
 
-    def query(
-        self, 
-        query_text: str, 
-        top_k: int = 5, 
-        session_id: str = "default", 
+    async def query(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        session_id: str = "default",
         kb_ids: Optional[List[int]] = None,
         assistant_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        
+
         # Config Extraction
         system_prompt = assistant_config.get("system_prompt") if assistant_config else None
         agent_ids = assistant_config.get("agent_ids") if assistant_config else None
+        agents = assistant_config.get("agents") if assistant_config else None
         # model = assistant_config.get("llm_model") # Pass to LLMClient if supported
-        
+
         # 0. Get History (Short-term memory)
-        memory_config = assistant_config.get("memory_config", {}) if assistant_config else {}
+        # 注:memory_config 键可能存在但值为 None(纯聊天无助手时),.get 默认值救不了,需显式兜底
+        memory_config = (assistant_config.get("memory_config") if assistant_config else None) or {}
         enable_short_term = memory_config.get("enable_short_term", True) # Default to True if not specified
         window_size = memory_config.get("window_size", 10)
-        
+
         history = []
         if enable_short_term:
             history = self.memory.get_short_term_memory(session_id, limit=window_size)
-            
+
         history_str = "\n".join([f"{m['role']}: {m['content']}" for m in history])
-        
+
         # Long-term Memory Injection (Placeholder/Mock)
         enable_long_term = memory_config.get("enable_long_term", False)
         long_term_context = ""
@@ -51,38 +54,68 @@ class RAGService:
             # long_term_context = "\n".join([m['content'] for m in long_term_memories])
             pass
 
-        # 1. Analyze Question (incorporating history)
-        # If no KBs, we are in "General Chat" mode.
-        
+        # 1. Agent-first routing: if agents are configured, they take priority
+        #    regardless of whether KBs are also bound to this assistant.
+        #    (Previously agent delegation was nested inside `if not kb_ids:`,
+        #     which meant KB+Agent assistants silently skipped agent execution.)
+        if agent_ids and agents:
+            logger.info(f"Agents configured: {agent_ids}. Delegating to Agent tool execution.")
+            agent = agents[0]
+            # If KBs are also present, try to retrieve context first and inject into agent query
+            augmented_query = query_text
+            if kb_ids:
+                try:
+                    rag_results = self.retriever.retrieve(query_text, top_k=top_k, kb_ids=kb_ids)
+                    if rag_results:
+                        if settings.ENABLE_RERANK:
+                            rag_results = self.reranker.rerank(query_text, rag_results)
+                        context_snippets = [r.text for r in rag_results[:top_k]]
+                        augmented_query = (
+                            f"{query_text}\n\n"
+                            f"【知识库参考资料】\n" +
+                            "\n---\n".join(context_snippets)
+                        )
+                        logger.info(f"Agent augmented with {len(context_snippets)} RAG snippets")
+                except Exception as e:
+                    logger.warning(f"RAG augmentation for agent failed: {e}")
+
+            result = await execute_agent_query(agent, augmented_query, self.llm_client)
+            # Update Memory with agent answer
+            self.memory.add_short_term_memory(session_id, "user", query_text)
+            self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
+            return {
+                "query": query_text,
+                "answer": result["answer"],
+                "source_documents": [],
+                "tool_calls": result.get("tool_calls", []),
+            }
+
+        # 2. Non-agent path: General Chat or RAG
         if not kb_ids:
             # General Chat Mode
             logger.info("No KB selected, using General Chat Mode")
             context = f"历史对话:\n{history_str}" if history else ""
             if long_term_context:
                 context = f"长期记忆:\n{long_term_context}\n\n{context}"
-                
+
             if system_prompt:
                 context = f"系统指令: {system_prompt}\n\n{context}"
-                
-            # TODO: If agent_ids are present, we could invoke AgentExecutor here
-            if agent_ids:
-                logger.info(f"Agents configured: {agent_ids}. Agent execution logic to be implemented.")
-                
+
             # Direct LLM call
             # Use general response method for non-RAG queries
             answer = self.llm_client.generate_general_response(query_text, context)
-            
+
             # Update Memory
             self.memory.add_short_term_memory(session_id, "user", query_text)
             self.memory.add_short_term_memory(session_id, "assistant", answer)
-            
+
             return {
                 "query": query_text,
                 "answer": answer,
                 "source_documents": []
             }
 
-        # RAG Mode
+        # 3. RAG Mode (KB selected, no agents)
         contextual_query = f"历史对话:\n{history_str}\n当前问题: {query_text}" if history else query_text
         analysis = self.analyzer.analyze(contextual_query)
         logger.info(f"Question Analysis: {analysis}")

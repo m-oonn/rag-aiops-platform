@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from src.llm.llm_client import LLMClient
 from src.utils.logger import logger
 import json
 
-def main():
+async def main():
     rag_service = RAGService()
     llm_client = LLMClient()
     evaluator = RAGEvaluator(llm_client)
@@ -32,7 +33,7 @@ def main():
         logger.info(f"Evaluating query: {query}")
         try:
             # 1. Get RAG Response
-            response = rag_service.query(query)
+            response = await rag_service.query(query)
             
             # 2. Evaluate
             eval_result = evaluator.evaluate(
@@ -56,4 +57,4 @@ def main():
     logger.info(f"Evaluation report generated at: {report_path}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

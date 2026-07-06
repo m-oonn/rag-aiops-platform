@@ -2,6 +2,16 @@ from minio import Minio
 from src.settings import settings
 from src.utils.logger import logger
 import io
+import urllib3
+
+# MinIO 未启动时,默认客户端会重试+backoff 累积约 30s 才失败,拖垮启动与请求。
+# 用短超时 + 零重试的 http_client,让不可用场景快速失败并走降级。
+_MINIO_TIMEOUT_SECONDS = 3
+_FAST_FAIL_HTTP_CLIENT = urllib3.PoolManager(
+    timeout=urllib3.Timeout(connect=_MINIO_TIMEOUT_SECONDS, read=_MINIO_TIMEOUT_SECONDS),
+    retries=urllib3.Retry(total=0),
+)
+
 
 class StorageService:
     def __init__(self):
@@ -9,7 +19,8 @@ class StorageService:
             settings.MINIO_ENDPOINT,
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE
+            secure=settings.MINIO_SECURE,
+            http_client=_FAST_FAIL_HTTP_CLIENT,
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
         self._available = self._ensure_bucket()
@@ -26,6 +37,8 @@ class StorageService:
             return False
 
     def upload_file(self, object_name: str, file_data: bytes, content_type: str = "application/octet-stream"):
+        if not self._available:
+            raise RuntimeError("MinIO 不可用,无法上传文件")
         try:
             self.client.put_object(
                 self.bucket_name,
@@ -41,6 +54,8 @@ class StorageService:
             raise e
 
     def list_files(self, prefix: str = "", sort_by: str = "last_modified", order: str = "desc", search_query: str = ""):
+        if not self._available:
+            return []
         try:
             # List all objects (recursive)
             objects = self.client.list_objects(self.bucket_name, prefix=prefix, recursive=True)
@@ -73,6 +88,8 @@ class StorageService:
             return []
 
     def get_file_stream(self, object_name: str):
+        if not self._available:
+            return None
         try:
             response = self.client.get_object(self.bucket_name, object_name)
             return response
@@ -81,6 +98,8 @@ class StorageService:
             return None
 
     def get_file_url(self, object_name: str):
+        if not self._available:
+            return None
         try:
             return self.client.presigned_get_object(self.bucket_name, object_name)
         except Exception as e:
@@ -88,6 +107,8 @@ class StorageService:
             return None
 
     def delete_file(self, object_name: str):
+        if not self._available:
+            raise RuntimeError("MinIO 不可用,无法删除文件")
         try:
             self.client.remove_object(self.bucket_name, object_name)
             logger.info(f"Deleted {object_name} from MinIO")
@@ -97,6 +118,8 @@ class StorageService:
             raise e
 
     def batch_delete_files(self, object_names: list):
+        if not self._available:
+            raise RuntimeError("MinIO 不可用,无法删除文件")
         try:
             from minio.deleteobjects import DeleteObject
             delete_objects = [DeleteObject(name) for name in object_names]

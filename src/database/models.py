@@ -53,6 +53,7 @@ class KnowledgeDocument(Base):
     chunk_count = Column(Integer, default=0)
     chunking_config = Column(JSON, nullable=True) # Override KB config
     error_msg = Column(Text, nullable=True)
+    celery_task_id = Column(String, nullable=True) # 真实 Celery task id，用于 Monitor
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
@@ -129,6 +130,7 @@ class EvaluationTask(Base):
     report_path = Column(String, nullable=True)
     dataset_path = Column(String, nullable=True) # New: Path to generated or uploaded dataset file
     is_custom_dataset = Column(Boolean, default=False) # New: Flag for custom upload
+    error_msg = Column(Text, nullable=True) # New: Record task-level error reason
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     results = relationship("EvaluationResult", back_populates="task")
@@ -189,6 +191,20 @@ class Assistant(Base):
 
     user = relationship("User", back_populates="assistants")
     chat_sessions = relationship("ChatSession", back_populates="assistant")
+    versions = relationship(
+        "AssistantVersion", back_populates="assistant", cascade="all, delete-orphan"
+    )
+
+class AssistantVersion(Base):
+    __tablename__ = "assistant_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assistant_id = Column(Integer, ForeignKey("assistants.id"), nullable=False)
+    version = Column(String, nullable=False)
+    config = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    assistant = relationship("Assistant", back_populates="versions")
 
 class Agent(Base):
     __tablename__ = "agents"

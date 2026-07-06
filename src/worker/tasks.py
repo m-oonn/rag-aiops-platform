@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable, Optional
 import traceback
 from sqlalchemy.orm import Session
 from src.worker.celery_app import celery_app
@@ -12,16 +12,37 @@ from src.models.vector import VectorRecord
 from src.utils.logger import logger
 import os
 
+# 进度回调签名: (state, progress_pct, message) -> None
+ProgressCallback = Callable[[str, int, str], None]
+
+
 @celery_app.task(bind=True, name="process_document_task")
 def process_document_task(self, doc_id: int):
     """
     Celery task to process a document asynchronously.
+    薄封装: 把 Celery 的 self.update_state 包成进度回调,交给纯函数 process_document。
+    """
+    return process_document(
+        doc_id,
+        progress=lambda state, pct, msg: self.update_state(
+            state=state, meta={'progress': pct, 'message': msg}
+        ),
+    )
+
+
+def process_document(doc_id: int, progress: Optional[ProgressCallback] = None) -> str:
+    """
+    文档处理纯函数(解析→分块→向量化→存 SQL→存 Milvus→更新状态)。
+
+    不依赖 Celery,可被同步路径直接调用(broker 不可用时的降级)。
+    progress 为可选进度回调,异步路径传 Celery 的 update_state,同步路径可不传。
     """
     logger.info(f"Starting processing for document ID: {doc_id}")
-    
+
     # Helper to update task state
-    def update_progress(state, progress, message):
-        self.update_state(state=state, meta={'progress': progress, 'message': message})
+    def update_progress(state, progress_pct, message):
+        if progress:
+            progress(state, progress_pct, message)
 
     db = SessionLocal()
     try:

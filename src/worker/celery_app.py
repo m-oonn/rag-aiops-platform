@@ -20,4 +20,6 @@ celery_app.conf.update(
     task_time_limit=600,  # 10 minutes timeout per task
     worker_prefetch_multiplier=1, # One task at a time per worker process for fairness
     task_acks_late=True, # Retry if worker crashes
+    broker_connection_timeout=4,  # Fast-fail when broker unreachable
+    broker_connection_retry=False,  # Don't auto-retry broker connection in producer
 )

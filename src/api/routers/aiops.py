@@ -1,18 +1,20 @@
 """运维诊断 Agent 的独立 SSE 端点(简历版)。
 
 为什么独立端点、不接进 chat/rag_service:
-  - rag_service.query() 是同步的,而 Plan-Execute-Replan 图是 async 流式;
+  - rag_service.query() 已改为 async,但 Plan-Execute-Replan 图仍需要独立 async 流式控制;
   - 诊断过程要实时推给前端(计划→逐步执行→报告),SSE 最自然;
   - 解耦: 运维诊断自成一路,不动现有 RAG 链路,demo 时单独展示。
 """
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from src.agent.aiops import aiops_service
+from src.api.dependencies import get_current_user
+from src.database.models import User
 from src.utils.logger import logger
 
 router = APIRouter()
@@ -26,7 +28,10 @@ class AIOpsRequest(BaseModel):
 
 
 @router.post("")
-async def diagnose_stream(request: AIOpsRequest):
+async def diagnose_stream(
+    request: AIOpsRequest,
+    current_user: User = Depends(get_current_user),
+):
     """故障诊断(流式 SSE)。
 
     事件流(event: message, data: JSON):

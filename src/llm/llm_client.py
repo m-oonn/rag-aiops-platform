@@ -100,17 +100,51 @@ class LLMClient:
         """
         if not self.llm:
             return "LLM Service unavailable."
-            
+
         # For general chat, we allow external knowledge
         prompt = f"""You are a helpful assistant.
-        
+
+Current date: 2026-07-02.
+
 {context}
 
 User Question: {query}
 
 Answer:"""
-        
+
         return self.generate_custom_response(prompt)
+
+    def generate_general_response_stream(self, query: str, context: str = ""):
+        """
+        纯聊天的流式版本:逐 token yield,供 SSE 端点消费。
+        与 generate_general_response 同一 prompt 拼法,只是改为流式输出。
+        """
+        if not self.llm:
+            yield "LLM Service unavailable."
+            return
+
+        prompt = f"""You are a helpful assistant.
+
+Current date: 2026-07-02.
+
+{context}
+
+User Question: {query}
+
+Answer:"""
+
+        messages = [
+            SystemMessage(content="You are a helpful assistant."),
+            HumanMessage(content=prompt)
+        ]
+
+        try:
+            for chunk in self.llm.stream(messages):
+                if chunk.content:
+                    yield chunk.content
+        except Exception as e:
+            logger.error(f"LLM stream failed: {e}")
+            yield f"[生成出错: {str(e)}]"
 
     def generate_custom_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         if not self.llm:

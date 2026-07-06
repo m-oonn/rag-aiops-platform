@@ -18,7 +18,7 @@ class QueryResponse(BaseModel):
 @router.post("/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
     try:
-        result = rag_service.query(request.query, request.top_k)
+        result = await rag_service.query(request.query, request.top_k)
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

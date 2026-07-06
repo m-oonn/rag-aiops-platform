@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from celery.result import AsyncResult
 from src.worker.celery_app import celery_app
 from src.database.sql_session import get_db
@@ -20,9 +20,8 @@ class QueueItem(BaseModel):
     progress: Optional[int]
     message: Optional[str]
     created_at: Any
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 class QueueStats(BaseModel):
     total_pending: int
@@ -50,30 +49,43 @@ def get_queue_status(
     
     result = []
     for doc in docs:
-        # Try to get task info if available? 
-        # We don't store task_id in DB currently, so we rely on doc status
-        # Ideally we should store task_id in KnowledgeDocument
-        
+        # 优先使用真实 Celery task_id；缺失时回退到 doc_id
+        task_id = doc.celery_task_id or str(doc.id)
+
+        # 若存在真实 task_id 且文档正在处理，可进一步查询 Celery 状态
+        status_str = get_status_str(doc.status)
+        progress = 0
+        if doc.celery_task_id and doc.status == 1:
+            try:
+                async_result = AsyncResult(doc.celery_task_id, app=celery_app)
+                celery_state = async_result.state
+                status_str = celery_state
+                if celery_state == "PENDING":
+                    progress = 10
+                elif celery_state == "STARTED":
+                    progress = 50
+                elif celery_state in ("SUCCESS", "FAILURE"):
+                    progress = 100
+            except Exception:
+                pass
+        elif doc.status == 1:
+            progress = 50
+        elif doc.status == 2:
+            progress = 100
+
         item = QueueItem(
-            task_id=str(doc.id), # Use doc_id as task_id for now
+            task_id=task_id,
             doc_id=doc.id,
             filename=doc.filename,
             kb_name=doc.knowledge_base.name,
-            status=get_status_str(doc.status),
-            progress=0, # Placeholder
+            status=status_str,
+            progress=progress,
             message=doc.error_msg,
-            created_at=doc.created_at
+            created_at=doc.created_at,
         )
-        
-        # If processing, maybe we can't get real-time celery progress without task_id
-        # But for now status from DB is good enough for "queue view"
-        if doc.status == 1:
-             item.progress = 50 # processing
-        elif doc.status == 2:
-             item.progress = 100
-        
+
         result.append(item)
-        
+
     return result
 
 @router.get("/stats", response_model=QueueStats)
