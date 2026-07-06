@@ -1,31 +1,31 @@
 <template>
   <div>
-    <h2>System Monitor</h2>
+    <h2>系统监控</h2>
     
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="Queue Monitor" name="queue">
+      <el-tab-pane label="队列监控" name="queue">
         <el-row :gutter="20" style="margin-bottom: 20px;">
           <el-col :span="6">
             <el-card shadow="hover">
-              <template #header>Pending</template>
+              <template #header>待处理</template>
               <div class="stat-value">{{ stats.total_pending }}</div>
             </el-card>
           </el-col>
           <el-col :span="6">
             <el-card shadow="hover">
-              <template #header>Processing</template>
+              <template #header>处理中</template>
               <div class="stat-value processing">{{ stats.total_processing }}</div>
             </el-card>
           </el-col>
           <el-col :span="6">
             <el-card shadow="hover">
-              <template #header>Failed</template>
+              <template #header>失败</template>
               <div class="stat-value failed">{{ stats.total_failed }}</div>
             </el-card>
           </el-col>
           <el-col :span="6">
             <el-card shadow="hover">
-              <template #header>Completed</template>
+              <template #header>已完成</template>
               <div class="stat-value success">{{ stats.total_completed }}</div>
             </el-card>
           </el-col>
@@ -33,75 +33,75 @@
 
         <div class="filter-bar">
           <el-radio-group v-model="filterStatus" @change="fetchQueue">
-            <el-radio-button label="">All</el-radio-button>
-            <el-radio-button label="pending">Pending</el-radio-button>
-            <el-radio-button label="processing">Processing</el-radio-button>
-            <el-radio-button label="failed">Failed</el-radio-button>
+            <el-radio-button value="">全部</el-radio-button>
+            <el-radio-button value="pending">待处理</el-radio-button>
+            <el-radio-button value="processing">处理中</el-radio-button>
+            <el-radio-button value="failed">失败</el-radio-button>
           </el-radio-group>
           <el-button @click="fetchQueue" icon="Refresh" circle style="margin-left: 10px;"></el-button>
           <div style="flex: 1"></div>
-          <el-button type="danger" @click="batchDelete" :disabled="!selectedQueueItems.length">Batch Delete</el-button>
+          <el-button type="danger" @click="batchDelete" :disabled="!selectedQueueItems.length">批量删除</el-button>
         </div>
 
         <el-table :data="queueItems" style="width: 100%" v-loading="loading" @selection-change="handleQueueSelectionChange">
           <el-table-column type="selection" width="55" />
-          <el-table-column prop="filename" label="File Name" />
-          <el-table-column prop="kb_name" label="Knowledge Base" />
-          <el-table-column prop="status" label="Status">
+          <el-table-column prop="filename" label="文件名" />
+          <el-table-column prop="kb_name" label="知识库" />
+          <el-table-column prop="status" label="状态">
             <template #default="scope">
-              <el-tag :type="getStatusType(scope.row.status)">{{ scope.row.status }}</el-tag>
+              <el-tag :type="getStatusType(scope.row.status)">{{ getQueueStatusText(scope.row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="Progress">
+          <el-table-column label="进度">
              <template #default="scope">
                  <el-progress :percentage="scope.row.progress" :status="scope.row.status === 'FAILURE' ? 'exception' : (scope.row.status === 'SUCCESS' ? 'success' : '')"></el-progress>
              </template>
           </el-table-column>
-          <el-table-column prop="message" label="Message" show-overflow-tooltip />
-          <el-table-column prop="created_at" label="Time">
+          <el-table-column prop="message" label="信息" show-overflow-tooltip />
+          <el-table-column prop="created_at" label="时间">
               <template #default="scope">
-                  {{ new Date(scope.row.created_at).toLocaleString() }}
+                  {{ formatDate(scope.row.created_at) }}
               </template>
           </el-table-column>
-          <el-table-column label="Actions">
+          <el-table-column label="操作">
               <template #default="scope">
-                  <el-button size="small" type="danger" @click="deleteQueueItem(scope.row)">Delete</el-button>
+                  <el-button size="small" type="danger" @click="deleteQueueItem(scope.row)">删除</el-button>
               </template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
       
-    <el-tab-pane label="MinIO Storage" name="minio">
+    <el-tab-pane label="MinIO 存储" name="minio">
         <div v-if="!minioConnected" style="text-align: center; padding: 20px;">
-             <p>MinIO Access Required</p>
-             <el-button type="primary" @click="minioLoginVisible = true">Login to MinIO</el-button>
-             <p style="font-size: 0.8em; color: #999; margin-top: 10px;">Please login to MinIO first to view files.</p>
+             <p>需要 MinIO 访问权限</p>
+             <el-button type="primary" @click="minioLoginVisible = true">登录 MinIO</el-button>
+             <p style="font-size: 0.8em; color: #999; margin-top: 10px;">请先登录 MinIO 以查看文件。</p>
         </div>
         <div v-else>
             <div class="filter-bar">
-               <el-input v-model="minioPrefix" placeholder="Search object name" style="width: 200px; margin-right: 10px;" @keyup.enter="fetchMinioFiles" />
+               <el-input v-model="minioPrefix" placeholder="搜索对象名称" style="width: 200px; margin-right: 10px;" @keyup.enter="fetchMinioFiles" />
                <el-button @click="fetchMinioFiles" icon="Refresh" circle></el-button>
-               <el-button type="danger" @click="batchDeleteMinio" :disabled="!selectedMinioFiles.length">Batch Delete</el-button>
-               <el-button @click="handleMinioLogout" type="text">Logout</el-button>
+               <el-button type="danger" @click="batchDeleteMinio" :disabled="!selectedMinioFiles.length">批量删除</el-button>
+               <el-button @click="handleMinioLogout" type="text">退出登录</el-button>
             </div>
             
             <el-table :data="minioFiles" style="width: 100%" v-loading="minioLoading" @selection-change="handleMinioSelectionChange">
                <el-table-column type="selection" width="55" />
-               <el-table-column prop="object_name" label="Object Name" />
-               <el-table-column prop="size" label="Size">
+               <el-table-column prop="object_name" label="对象名称" />
+               <el-table-column prop="size" label="大小">
                    <template #default="scope">
                        {{ (scope.row.size / 1024).toFixed(2) }} KB
                    </template>
                </el-table-column>
-               <el-table-column prop="last_modified" label="Last Modified">
+               <el-table-column prop="last_modified" label="最后修改时间">
                    <template #default="scope">
-                       {{ new Date(scope.row.last_modified).toLocaleString() }}
+                       {{ formatDate(scope.row.last_modified) }}
                    </template>
                </el-table-column>
-               <el-table-column label="Actions">
+               <el-table-column label="操作">
                    <template #default="scope">
-                       <el-button size="small" @click="downloadFile(scope.row.object_name)">Download</el-button>
-                       <el-button size="small" @click="viewFile(scope.row.object_name)">View</el-button>
+                       <el-button size="small" @click="downloadFile(scope.row.object_name)">下载</el-button>
+                       <el-button size="small" @click="viewFile(scope.row.object_name)">查看</el-button>
                    </template>
                </el-table-column>
             </el-table>
@@ -110,9 +110,9 @@
     </el-tabs>
     
     <!-- MinIO Login Dialog -->
-    <el-dialog v-model="minioLoginVisible" title="Login to MinIO" width="400px">
+    <el-dialog v-model="minioLoginVisible" title="登录 MinIO" width="400px">
         <el-form :model="minioForm" label-width="100px">
-            <el-form-item label="Endpoint">
+            <el-form-item label="端点">
                 <el-input v-model="minioForm.endpoint" placeholder="localhost:9000" />
             </el-form-item>
             <el-form-item label="Access Key">
@@ -123,13 +123,13 @@
             </el-form-item>
         </el-form>
         <template #footer>
-            <el-button @click="minioLoginVisible = false">Cancel</el-button>
-            <el-button type="primary" @click="handleMinioLogin">Login</el-button>
+            <el-button @click="minioLoginVisible = false">取消</el-button>
+            <el-button type="primary" @click="handleMinioLogin">登录</el-button>
         </template>
     </el-dialog>
     
     <!-- Preview Dialog -->
-    <el-dialog v-model="previewVisible" title="File Preview" width="80%" top="5vh" class="preview-dialog">
+    <el-dialog v-model="previewVisible" title="文件预览" width="80%" top="5vh" class="preview-dialog">
         <div class="preview-header">
             <h3>{{ currentPreviewFile }}</h3>
         </div>
@@ -141,10 +141,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import api from '../api' // Assuming api.js exists and exports axios instance
+import { ref, onMounted, watch } from 'vue'
+import api from '../api'
+import { formatDate } from '../utils/format'
+import { usePolling, POLL_FAST } from '../composables/usePolling'
+import { confirmAction } from '../utils/confirm'
+import { API_PREFIX } from '../utils/constants'
 import { Refresh } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { getQueueStatusType, getQueueStatusText as getQueueStatusTextFn } from '../utils/status'
 
 const activeTab = ref('queue')
 
@@ -159,7 +164,6 @@ const queueItems = ref([])
 const selectedQueueItems = ref([])
 const loading = ref(false)
 const filterStatus = ref('')
-let pollTimer = null
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const currentPreviewFile = ref('')
@@ -193,41 +197,37 @@ const refreshAll = async () => {
     queueItems.value = res.data
 }
 
-const getStatusType = (status) => {
-    if (status === 'SUCCESS') return 'success'
-    if (status === 'FAILURE') return 'danger'
-    if (status === 'PROCESSING') return 'warning'
-    return 'info'
-}
+const { start: startPolling } = usePolling(refreshAll, POLL_FAST)
+
+const getStatusType = getQueueStatusType
+const getQueueStatusText = getQueueStatusTextFn
 
 const handleQueueSelectionChange = (val) => {
     selectedQueueItems.value = val
 }
 
 const deleteQueueItem = async (row) => {
+    if (!(await confirmAction('确定要删除该任务记录吗？', '警告'))) return
     try {
-        await ElMessageBox.confirm('Are you sure to delete this task record?', 'Warning', { type: 'warning' })
-        // Need backend API support for deleting task records
-        // Assuming DELETE /monitor/tasks/{id}
         await api.delete(`/monitor/tasks/${row.task_id}`)
-        ElMessage.success('Deleted')
+        ElMessage.success('删除成功')
         fetchQueue()
         fetchStats()
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Delete failed')
+        ElMessage.error('删除失败')
     }
 }
 
 const batchDelete = async () => {
+    if (!(await confirmAction(`确定删除 ${selectedQueueItems.value.length} 个任务吗？`, '警告'))) return
     try {
-        await ElMessageBox.confirm(`Delete ${selectedQueueItems.value.length} tasks?`, 'Warning', { type: 'warning' })
         const ids = selectedQueueItems.value.map(item => item.task_id)
         await api.post('/monitor/tasks/batch-delete', { task_ids: ids })
-        ElMessage.success('Batch deleted')
+        ElMessage.success('批量删除成功')
         fetchQueue()
         fetchStats()
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Delete failed')
+        ElMessage.error('删除失败')
     }
 }
 
@@ -249,14 +249,14 @@ const handleMinioSelectionChange = (val) => {
 }
 
 const batchDeleteMinio = async () => {
+    if (!(await confirmAction(`确定删除 ${selectedMinioFiles.value.length} 个文件吗？`, '警告'))) return
     try {
-        await ElMessageBox.confirm(`Delete ${selectedMinioFiles.value.length} files?`, 'Warning', { type: 'warning' })
         const objectNames = selectedMinioFiles.value.map(item => item.object_name)
         await api.post('/storage/batch-delete', { object_names: objectNames })
-        ElMessage.success('Batch deleted')
+        ElMessage.success('批量删除成功')
         fetchMinioFiles()
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Delete failed')
+        ElMessage.error('删除失败')
     }
 }
 
@@ -266,7 +266,7 @@ const checkMinioAuth = () => {
 
 const handleMinioLogin = () => {
     if (!minioForm.value.accessKey || !minioForm.value.secretKey) {
-        ElMessage.warning('Please enter credentials')
+        ElMessage.warning('请输入凭证')
         return
     }
     // Simulate login / connection check
@@ -296,7 +296,7 @@ const fetchMinioFiles = async () => {
         minioConnected.value = true
     } catch (e) {
         console.error(e)
-        ElMessage.error('Failed to fetch MinIO files')
+        ElMessage.error('获取 MinIO 文件失败')
     } finally {
         minioLoading.value = false
     }
@@ -305,11 +305,11 @@ const fetchMinioFiles = async () => {
 const downloadFile = async (objectName) => {
     try {
         // Use proxy download endpoint
-        const url = `/api/v1/storage/download/${encodeURIComponent(objectName)}`
+        const url = `${API_PREFIX}/storage/download/${encodeURIComponent(objectName)}`
         window.open(url, '_blank')
     } catch (e) {
         console.error(e)
-        ElMessage.error('Failed to download file')
+        ElMessage.error('下载文件失败')
     }
 }
 
@@ -318,7 +318,7 @@ const viewFile = async (objectName) => {
         currentPreviewFile.value = objectName
         // Use proxy preview endpoint
         // We need full URL for iframe
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || API_PREFIX
         // If baseUrl is relative, prepend origin
         let fullBase = baseUrl
         if (baseUrl.startsWith('/')) {
@@ -329,7 +329,7 @@ const viewFile = async (objectName) => {
         previewVisible.value = true
     } catch (e) {
         console.error(e)
-        ElMessage.error('Failed to open file')
+        ElMessage.error('打开文件失败')
     }
 }
 
@@ -341,8 +341,8 @@ onMounted(() => {
       minioConnected.value = true
       fetchMinioFiles()
   }
-  
-  pollTimer = setInterval(refreshAll, 3000)
+
+  startPolling()
 })
 
 watch(activeTab, (newTab) => {
@@ -354,10 +354,6 @@ watch(activeTab, (newTab) => {
             minioLoginVisible.value = true
         }
     }
-})
-
-onUnmounted(() => {
-    if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 

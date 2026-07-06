@@ -9,6 +9,7 @@ import Assistant from '../views/Assistant.vue'
 import Agent from '../views/Agent.vue'
 import AIOps from '../views/AIOps.vue'
 import Monitor from '../views/Monitor.vue'
+import QueueMonitor from '../views/QueueMonitor.vue'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -22,6 +23,7 @@ const routes = [
   { path: '/agents', component: Agent, meta: { requiresAuth: true } },
   { path: '/aiops', component: AIOps, meta: { requiresAuth: true } },
   { path: '/monitor', component: Monitor, meta: { requiresAuth: true } },
+  { path: '/queue-monitor', component: QueueMonitor, meta: { requiresAuth: true } },
 ]
 
 const router = createRouter({

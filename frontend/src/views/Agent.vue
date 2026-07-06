@@ -213,7 +213,9 @@
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
 import api from '../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { formatDate } from '../utils/format'
+import { confirmAction } from '../utils/confirm'
 
 const agents = ref([])
 const knowledgeBases = ref([]) // Fetched KBs
@@ -280,11 +282,6 @@ const formatAgentType = (type) => {
     'plan_execute': 'Plan & Execute'
   }
   return map[type] || type
-}
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return ''
-  return new Date(dateStr).toLocaleString()
 }
 
 const fetchAgents = async () => {
@@ -386,20 +383,14 @@ const saveAgent = async () => {
 }
 
 const deleteAgent = async (id) => {
+  if (!(await confirmAction('确定要删除该智能体吗？'))) return
   try {
-    await ElMessageBox.confirm('确定要删除该智能体吗？', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
     await api.delete(`/agents/${id}`)
     ElMessage.success('删除成功')
     fetchAgents()
   } catch (e) {
-    if (e !== 'cancel') {
-      console.error(e)
-      ElMessage.error('删除失败')
-    }
+    console.error(e)
+    ElMessage.error('删除失败')
   }
 }
 

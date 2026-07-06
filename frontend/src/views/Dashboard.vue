@@ -1,21 +1,21 @@
 <template>
   <div>
-    <h2>Dashboard</h2>
-    <p>Welcome to the AIOps Agent Platform.</p>
+    <h2>工作台</h2>
+    <p>欢迎使用 AIOps 智能体平台。</p>
     <el-row :gutter="20">
       <el-col :span="8">
         <el-card shadow="hover" @click="$router.push('/knowledge-bases')">
-          Manage Knowledge Bases
+          管理知识库
         </el-card>
       </el-col>
       <el-col :span="8">
         <el-card shadow="hover" @click="$router.push('/chat')">
-          Start Chat
+          开始会话
         </el-card>
       </el-col>
       <el-col :span="8">
         <el-card shadow="hover" @click="$router.push('/evaluation')">
-          Run Evaluation
+          运行评测
         </el-card>
       </el-col>
     </el-row>

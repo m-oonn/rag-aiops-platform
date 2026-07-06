@@ -1,63 +1,63 @@
 <template>
   <div>
-    <h2>Assistants</h2>
-    <el-button type="primary" @click="openDialog()">Create Assistant</el-button>
+    <h2>助手管理</h2>
+    <el-button type="primary" @click="openDialog()">创建助手</el-button>
     
     <el-table :data="assistants" style="width: 100%; margin-top: 20px;">
-      <el-table-column prop="name" label="Name" width="180" />
-      <el-table-column prop="description" label="Description" />
-      <el-table-column prop="llm_model" label="Model" />
-      <el-table-column label="Actions">
+      <el-table-column prop="name" label="名称" width="180" />
+      <el-table-column prop="description" label="描述" />
+      <el-table-column prop="llm_model" label="模型" />
+      <el-table-column label="操作">
         <template #default="scope">
-          <el-button size="small" @click="startChat(scope.row)">Chat</el-button>
-          <el-button size="small" @click="openDialog(scope.row)">Edit</el-button>
-          <el-button size="small" type="danger" @click="deleteAssistant(scope.row.id)">Delete</el-button>
+          <el-button size="small" @click="startChat(scope.row)">会话</el-button>
+          <el-button size="small" @click="openDialog(scope.row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="deleteAssistant(scope.row.id)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? 'Edit Assistant' : 'Create Assistant'" width="60%">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑助手' : '创建助手'" width="60%">
       <el-form :model="form" label-width="140px">
         <el-tabs v-model="activeTab">
-            <el-tab-pane label="Basic Info" name="basic">
-                <el-form-item label="Name">
+            <el-tab-pane label="基本信息" name="basic">
+                <el-form-item label="名称">
                   <el-input v-model="form.name" />
                 </el-form-item>
-                <el-form-item label="Description">
+                <el-form-item label="描述">
                   <el-input v-model="form.description" />
                 </el-form-item>
-                <el-form-item label="Model">
+                <el-form-item label="模型">
                   <el-select v-model="form.llm_model">
                     <el-option label="Qwen-Max" value="qwen-max" />
                     <el-option label="Qwen-Plus" value="qwen-plus" />
                   </el-select>
                 </el-form-item>
-                <el-form-item label="System Prompt">
+                <el-form-item label="系统提示词">
                   <el-input type="textarea" v-model="form.system_prompt" :rows="4" />
                 </el-form-item>
-                <el-form-item label="Opening Remarks">
-                  <el-input type="textarea" v-model="form.greeting_message" :rows="2" placeholder="Message shown when chat starts" />
+                <el-form-item label="开场白">
+                  <el-input type="textarea" v-model="form.greeting_message" :rows="2" placeholder="聊天开始时展示的消息" />
                 </el-form-item>
-                <el-form-item label="Temperature">
+                <el-form-item label="温度">
                   <el-slider v-model="form.temperature" :min="0" :max="1" :step="0.1" show-input />
                 </el-form-item>
             </el-tab-pane>
             
-            <el-tab-pane label="Memory" name="memory">
-                <el-form-item label="Short-term Memory">
+            <el-tab-pane label="记忆" name="memory">
+                <el-form-item label="短期记忆">
                     <el-switch v-model="form.memory_config.enable_short_term" />
                 </el-form-item>
-                <el-form-item label="Window Size" v-if="form.memory_config.enable_short_term">
+                <el-form-item label="窗口大小" v-if="form.memory_config.enable_short_term">
                     <el-input-number v-model="form.memory_config.window_size" :min="1" :max="20" />
                 </el-form-item>
-                <el-form-item label="Long-term Memory">
+                <el-form-item label="长期记忆">
                     <el-switch v-model="form.memory_config.enable_long_term" />
                 </el-form-item>
             </el-tab-pane>
             
-            <el-tab-pane label="RAG & Knowledge" name="rag">
-                <el-form-item label="Knowledge Bases">
-                  <el-select v-model="form.kb_ids" multiple placeholder="Select KBs">
+            <el-tab-pane label="RAG 与知识库" name="rag">
+                <el-form-item label="知识库">
+                  <el-select v-model="form.kb_ids" multiple placeholder="选择知识库">
                     <el-option
                       v-for="item in kbs"
                       :key="item.id"
@@ -67,23 +67,23 @@
                   </el-select>
                 </el-form-item>
                 
-                <el-divider content-position="left">Retrieval Configuration</el-divider>
+                <el-divider content-position="left">检索配置</el-divider>
                 
-                <el-form-item label="Top-K Recall">
+                <el-form-item label="Top-K 召回">
                     <el-slider v-model="form.rag_config.top_k" :min="1" :max="20" show-input />
                 </el-form-item>
                 
-                <el-form-item label="Hybrid Weight">
-                    <el-tooltip content="Wait for future implementation (0.0 - 1.0)" placement="top">
+                <el-form-item label="混合权重">
+                    <el-tooltip content="待后续实现（0.0 - 1.0）" placement="top">
                         <el-slider v-model="form.rag_config.hybrid_weight" :min="0" :max="1" :step="0.1" show-input />
                     </el-tooltip>
                 </el-form-item>
                 
-                <el-form-item label="Enable Rerank">
+                <el-form-item label="启用重排">
                     <el-switch v-model="form.rag_config.enable_rerank" />
                 </el-form-item>
                 
-                <el-form-item label="Rerank Top-N" v-if="form.rag_config.enable_rerank">
+                <el-form-item label="重排 Top-N" v-if="form.rag_config.enable_rerank">
                     <el-input-number v-model="form.rag_config.rerank_top_n" :min="1" :max="20" />
                 </el-form-item>
             </el-tab-pane>
@@ -91,8 +91,8 @@
       </el-form>
       <template #footer>
         <span class="dialog-footer">
-          <el-button @click="dialogVisible = false">Cancel</el-button>
-          <el-button type="primary" @click="saveAssistant">Confirm</el-button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="saveAssistant">确定</el-button>
         </span>
       </template>
     </el-dialog>
@@ -106,16 +106,16 @@
                 <el-tag v-if="currentVersion" type="info" style="margin-left: 10px;">{{ currentVersion }}</el-tag>
             </div>
             <div class="header-right">
-                 <el-select v-model="chatModel" placeholder="Model" style="width: 150px; margin-right: 10px;">
+                 <el-select v-model="chatModel" placeholder="模型" style="width: 150px; margin-right: 10px;">
                     <el-option label="Qwen-Max" value="qwen-max" />
                     <el-option label="Qwen-Plus" value="qwen-plus" />
                  </el-select>
-                 <el-select v-model="currentVersion" placeholder="Version" style="width: 120px; margin-right: 10px;" @change="restoreVersion">
+                 <el-select v-model="currentVersion" placeholder="版本" style="width: 120px; margin-right: 10px;" @change="restoreVersion">
                     <el-option v-for="v in assistantVersions" :key="v.version" :label="v.version" :value="v.version" />
                  </el-select>
-                 <el-button type="primary" @click="saveNewVersion">Save Version</el-button>
-                 <el-button @click="startNewChat" type="success" plain style="margin-left: 10px;">New Chat</el-button>
-                 <el-button @click="clearHistory" type="danger" plain style="margin-left: 10px;">Clear History</el-button>
+                 <el-button type="primary" @click="saveNewVersion">保存版本</el-button>
+                 <el-button @click="startNewChat" type="success" plain style="margin-left: 10px;">新会话</el-button>
+                 <el-button @click="clearHistory" type="danger" plain style="margin-left: 10px;">清空历史</el-button>
             </div>
         </div>
         
@@ -124,44 +124,44 @@
             <div class="info-panel">
                 <el-scrollbar>
                     <div style="padding: 20px;">
-                        <h4>Assistant Configuration</h4>
+                        <h4>助手配置</h4>
                         <el-form :model="form" label-width="120px" label-position="top">
                             <el-tabs v-model="activeTab">
-                                <el-tab-pane label="Basic Info" name="basic">
-                                    <el-form-item label="Name">
+                                <el-tab-pane label="基本信息" name="basic">
+                                    <el-form-item label="名称">
                                       <el-input v-model="form.name" />
                                     </el-form-item>
-                                    <el-form-item label="Description">
+                                    <el-form-item label="描述">
                                       <el-input v-model="form.description" />
                                     </el-form-item>
-                                    <el-form-item label="System Prompt">
+                                    <el-form-item label="系统提示词">
                                       <el-input type="textarea" v-model="form.system_prompt" :rows="6" />
                                     </el-form-item>
-                                    <el-form-item label="Opening Remarks">
+                                    <el-form-item label="开场白">
                                       <el-input type="textarea" v-model="form.greeting_message" :rows="3" />
                                     </el-form-item>
-                                    <el-form-item label="Temperature">
+                                    <el-form-item label="温度">
                                       <el-slider v-model="form.temperature" :min="0" :max="1" :step="0.1" show-input />
                                     </el-form-item>
                                 </el-tab-pane>
                                 
-                                <el-tab-pane label="Memory" name="memory">
-                                <el-form-item label="Short-term Memory">
+                                <el-tab-pane label="记忆" name="memory">
+                                <el-form-item label="短期记忆">
                                     <el-switch v-model="form.memory_config.enable_short_term" />
                                 </el-form-item>
-                                <el-form-item label="Window Size" v-if="form.memory_config.enable_short_term">
+                                <el-form-item label="窗口大小" v-if="form.memory_config.enable_short_term">
                                     <el-input-number v-model="form.memory_config.window_size" :min="1" :max="20" />
-                                    <div class="form-tip">Number of recent turns to retain (5-10 recommended)</div>
+                                    <div class="form-tip">保留最近对话轮数（建议 5-10）</div>
                                 </el-form-item>
-                                <el-form-item label="Long-term Memory">
+                                <el-form-item label="长期记忆">
                                     <el-switch v-model="form.memory_config.enable_long_term" />
-                                    <div class="form-tip">Retrieve relevant history from vector store based on semantic similarity</div>
+                                    <div class="form-tip">基于语义相似度从向量库中检索相关历史</div>
                                 </el-form-item>
                             </el-tab-pane>
                             
-                            <el-tab-pane label="RAG & Knowledge" name="rag">
-                                    <el-form-item label="Knowledge Bases">
-                                      <el-select v-model="form.kb_ids" multiple placeholder="Select KBs" style="width: 100%;">
+                            <el-tab-pane label="RAG 与知识库" name="rag">
+                                    <el-form-item label="知识库">
+                                      <el-select v-model="form.kb_ids" multiple placeholder="选择知识库" style="width: 100%;">
                                         <el-option
                                           v-for="item in kbs"
                                           :key="item.id"
@@ -171,21 +171,21 @@
                                       </el-select>
                                     </el-form-item>
                                     
-                                    <el-divider content-position="left">Retrieval Configuration</el-divider>
+                                    <el-divider content-position="left">检索配置</el-divider>
                                     
-                                    <el-form-item label="Top-K Recall">
+                                    <el-form-item label="Top-K 召回">
                                         <el-slider v-model="form.rag_config.top_k" :min="1" :max="20" show-input />
                                     </el-form-item>
                                     
-                                    <el-form-item label="Hybrid Weight">
+                                    <el-form-item label="混合权重">
                                         <el-slider v-model="form.rag_config.hybrid_weight" :min="0" :max="1" :step="0.1" show-input />
                                     </el-form-item>
                                     
-                                    <el-form-item label="Enable Rerank">
+                                    <el-form-item label="启用重排">
                                         <el-switch v-model="form.rag_config.enable_rerank" />
                                     </el-form-item>
                                     
-                                    <el-form-item label="Rerank Top-N" v-if="form.rag_config.enable_rerank">
+                                    <el-form-item label="重排 Top-N" v-if="form.rag_config.enable_rerank">
                                         <el-input-number v-model="form.rag_config.rerank_top_n" :min="1" :max="20" />
                                     </el-form-item>
                                 </el-tab-pane>
@@ -202,7 +202,7 @@
                 </div>
                 
                 <div class="kb-info" v-if="chatLinkedKBs.length" style="padding: 10px 20px; border-bottom: 1px solid #eee;">
-                    <span style="color: #666; font-size: 0.9em; margin-right: 10px;">Linked KBs:</span>
+                    <span style="color: #666; font-size: 0.9em; margin-right: 10px;">关联知识库：</span>
                     <el-tag v-for="kb in chatLinkedKBs" :key="kb.id" size="small" style="margin-right: 5px;">{{ kb.name }}</el-tag>
                 </div>
                 
@@ -210,7 +210,7 @@
                     <div v-for="(msg, index) in chatMessages" :key="index" :class="['message', msg.role]">
                       <div class="message-content" style="white-space: pre-wrap;">{{ msg.content }}</div>
                       <div v-if="msg.sources && msg.sources.length" class="sources">
-                        <small>Sources:</small>
+                        <small>参考来源：</small>
                         <ul>
                           <li v-for="src in msg.sources" :key="src.id">
                             {{ src.text.substring(0, 50) }}...
@@ -228,7 +228,7 @@
                 <div class="input-area">
                     <el-input 
                       v-model="inputQuery" 
-                      placeholder="Type your question..." 
+                      placeholder="输入您的问题..." 
                       @keyup.enter="sendMessage"
                       :rows="3"
                       type="textarea"
@@ -236,7 +236,7 @@
                     >
                     </el-input>
                     <div style="text-align: right; margin-top: 10px;">
-                        <el-button type="primary" @click="sendMessage" icon="Position">Send</el-button>
+                        <el-button type="primary" @click="sendMessage" icon="Position">发送</el-button>
                     </div>
                 </div>
             </div>
@@ -251,8 +251,9 @@
 import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Back, Position } from '@element-plus/icons-vue'
+import { confirmAction } from '../utils/confirm'
 
 const router = useRouter()
 const assistants = ref([])
@@ -375,7 +376,8 @@ const startChat = async (row) => {
              }
         }
     } catch (e) {
-        console.error("Failed to load history", e)
+        console.error("加载历史失败", e)
+        ElMessage.error('加载会话历史失败')
     }
     
     // Fetch Versions
@@ -419,22 +421,22 @@ const startNewChat = async () => {
         if (currentChatAssistant.value.greeting_message) {
             // chatMessages.value.push({ role: 'assistant', content: currentChatAssistant.value.greeting_message })
         }
-        ElMessage.success('New chat started')
+        ElMessage.success('新会话已开始')
     } catch (e) {
-        ElMessage.error('Failed to start new chat')
+        ElMessage.error('开启新会话失败')
     }
 }
 
 const clearHistory = async () => {
     if (!currentSessionId.value) return
+    if (!(await confirmAction('确定清空会话历史吗？', '警告'))) return
     try {
-        await ElMessageBox.confirm('Clear conversation history?', 'Warning', { type: 'warning' })
         await api.delete(`/chat/sessions/${currentSessionId.value}`)
         chatMessages.value = []
         currentSessionId.value = null
-        ElMessage.success('History cleared')
+        ElMessage.success('历史已清空')
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Failed to clear history')
+        ElMessage.error('清空历史失败')
     }
 }
 
@@ -485,13 +487,13 @@ const saveNewVersion = async () => {
             config: updatedConfig
         })
         
-        ElMessage.success(`Saved version ${nextVer} and updated assistant`)
+        ElMessage.success(`已保存版本 ${nextVer} 并更新助手`)
         currentVersion.value = nextVer
         fetchVersions(currentChatAssistant.value.id)
         // Refresh main list
         fetchAssistants()
     } catch (e) {
-        ElMessage.error('Failed to save version')
+        ElMessage.error('保存版本失败')
     }
 }
 
@@ -519,17 +521,16 @@ const incrementVersion = (ver) => {
 const restoreVersion = async (verStr) => {
     // Find version config
     const verObj = assistantVersions.value.find(v => v.version === verStr)
-    if (verObj && verObj.config) {
-        try {
-            await ElMessageBox.confirm(`Restore assistant to ${verStr}?`, 'Confirm')
-            await api.put(`/assistants/${currentChatAssistant.value.id}`, verObj.config)
-            ElMessage.success('Restored')
-            // Update local state
-            chatModel.value = verObj.config.llm_model
-            fetchAssistants() // Refresh table
-        } catch (e) {
-             // cancel
-        }
+    if (!verObj || !verObj.config) return
+    if (!(await confirmAction(`确定恢复到 ${verStr} 吗？`))) return
+    try {
+        await api.put(`/assistants/${currentChatAssistant.value.id}`, verObj.config)
+        ElMessage.success('已恢复')
+        // Update local state
+        chatModel.value = verObj.config.llm_model
+        fetchAssistants() // Refresh table
+    } catch (e) {
+        ElMessage.error('恢复失败')
     }
 }
 
@@ -562,7 +563,7 @@ const sendMessage = async () => {
     scrollToBottom()
   } catch (e) {
     console.error(e)
-    chatMessages.value.push({ role: 'system', content: 'Error sending message: ' + (e.response?.data?.detail || e.message) })
+    chatMessages.value.push({ role: 'system', content: '发送消息失败：' + (e.response?.data?.detail || e.message) })
     scrollToBottom()
   } finally {
     chatLoading.value = false
@@ -625,18 +626,21 @@ const saveAssistant = async () => {
     }
     dialogVisible.value = false
     fetchAssistants()
-    ElMessage.success('Assistant saved')
+    ElMessage.success('助手保存成功')
   } catch (e) {
     console.error(e)
-    ElMessage.error('Operation failed')
+    ElMessage.error('操作失败')
   }
 }
 
 const deleteAssistant = async (id) => {
-  if (confirm('Are you sure?')) {
+  if (!(await confirmAction('确定删除吗？'))) return
+  try {
     await api.delete(`/assistants/${id}`)
     fetchAssistants()
-    ElMessage.success('Assistant deleted')
+    ElMessage.success('助手删除成功')
+  } catch (e) {
+    ElMessage.error('删除失败')
   }
 }
 
