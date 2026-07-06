@@ -7,7 +7,7 @@ class ChunkMetadata(BaseModel):
     section: Optional[str] = None
     chunk_index: int
     source: Optional[str] = None
-    # Add other relevant metadata here
+    parent_text: Optional[str] = None  # 父块原文，retrieval 时替换子块文本
 
 class Chunk(BaseModel):
     id: str  # Unique ID for the chunk (e.g., doc_id_chunk_index)

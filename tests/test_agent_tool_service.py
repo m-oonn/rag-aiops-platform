@@ -1,6 +1,6 @@
 """Agent MCP 工具执行服务的行为测试。
 
-目标：不整体 mock execute_agent_query，而是 mock 外部依赖（LLM、MCP client），
+目标：不整体 mock execute_agent_query，而是 mock 外部依赖（LLM、工具加载），
 验证 execute_agent_query 的真实决策、工具调用、降级逻辑正确。
 """
 
@@ -53,7 +53,6 @@ def _make_fake_llm_with_tool_calls(tool_calls_sequence):
     fake_llm.ainvoke = _ainvoke
 
     def _bind_tools(tools):
-        # bind_tools 后返回的对象仍需响应 ainvoke
         bound = MagicMock()
         bound.ainvoke = _ainvoke
         return bound
@@ -72,7 +71,6 @@ def _make_fake_tool(name: str, result: str, delay: float = 0.0):
             await asyncio.sleep(delay)
         return result
 
-    # 用 AsyncMock 包装，方便后续断言调用次数
     tool.ainvoke = AsyncMock(side_effect=_ainvoke)
     return tool
 
@@ -87,17 +85,15 @@ async def test_execute_agent_query_calls_tool_and_returns_final_answer():
         "final answer from llm",
     ])
 
-    fake_mcp_client = MagicMock()
-    fake_mcp_client.get_tools = AsyncMock(return_value=[fake_tool])
-
     with patch("src.services.agent_tool_service.create_agent_llm", return_value=fake_llm):
-        with patch("src.services.agent_tool_service.MultiServerMCPClient", return_value=fake_mcp_client):
+        with patch("src.services.agent_tool_service.load_tools_for_config", return_value=([fake_tool], None)):
             result = await execute_agent_query(agent, "do something")
 
     assert result["query"] == "do something"
     assert result["answer"] == "final answer from llm"
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["name"] == "fake_tool"
+    assert result["degradation"] is None
     fake_tool.ainvoke.assert_awaited_once()
 
 
@@ -107,16 +103,14 @@ async def test_execute_agent_query_falls_back_to_plain_llm_when_tools_unavailabl
     agent = _make_agent()
     fake_llm = _make_fake_llm_with_tool_calls(["plain llm answer"])
 
-    fake_mcp_client = MagicMock()
-    fake_mcp_client.get_tools = AsyncMock(side_effect=ConnectionError("MCP down"))
-
     with patch("src.services.agent_tool_service.create_agent_llm", return_value=fake_llm):
-        with patch("src.services.agent_tool_service.MultiServerMCPClient", return_value=fake_mcp_client):
+        with patch("src.services.agent_tool_service.load_tools_for_config", return_value=([], "ConnectionError: MCP down")):
             result = await execute_agent_query(agent, "do something")
 
     assert result["query"] == "do something"
     assert result["answer"] == "plain llm answer"
     assert result["tool_calls"] == []
+    assert result["degradation"] == "tools_unavailable"
 
 
 @pytest.mark.asyncio
@@ -132,6 +126,7 @@ async def test_execute_agent_query_returns_service_unavailable_when_llm_unavaila
     assert result["query"] == "do something"
     assert "LLM 服务暂不可用" in result["answer"]
     assert result["tool_calls"] == []
+    assert result["degradation"] == "llm_fallback"
 
 
 @pytest.mark.asyncio
@@ -148,16 +143,13 @@ async def test_execute_agent_query_executes_multiple_tool_calls_in_parallel():
         "final answer",
     ])
 
-    fake_mcp_client = MagicMock()
-    fake_mcp_client.get_tools = AsyncMock(return_value=[fake_tool_a, fake_tool_b])
-
     start = time.monotonic()
     with patch("src.services.agent_tool_service.create_agent_llm", return_value=fake_llm):
-        with patch("src.services.agent_tool_service.MultiServerMCPClient", return_value=fake_mcp_client):
+        with patch("src.services.agent_tool_service.load_tools_for_config", return_value=([fake_tool_a, fake_tool_b], None)):
             result = await execute_agent_query(agent, "parallel task")
     elapsed = time.monotonic() - start
 
     assert result["answer"] == "final answer"
     assert len(result["tool_calls"]) == 2
-    # 串行执行需要 ~0.2s，并发应在 0.15s 内完成
+    assert result["degradation"] is None
     assert elapsed < 0.15, f"tool calls appear sequential, elapsed={elapsed:.3f}s"

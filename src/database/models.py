@@ -242,3 +242,18 @@ class Agent(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="agents")
+
+
+class AgentExecutionLog(Base):
+    __tablename__ = "agent_execution_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    trace_id = Column(String, nullable=True, index=True)
+    query = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False)
+    tool_calls = Column(JSON, nullable=True)
+    tool_count = Column(Integer, default=0)
+    degradation = Column(String, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

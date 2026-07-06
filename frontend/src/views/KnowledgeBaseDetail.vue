@@ -388,10 +388,8 @@ const generateQA = async (row) => {
              // Catch cancel
         })
     } catch (e) {
-        if (e !== 'cancel') {
-            ElMessage.error('QA 生成失败')
-            isProcessing.value = false
-        }
+        ElMessage.error('QA 生成失败')
+        isProcessing.value = false
     }
 }
 

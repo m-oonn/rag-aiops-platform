@@ -119,6 +119,18 @@ class LocalVectorStore:
             logger.info(f"[LocalVectorStore] 删除 KB {kb_id} 的 {deleted} 条向量")
         return deleted
 
+    # ── 全量导出（供 HybridRetriever 建 BM25 索引）──
+    def get_all_chunks(self) -> List[tuple[str, str, dict]]:
+        """返回全部 chunk: [(id, text, metadata), ...]。
+
+        用于 HybridRetriever 首次检索时懒加载建 BM25 索引。
+        """
+        with self._store_lock:
+            return [
+                (entry["id"], entry["text"], entry["metadata"])
+                for entry in self._store
+            ]
+
     @property
     def size(self) -> int:
         return len(self._store)

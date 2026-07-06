@@ -12,6 +12,7 @@ from src.settings import settings
 from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage, aiops
 from src.database.sql_session import engine, Base
 from src.utils.logger import logger
+from src.utils.tracing import set_trace_id, reset_trace_id
 
 # Create Tables
 Base.metadata.create_all(bind=engine)
@@ -107,6 +108,19 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Trace ID 注入:每个请求分配唯一 trace_id,记录到结构化日志
+    @app.middleware("http")
+    async def trace_id_middleware(request: Request, call_next):
+        tid = set_trace_id()
+        request.state.trace_id = tid
+        logger.bind(trace_id=tid).debug("[{}] {} {}", tid, request.method, request.url.path)
+        try:
+            response = await call_next(request)
+            response.headers["X-Trace-ID"] = tid
+            return response
+        finally:
+            reset_trace_id()
 
     # 全局异常处理:防止未捕获的异常返回英文堆栈给前端
     @app.exception_handler(Exception)

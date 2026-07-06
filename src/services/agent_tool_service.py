@@ -4,40 +4,30 @@
 完成单轮/多轮工具执行。设计目标：与现有 RAG/chat 架构保持一致的降级策略，
 MCP 加载失败时不阻断主流程。
 
-本版本改进：
-  - 按 tools_config 缓存 MultiServerMCPClient，避免每次执行都重建连接。
-  - 支持一次 LLM 响应中多个 tool_calls 并发执行。
-  - 对 MCP 加载、工具调用、LLM 调用增加超时控制。
-  - max_iterations 等参数可从 agent.execution_config 读取。
+MCP 连接管理已统一迁移至 src/agent/mcp_client.py，本模块只做两件事：
+  1) 调 mcp_client.load_tools_for_config() 加载工具
+  2) LLM function calling 多轮工具执行
 """
 
 import asyncio
-import json
 from typing import Any, Optional
 
 from langchain_core.tools import BaseTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
+from src.agent.mcp_client import load_tools_for_config
 from src.database.models import Agent
 from src.llm.llm_client import LLMClient
 from src.agent.aiops_llm import create_agent_llm
 from src.utils.logger import logger
+from src.utils.tracing import trace_span
+from src.services.execution_log_service import write_agent_execution
 
 # 默认超时（秒）。可在 agent.execution_config 里按 Agent 覆盖。
 _DEFAULT_MCP_LOAD_TIMEOUT = 10.0
 _DEFAULT_TOOL_TIMEOUT = 30.0
 _DEFAULT_LLM_TIMEOUT = 60.0
 _DEFAULT_MAX_ITERATIONS = 5
-
-# 按 tools_config 缓存 MCP client，减少重复建连。
-# key = json.dumps(tools_config, sort_keys=True)
-_agent_mcp_clients: dict[str, MultiServerMCPClient] = {}
-
-
-def _tools_config_key(tools_config: dict) -> str:
-    """把 tools_config 转成可哈希的字符串 key，用于 client 缓存。"""
-    return json.dumps(tools_config, sort_keys=True, ensure_ascii=False)
 
 
 async def _with_timeout(coro, timeout: float, description: str):
@@ -51,58 +41,14 @@ async def _with_timeout(coro, timeout: float, description: str):
 async def load_agent_tools(agent: Agent) -> tuple[list[BaseTool], Optional[str]]:
     """根据 Agent.tools_config 加载 MCP 工具。
 
-    返回 (tools, error)。无 tools_config 或 MCP 不可用时返回空列表和错误信息，
-    不向上抛异常，避免炸掉整条调用链。
-
-    同一 tools_config 会复用已创建的 MultiServerMCPClient，避免重复建连。
+    委托给 mcp_client.load_tools_for_config()，由统一封装管理连接缓存和降级。
+    返回 (tools, error)，不向上抛异常。
     """
     tools_config = agent.tools_config
     if not tools_config:
         return [], None
-
-    cache_key = _tools_config_key(tools_config)
-    try:
-        client = _agent_mcp_clients.get(cache_key)
-        if client is None:
-            logger.info("Agent %s 创建新的 MultiServerMCPClient", agent.id)
-            client = MultiServerMCPClient(tools_config)
-            _agent_mcp_clients[cache_key] = client
-
-        tools = await _with_timeout(
-            client.get_tools(),
-            timeout=_DEFAULT_MCP_LOAD_TIMEOUT,
-            description=f"Agent {agent.id} 加载 MCP 工具",
-        )
-        logger.info("Agent %s 加载 %d 个 MCP 工具", agent.id, len(tools))
-        return tools, None
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error("Agent %s 加载 MCP 工具失败: %s", agent.id, error_msg)
-        # 加载失败时清掉缓存，下次重试会重新建连
-        _agent_mcp_clients.pop(cache_key, None)
-        return [], error_msg
-
-
-def close_agent_tool_client(tools_config: dict) -> None:
-    """关闭指定 tools_config 对应的 MCP client（若存在）。"""
-    cache_key = _tools_config_key(tools_config)
-    client = _agent_mcp_clients.pop(cache_key, None)
-    if client is not None:
-        try:
-            # 部分版本的 MultiServerMCPClient 可能没有 close 方法
-            close_fn = getattr(client, "close", None) or getattr(client, "aclose", None)
-            if close_fn is not None:
-                asyncio.create_task(close_fn())
-                logger.info("已关闭 tools_config 对应的 MCP client")
-        except Exception as e:
-            logger.warning("关闭 MCP client 时出错: %s", e)
-
-
-def close_all_agent_tool_clients() -> None:
-    """关闭所有缓存的 MCP client。适合应用退出时调用。"""
-    for cache_key in list(_agent_mcp_clients.keys()):
-        tools_config = json.loads(cache_key)
-        close_agent_tool_client(tools_config)
+    logger.info("Agent %s 加载 MCP 工具", agent.id)
+    return await load_tools_for_config(tools_config, timeout=_DEFAULT_MCP_LOAD_TIMEOUT)
 
 
 def _get_agent_llm(agent: Agent):
@@ -111,7 +57,6 @@ def _get_agent_llm(agent: Agent):
     优先使用 Agent 专属的 create_agent_llm()（支持 function calling），
     失败时降级到 RAG 路径的 LLMClient。
     """
-    # 从 agent.llm_config 读取模型配置（如果有）
     model = None
     temperature = 0.0
     if agent.llm_config and isinstance(agent.llm_config, dict):
@@ -170,20 +115,15 @@ async def execute_agent_query(
     query: str,
     llm_client: Optional[LLMClient] = None,
 ) -> dict[str, Any]:
-    """执行 Agent 的一次查询：加载工具 -> LLM 决策 -> 调用工具 -> 返回结果。
-
-    降级链：
-      1. 工具加载成功 → LLM function calling 多轮工具执行
-      2. 工具加载失败 → 使用 Agent system_prompt 做纯 LLM 问答（不返回错误信息给用户）
-      3. LLM 也不可用 → 返回服务不可用提示
-    """
-    # 获取 Agent 专用 LLM（ChatOpenAI compatible-mode，支持 function calling）
-    agent_llm = _get_agent_llm(agent)
+    async with trace_span("execute_agent_query", agent_id=agent.id):
+        agent_llm = _get_agent_llm(agent)
     if agent_llm is None:
+        _write_log(agent.id, query, "LLM 服务暂不可用，请稍后重试。", None, "llm_fallback")
         return {
             "query": query,
             "answer": "LLM 服务暂不可用，请稍后重试。",
             "tool_calls": [],
+            "degradation": "llm_fallback",
         }
 
     exec_config = _get_execution_config(agent)
@@ -192,7 +132,6 @@ async def execute_agent_query(
     tool_timeout = exec_config.get("tool_timeout", _DEFAULT_TOOL_TIMEOUT)
 
     system_prompt = agent.system_prompt or "You are a helpful assistant."
-    # Ensure Markdown output instruction is appended if not already present
     if "Markdown" not in system_prompt and "markdown" not in system_prompt:
         system_prompt += "\n\n请使用 Markdown 格式输出回答，合理使用标题、列表、加粗、代码块等排版。"
 
@@ -200,7 +139,6 @@ async def execute_agent_query(
     tools, error = await load_agent_tools(agent)
 
     if error or not tools:
-        # 工具不可用 → 降级为纯 LLM 问答（用 system_prompt 引导）
         if error:
             logger.info("Agent %s 工具加载失败，降级为纯 LLM 问答", agent.id)
         try:
@@ -218,10 +156,12 @@ async def execute_agent_query(
             logger.error("Agent %s 纯 LLM 降级也失败: %s", agent.id, e)
             answer = "抱歉，工具服务暂时不可用，请稍后重试。"
 
+        _write_log(agent.id, query, answer, None, "tools_unavailable")
         return {
             "query": query,
             "answer": answer,
             "tool_calls": [],
+            "degradation": "tools_unavailable",
         }
 
     # 工具可用 → function calling 多轮执行
@@ -239,28 +179,33 @@ async def execute_agent_query(
         )
     except Exception as e:
         logger.error("Agent %s LLM 决策失败: %s", agent.id, e)
+        _write_log(agent.id, query, "模型决策时出错，请稍后重试。", None, "llm_fallback")
         return {
             "query": query,
             "answer": "模型决策时出错，请稍后重试。",
             "tool_calls": [],
+            "degradation": "llm_fallback",
         }
 
     executed_tool_calls: list[dict[str, Any]] = []
+    any_tool_failed = False
     for _ in range(max_iterations):
         if not response.tool_calls:
             break
 
-        # 记录本次迭代所有工具调用
         for tc in response.tool_calls:
             executed_tool_calls.append({
                 "name": tc.get("name"),
                 "args": tc.get("args") or {},
             })
 
-        # 并发执行所有 tool_calls
         results = await _execute_tool_calls(
             agent, tools, response.tool_calls, tool_timeout
         )
+
+        for _, tool_name, tool_result in results:
+            if isinstance(tool_result, str) and tool_result.startswith("Error executing"):
+                any_tool_failed = True
 
         messages.append(response)
         for tool_call_id, tool_name, tool_result in results:
@@ -277,14 +222,30 @@ async def execute_agent_query(
             )
         except Exception as e:
             logger.error("Agent %s LLM 再决策失败: %s", agent.id, e)
+            _write_log(agent.id, query, "模型再决策时出错，请稍后重试。", executed_tool_calls, "llm_fallback")
             return {
                 "query": query,
                 "answer": "模型再决策时出错，请稍后重试。",
                 "tool_calls": executed_tool_calls,
+                "degradation": "llm_fallback",
             }
 
+    degradation = "tools_partial" if any_tool_failed else None
+    _write_log(agent.id, query, response.content, executed_tool_calls, degradation)
     return {
         "query": query,
         "answer": response.content,
         "tool_calls": executed_tool_calls,
+        "degradation": degradation,
     }
+
+
+def _write_log(agent_id: int, query: str, answer: str, tool_calls: list | None, degradation: str | None) -> None:
+    """同步写执行日志，内部吞异常。"""
+    try:
+        write_agent_execution(
+            agent_id=agent_id, query=query, answer=answer,
+            tool_calls=tool_calls, degradation=degradation,
+        )
+    except Exception as e:
+        logger.warning("[execute_agent_query] write_agent_execution 失败: %s", e)

@@ -14,7 +14,7 @@ import pytest
 
 from src.agent.aiops import AIOpsService
 from src.agent.aiops.planner import Plan
-from src.agent.aiops.replanner import Act, Response
+from src.agent.aiops.strategies.default import Act, Response
 
 
 def _make_fake_tool(name: str, result: str):
@@ -99,8 +99,8 @@ def _aiops_patches(base_llm, fake_tools, plan_steps=None, act_action="respond", 
         patch("src.agent.aiops.executor.load_agent_tools", new_callable=AsyncMock, return_value=(fake_tools, None)),
 
         # replanner 的本地引用
-        patch("src.agent.aiops.replanner.create_agent_llm", return_value=base_llm),
-        patch("src.agent.aiops.replanner.ainvoke_structured", side_effect=_structured_side_effect(
+        patch("src.agent.aiops.strategies.default.create_agent_llm", return_value=base_llm),
+        patch("src.agent.aiops.strategies.default.ainvoke_structured", side_effect=_structured_side_effect(
             plan_steps=plan_steps, act_action=act_action, response_text=response_text
         )),
     )

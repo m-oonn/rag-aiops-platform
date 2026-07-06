@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     ENABLE_MULTI_HOP: bool = True
     MAX_HOP: int = 3
 
+    # —— AIOps Agent Config ——
+    # Phase 3 动态分类策略开关
+    ENABLE_DYNAMIC_CLASSIFICATION: bool = False
+
     # Memory Config
     SHORT_TERM_MEMORY_TTL: int = 3600  # 1 hour
     LONG_TERM_MEMORY_COLLECTION: str = "user_memory"

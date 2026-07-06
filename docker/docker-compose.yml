@@ -7,7 +7,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: rag_pdf_system
     ports:
-      - "8000:8000"
+      - "8200:8000"
     volumes:
       - ../:/app
       - ../data:/app/data
@@ -64,6 +64,22 @@ services:
       - redis
     networks:
       - rag_net
+
+  frontend:
+    image: node:20-alpine
+    container_name: rag_frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5273"
+    ports:
+      - "5273:5273"
+    volumes:
+      - ../frontend:/app
+    depends_on:
+      - app
+    networks:
+      - rag_net
+    environment:
+      - VITE_API_BASE=http://app:8000
 
   rabbitmq:
     image: rabbitmq:3-management

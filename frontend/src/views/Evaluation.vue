@@ -399,7 +399,7 @@ const fetchTasks = async () => {
         const res = await api.get('/evaluations/tasks')
         tasks.value = res.data
     } catch (e) {
-        // ElMessage.error('Failed to load tasks')
+        console.warn('加载任务列表失败:', e)
     }
 }
 

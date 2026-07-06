@@ -1,22 +1,18 @@
-"""MCP 客户端封装(精简版,从 OnCall 的 app/agent/mcp_client.py 提炼)。
+"""MCP 客户端统一封装（全局单例 + per-config 缓存）。
 
-只做两件事,够 Phase 1 本地 mock 用:
-  1) 全局单例:整个应用只建一个 MultiServerMCPClient,避免每次提问都重连 8003/8004
-  2) 优雅降级:工具加载失败时返回 (空列表, 错误信息),而不是抛异常炸掉整条链
+提供两层 API：
+  - 固定配置层（AIOps 用）：get_mcp_client() / load_mcp_tools_safe()
+    全局单例，读 settings.MCP_SERVERS。整个应用只建一次。
+  - 动态配置层（用户 Agent 用）：get_mcp_client_for_config() / load_tools_for_config()
+    按 tools_config 字典缓存 MultiServerMCPClient，不同配置不共享连接。
 
-本版本补充(与 src/services/agent_tool_service.py 保持一致):
-  - 对 get_tools() 增加超时控制,避免 MCP 不可用时请求挂死。
-  - 提供 reset_mcp_client()/close_mcp_client(),支持重连与优雅关闭。
-  - 加载失败时自动重置单例,下次调用会重新建连。
-
-刻意没做(等接真实 Prometheus 再补,见下方 TODO):
-  - 重试拦截器(指数退避):本地 127.0.0.1 几乎不失败,过早加只会拖慢 mock 调试
-  - 异常链展开(format_exception_chain):并发多工具报错才需要,本地用不上
-为什么分阶段:本地 mock 抽走了网络/数据的不确定性,代码可以很薄;接真实云环境
-时不确定性回来了,那时再补抗噪能力。对的阶段做对的事(YAGNI)。
+设计原则：
+  - 超时、错误处理、失败后重置逻辑只在此文件，不散落到各消费方。
+  - 加载失败返回 (空列表, 错误信息) 而非抛异常，上游自行决定是否降级。
 """
 
 import asyncio
+import json
 import logging
 from typing import Any, Optional
 
@@ -27,71 +23,48 @@ from src.settings import settings
 
 logger = logging.getLogger("mcp_client")
 
-# 全局单例(延迟初始化):模块级变量,整个进程共享同一个客户端实例
+# ── 全局单例（固定配置，AIOps 用） ──────────────────────────────
 _mcp_client: Optional[MultiServerMCPClient] = None
 
-# 默认超时(秒),与 agent_tool_service.py 保持一致
+# ── per-config 缓存（动态配置，用户 Agent 用） ────────────────────
+_config_clients: dict[str, MultiServerMCPClient] = {}
+
+# ── 默认超时（秒） ─────────────────────────────────────────────
 _DEFAULT_MCP_LOAD_TIMEOUT = 10.0
 
 
 async def _with_timeout(coro, timeout: float, description: str):
-    """包装协程,增加超时保护。超时时抛出可读异常。"""
+    """包装协程，增加超时保护。超时时抛出可读异常。"""
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError as e:
         raise asyncio.TimeoutError(f"{description} 超时({timeout}s)") from e
 
 
+def _tools_config_key(tools_config: dict) -> str:
+    """把 tools_config 转成可哈希的字符串 key，用于 client 缓存。"""
+    return json.dumps(tools_config, sort_keys=True, ensure_ascii=False)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 固定配置层——全局单例（AIOps 消费）
+# ═══════════════════════════════════════════════════════════════
+
+
 def get_mcp_client() -> MultiServerMCPClient:
-    """获取全局唯一的 MCP 客户端(单例)。第一次调用时创建,之后复用同一个。
-
-    为什么单例:真实服务里每次用户提问都重建客户端会反复重连 8003/8004,又慢又费连接。
-    单例 = 整个应用只建一次,大家复用。
-
-    注意:adapters 0.1.0+ 起 MultiServerMCPClient 不再是上下文管理器,
-    直接 MultiServerMCPClient(servers) new 出来即可用,不需要 async with / __aenter__。
-    """
+    """获取全局唯一的 MCP 客户端（单例）。读 settings.MCP_SERVERS。"""
     global _mcp_client
-
     if _mcp_client is None:
         logger.info("创建新的 MultiServerMCPClient 连接 MCP 服务: %s", settings.MCP_SERVERS)
         _mcp_client = MultiServerMCPClient(settings.MCP_SERVERS)
     return _mcp_client
 
 
-def reset_mcp_client() -> None:
-    """重置全局单例,下次 get_mcp_client() 会重新创建连接。
-
-    适用场景:MCP 服务重启后,旧连接可能失效,调用此方后下次自动重连。
-    注意:本方法不会关闭旧 client,如需关闭请先用 close_mcp_client()。
-    """
-    global _mcp_client
-    _mcp_client = None
-    logger.info("MCP 客户端单例已重置,下次调用将重新建连")
-
-
-def close_mcp_client() -> None:
-    """关闭并清空当前全局 MCP 客户端。"""
-    global _mcp_client
-    if _mcp_client is not None:
-        try:
-            close_fn = getattr(_mcp_client, "close", None) or getattr(_mcp_client, "aclose", None)
-            if close_fn is not None:
-                asyncio.create_task(close_fn())
-                logger.info("已关闭全局 MCP 客户端")
-        except Exception as e:
-            logger.warning("关闭全局 MCP 客户端时出错: %s", e)
-        finally:
-            _mcp_client = None
-
-
 async def load_mcp_tools_safe() -> tuple[list[BaseTool], Optional[str]]:
-    """加载 MCP 工具;失败时返回 (空列表, 错误信息),不向上抛异常(优雅降级)。
-
-    好处:某个 MCP 服务挂了,Agent 还能用剩下能连上的工具,不至于整条链崩。
+    """加载全局单例 MCP 工具；失败时返回 (空列表, 错误信息)，不抛异常。
 
     Returns:
-        (tools, error): 成功时 error 为 None;失败时 tools 为 [] 且 error 为可读信息。
+        (tools, error): 成功时 error 为 None；失败时 tools 为 [] 且 error 为可读信息。
     """
     try:
         client = get_mcp_client()
@@ -103,14 +76,107 @@ async def load_mcp_tools_safe() -> tuple[list[BaseTool], Optional[str]]:
         logger.info("成功加载 %d 个 MCP 工具", len(tools))
         return tools, None
     except Exception as e:
-        # TODO(接真实环境): MCP 底层用 TaskGroup,异常常被包成 ExceptionGroup,
-        #   到时搬 OnCall 的 format_exception_chain 递归展开,定位真实子异常。
         error_msg = f"{type(e).__name__}: {e}"
         logger.warning("加载 MCP 工具失败(已降级): %s", error_msg)
-        # 失败后重置单例,下次重试会重新建连,避免长期持有坏连接
         reset_mcp_client()
         return [], error_msg
 
 
-# TODO(接真实 Prometheus 时再补): retry_interceptor 指数退避重试 + get_mcp_client_with_retry
-#   本地 mock 几乎不失败,先不加,避免调试 mock 时被拦截器绕晕。
+def reset_mcp_client() -> None:
+    """重置全局单例，下次 get_mcp_client() 会重新创建连接。"""
+    global _mcp_client
+    _mcp_client = None
+    logger.info("全局 MCP 客户端单例已重置，下次调用将重新建连")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 动态配置层——per-config 缓存（用户 Agent 消费）
+# ═══════════════════════════════════════════════════════════════
+
+
+def get_mcp_client_for_config(tools_config: dict) -> MultiServerMCPClient:
+    """获取指定 tools_config 对应的 MCP 客户端（有缓存则复用）。
+
+    同一份 tools_config（JSON 序列化相同）共享同一个 MultiServerMCPClient，
+    避免重复建连。不同配置各拥有独立连接。
+    """
+    if not tools_config:
+        raise ValueError("tools_config 为空，无法创建 MCP 客户端")
+    cache_key = _tools_config_key(tools_config)
+    client = _config_clients.get(cache_key)
+    if client is None:
+        logger.info("创建 per-config MultiServerMCPClient: %s", cache_key[:60])
+        client = MultiServerMCPClient(tools_config)
+        _config_clients[cache_key] = client
+    return client
+
+
+def close_client_for_config(tools_config: dict) -> None:
+    """关闭指定 tools_config 对应的 MCP client（若存在）并清除缓存。"""
+    cache_key = _tools_config_key(tools_config)
+    client = _config_clients.pop(cache_key, None)
+    if client is not None:
+        _close_client(client, f"tools_config({cache_key[:40]})")
+
+
+async def load_tools_for_config(
+    tools_config: dict,
+    timeout: float = _DEFAULT_MCP_LOAD_TIMEOUT,
+) -> tuple[list[BaseTool], Optional[str]]:
+    """按 tools_config 加载 MCP 工具。
+
+    与 load_mcp_tools_safe() 行为一致，区别在于使用 per-config 客户端。
+    返回 (tools, error)，不抛异常。
+    """
+    if not tools_config:
+        return [], None
+    cache_key = _tools_config_key(tools_config)
+    try:
+        client = get_mcp_client_for_config(tools_config)
+        tools = await _with_timeout(
+            client.get_tools(),
+            timeout=timeout,
+            description=f"加载 per-config MCP 工具",
+        )
+        logger.info("per-config 加载 %d 个 MCP 工具 (key=%s)", len(tools), cache_key[:40])
+        return tools, None
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        logger.warning("per-config 加载 MCP 工具失败(key=%s): %s", cache_key[:40], error_msg)
+        # 加载失败时清掉缓存，下次重试会重新建连
+        _config_clients.pop(cache_key, None)
+        return [], error_msg
+
+
+# ═══════════════════════════════════════════════════════════════
+# 公共清理
+# ═══════════════════════════════════════════════════════════════
+
+
+def _close_client(client: Any, label: str) -> None:
+    """安全关闭一个 MCP client。"""
+    try:
+        close_fn = getattr(client, "close", None) or getattr(client, "aclose", None)
+        if close_fn is not None:
+            asyncio.create_task(close_fn())
+            logger.info("已关闭 MCP client (%s)", label)
+    except Exception as e:
+        logger.warning("关闭 MCP client (%s) 时出错: %s", label, e)
+
+
+def close_mcp_client() -> None:
+    """关闭并清空全局单例 MCP 客户端。"""
+    global _mcp_client
+    if _mcp_client is not None:
+        _close_client(_mcp_client, "全局单例")
+        _mcp_client = None
+
+
+def close_all_clients() -> None:
+    """关闭所有 MCP 客户端（全局单例 + per-config 缓存）。应用退出时调用。"""
+    close_mcp_client()
+    for cache_key in list(_config_clients.keys()):
+        client = _config_clients.pop(cache_key, None)
+        if client is not None:
+            _close_client(client, f"config({cache_key[:40]})")
+    logger.info("所有 MCP 客户端已关闭")
