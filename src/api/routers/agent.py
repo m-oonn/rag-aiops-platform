@@ -120,14 +120,14 @@ def create_agent(
         user_id=current_user.id,
 
         system_prompt=agent_in.system_prompt,
-        tools_config={k: v.model_dump() for k, v in agent_in.tools_config.items()} if agent_in.tools_config else None,
+        tools_config={k: v.model_dump(exclude_none=True) for k, v in agent_in.tools_config.items()} if agent_in.tools_config else None,
         knowledge_config=agent_in.knowledge_config,
         memory_config=agent_in.memory_config,
         reasoning_config=agent_in.reasoning_config,
         security_config=agent_in.security_config,
         interaction_config=agent_in.interaction_config,
-        llm_config=agent_in.llm_config.model_dump() if agent_in.llm_config else None,
-        execution_config=agent_in.execution_config.model_dump() if agent_in.execution_config else None,
+        llm_config=agent_in.llm_config.model_dump(exclude_none=True) if agent_in.llm_config else None,
+        execution_config=agent_in.execution_config.model_dump(exclude_none=True) if agent_in.execution_config else None,
 
         config=agent_in.config
     )
@@ -175,11 +175,11 @@ def update_agent(
     update_data = agent_in.model_dump(exclude_unset=True)
     # Pydantic 子模型需要再转一层 dict，方便 SQLAlchemy JSON 字段存储
     if "tools_config" in update_data and update_data["tools_config"] is not None:
-        update_data["tools_config"] = {k: v.model_dump() if hasattr(v, "model_dump") else v for k, v in update_data["tools_config"].items()}
+        update_data["tools_config"] = {k: v.model_dump(exclude_none=True) if hasattr(v, "model_dump") else v for k, v in update_data["tools_config"].items()}
     if "llm_config" in update_data and update_data["llm_config"] is not None:
-        update_data["llm_config"] = update_data["llm_config"].model_dump() if hasattr(update_data["llm_config"], "model_dump") else update_data["llm_config"]
+        update_data["llm_config"] = update_data["llm_config"].model_dump(exclude_none=True) if hasattr(update_data["llm_config"], "model_dump") else update_data["llm_config"]
     if "execution_config" in update_data and update_data["execution_config"] is not None:
-        update_data["execution_config"] = update_data["execution_config"].model_dump() if hasattr(update_data["execution_config"], "model_dump") else update_data["execution_config"]
+        update_data["execution_config"] = update_data["execution_config"].model_dump(exclude_none=True) if hasattr(update_data["execution_config"], "model_dump") else update_data["execution_config"]
 
     for field, value in update_data.items():
         setattr(agent, field, value)

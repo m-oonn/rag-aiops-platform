@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     
     # Rerank Config
     ENABLE_RERANK: bool = True
-    RERANK_MODEL: str = "gte-rerank"  # DashScope rerank model
+    RERANK_MODEL: str = "gte-rerank-v2"  # DashScope rerank model (v2 is current)
     RERANK_TOP_N: int = 5
     
     # Multi-hop Config
@@ -86,13 +86,15 @@ class Settings(BaseSettings):
     # 注意: 端口避开 Windows 保留段(7911-8010,Hyper-V/WSL 动态占用),否则撞 winerror 10013。
     MCP_MONITOR_URL: str = "http://127.0.0.1:8104/mcp"  # 指标服务: query_cpu_metrics / query_memory_metrics
     MCP_CLS_URL: str = "http://127.0.0.1:8103/mcp"      # 日志服务: search_topic_by_service_name / search_log
+    MCP_RAG_URL: str = "http://127.0.0.1:8105/mcp"  # 知识库检索: search_knowledge_base / list_knowledge_bases
 
     @property
     def MCP_SERVERS(self) -> dict:
-        """聚合给 MultiServerMCPClient 的配置字典。改地址只动上面两行,这里自动跟随。"""
+        """聚合给 MultiServerMCPClient 的配置字典。改地址只动上面几行,这里自动跟随。"""
         return {
             "monitor": {"transport": "streamable_http", "url": self.MCP_MONITOR_URL},
             "cls": {"transport": "streamable_http", "url": self.MCP_CLS_URL},
+            "knowledge_base": {"transport": "streamable_http", "url": self.MCP_RAG_URL},
         }
 
     model_config = SettingsConfigDict(

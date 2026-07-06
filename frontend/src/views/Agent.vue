@@ -352,19 +352,30 @@ const openDialog = (row = null) => {
 
 const saveAgent = async () => {
   try {
+    // Transform frontend form to match backend AgentCreate/AgentUpdate schema
     const dataToSave = {
       name: form.name,
       description: form.description,
       type: form.type,
       system_prompt: form.system_prompt,
-      tools_config: form.tools_config,
+      // tools_config: frontend {tools, permissions} is incompatible with
+      // backend dict[str, MCPServerConfig]. Only send if user configured
+      // MCP server URLs (future enhancement). For now, omit to avoid 422.
       knowledge_config: form.knowledge_config,
       memory_config: form.memory_config,
       reasoning_config: form.reasoning_config,
       security_config: form.security_config,
       interaction_config: form.interaction_config,
-      llm_config: form.llm_config,
-      execution_config: form.execution_config,
+      llm_config: {
+        model: form.llm_config.model_name,  // frontend: model_name → backend: model
+        temperature: form.llm_config.temperature,
+        max_tokens: form.llm_config.max_tokens,
+      },
+      execution_config: {
+        llm_timeout: form.execution_config.timeout,  // frontend: timeout → backend: llm_timeout
+        tool_timeout: form.execution_config.timeout,
+        max_iterations: form.execution_config.retry_times || 5,
+      },
     }
 
     if (isEdit.value) {

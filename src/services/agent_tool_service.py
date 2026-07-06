@@ -135,6 +135,17 @@ async def execute_agent_query(
     if "Markdown" not in system_prompt and "markdown" not in system_prompt:
         system_prompt += "\n\n请使用 Markdown 格式输出回答，合理使用标题、列表、加粗、代码块等排版。"
 
+    # 工具调用指导：避免 LLM 手动计算时间戳导致格式错误
+    _TOOL_GUIDANCE = (
+        "\n\n【工具调用注意事项】"
+        "\n1. 如果工具的时间参数(start_time/end_time)是可选的，直接省略它们，工具会使用合理的默认值。"
+        "\n2. 不要尝试用 get_current_timestamp() 做数学运算来生成时间参数——结果往往是错误的。"
+        "\n3. 如果需要指定时间，使用 'YYYY-MM-DD HH:MM:SS' 格式（如 '2026-07-06 12:00:00'），不要用毫秒时间戳。"
+        "\n4. 调用监控类工具时，优先使用默认时间范围（通常是最近 30 分钟或 1 小时）。"
+    )
+    if "工具调用" not in system_prompt and "tool" not in system_prompt.lower():
+        system_prompt += _TOOL_GUIDANCE
+
     # 加载 MCP 工具
     tools, error = await load_agent_tools(agent)
 

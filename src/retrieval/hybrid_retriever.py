@@ -77,35 +77,57 @@ class HybridRetriever(BaseRetriever):
         self._bm25_populated = False
 
     def _ensure_bm25_indexed(self, kb_ids: Any = None) -> None:
-        """懒加载 BM25 索引：首次检索时从向量库全量拉取 chunks。
+        """懒加载 BM25 索引：首次检索时从 SQLite 全量拉取 chunks。
 
-        临时方案——只有首次调用 retrieve 时建一次索引。
-        增量更新在有新文档上传后调用 index_chunks 触发。
+        优先从 SQLite document_chunks + knowledge_documents 加载，
+        因为 LocalVectorStore 是进程级内存单例，重启后数据丢失。
         """
         if self._bm25_populated or self.bm25.is_indexed:
             return
         try:
-            # 从 Milvus/本地存储全量拉取
-            from src.database.vector_db import MilvusClient
-            from src.database.local_vector_store import LocalVectorStore
+            indexed = []
 
-            milvus = MilvusClient()
-            local = LocalVectorStore()
-            # 本地存储持有所有 chunk 副本
-            chunks = local.get_all_chunks()
-            if not chunks:
+            # 优先从 SQLite 加载（持久化存储，重启后仍可用）
+            try:
+                from src.database.sql_session import SessionLocal
+                from sqlalchemy import text as sql_text
+
+                db = SessionLocal()
+                try:
+                    rows = db.execute(sql_text(
+                        "SELECT dc.chunk_uid, dc.content, kd.kb_id "
+                        "FROM document_chunks dc "
+                        "JOIN knowledge_documents kd ON dc.doc_id = kd.id"
+                    )).fetchall()
+                    for row in rows:
+                        chunk_uid, content, kb_id = row[0], row[1], row[2]
+                        if content:
+                            indexed.append((str(chunk_uid), str(content), {"kb_id": kb_id}))
+                    if indexed:
+                        logger.info("[hybrid_retriever] 从 SQLite 加载 %d chunks 建 BM25 索引", len(indexed))
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.warning("[hybrid_retriever] SQLite 加载 chunks 失败: %s, 尝试 LocalVectorStore", e)
+
+            # SQLite 无数据时降级到 LocalVectorStore
+            if not indexed:
+                from src.database.local_vector_store import LocalVectorStore
+                local = LocalVectorStore()
+                chunks = local.get_all_chunks()
+                if chunks:
+                    for cid, text, metadata in chunks:
+                        if text:
+                            indexed.append((str(cid), str(text), metadata))
+                    logger.info("[hybrid_retriever] 从 LocalVectorStore 加载 %d chunks", len(indexed))
+
+            if not indexed:
                 logger.info("[hybrid_retriever] 无 chunks 可建 BM25 索引")
                 self._bm25_populated = True
                 return
 
-            indexed = []
-            for cid, text, metadata in chunks:
-                if text:
-                    indexed.append((str(cid), str(text), metadata))
-
-            if indexed:
-                self.bm25.index_chunks(indexed)
-                logger.info("[hybrid_retriever] BM25 索引完成: %d chunks", len(indexed))
+            self.bm25.index_chunks(indexed)
+            logger.info("[hybrid_retriever] BM25 索引完成: %d chunks", len(indexed))
             self._bm25_populated = True
         except Exception as e:
             logger.warning("[hybrid_retriever] BM25 索引懒加载失败: %s", e)

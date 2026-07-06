@@ -144,6 +144,17 @@ def create_app() -> FastAPI:
     app.include_router(evaluation.router, prefix=settings.API_PREFIX + "/evaluations", tags=["Evaluation"])
     app.include_router(loadfile.router, prefix=settings.API_PREFIX + "/upload", tags=["File Management"]) # Legacy
 
+    # RAG MCP Server: 使用独立进程模式（同 monitor/cls server），不在此挂载
+    # 独立进程: python mcp_servers/rag_server.py (端口 8105)
+    # 如需同进程模式，取消下面的注释:
+    # try:
+    #     from mcp_servers.rag_server import create_rag_mcp_app
+    #     rag_mcp_app = create_rag_mcp_app()
+    #     app.mount("/mcp/rag", rag_mcp_app)
+    #     logger.info("RAG MCP Server 已挂载到 /mcp/rag")
+    # except Exception as e:
+    #     logger.warning("RAG MCP Server 挂载失败: %s", e)
+
     return app
 
 app = create_app()

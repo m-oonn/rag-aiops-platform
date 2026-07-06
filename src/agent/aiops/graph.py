@@ -6,6 +6,7 @@
 """
 
 from typing import Any, AsyncGenerator, Dict, Optional
+import time
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -67,7 +68,9 @@ class AIOpsService:
     async def execute(
         self, user_input: str, session_id: str = "default"
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        async with trace_span("aiops.execute", session_id=session_id):
+        # 每次诊断使用唯一 thread_id,防止 MemorySaver 累积 past_steps
+        unique_session = f"{session_id}-{int(time.time() * 1000)}"
+        async with trace_span("aiops.execute", session_id=unique_session):
             logger.info(f"[aiops][{session_id}] 开始诊断: {user_input}")
 
             if not user_input or not user_input.strip():
@@ -85,7 +88,7 @@ class AIOpsService:
                 "past_steps": [],
                 "response": "",
             }
-            config = {"configurable": {"thread_id": session_id}}
+            config = {"configurable": {"thread_id": unique_session}}
 
             try:
                 async for event in self.graph.astream(

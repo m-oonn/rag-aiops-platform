@@ -10,6 +10,42 @@ from src.services.memory_service import MemorySystem
 from src.services.agent_tool_service import execute_agent_query
 
 
+# ── 意图快过滤（规则命中则跳过 LLM 分类，0ms） ──
+
+_CHAT_PATTERNS = [
+    "你好", "hello", "hi", "谢谢", "感谢", "再见", "拜拜",
+    "你是谁", "你叫什么", "早上好", "晚上好", "下午好",
+]
+
+_DIAGNOSIS_PATTERNS = [
+    "cpu", "内存", "memory", "磁盘", "disk", "网络", "network",
+    "告警", "alarm", "alert", "故障", "宕机", "down",
+    "延迟高", "latency", "超时", "timeout", "oom", "泄漏", "leak",
+    "慢", "slow", "报错", "异常", "error",
+]
+
+
+def _quick_intent_check(query: str) -> Optional[str]:
+    """规则预过滤：对明显场景快速返回意图标签，不确定则返回 None 交给 LLM。
+
+    Returns:
+        "chat" / "diagnosis" / None
+    """
+    q = query.strip().lower()
+    if not q:
+        return None
+
+    # 闲聊：短句 + 包含问候/致谢类关键词
+    if len(q) < 15 and any(p in q for p in _CHAT_PATTERNS):
+        return "chat"
+
+    # 运维诊断：包含监控/故障类关键词
+    if any(p in q for p in _DIAGNOSIS_PATTERNS):
+        return "diagnosis"
+
+    return None
+
+
 def _assess_retrieval_quality(results: List[Any], top_k: int) -> None:
     """评价检索质量，输出结构化日志供监控告警。"""
     if not results:
@@ -64,64 +100,127 @@ class RAGService:
             if enable_long_term:
                 logger.info(f"Long-term memory enabled for session {session_id}")
 
-            # 1. Agent-first routing
-            if agent_ids and agents:
-                logger.info(f"Agents configured: {agent_ids}. Delegating to Agent tool execution.")
-                agent = agents[0]
-                augmented_query = query_text
-                if kb_ids:
-                    try:
-                        rag_results = self.retriever.retrieve(query_text, top_k=top_k, kb_ids=kb_ids)
-                        if rag_results:
-                            if settings.ENABLE_RERANK:
-                                rag_results = self.reranker.rerank(query_text, rag_results)
-                            context_snippets = [r.text for r in rag_results[:top_k]]
-                            augmented_query = (
-                                f"{query_text}\n\n"
-                                f"【知识库参考资料】\n" +
-                                "\n---\n".join(context_snippets)
-                            )
-                            logger.info(f"Agent augmented with {len(context_snippets)} RAG snippets")
-                    except Exception as e:
-                        logger.warning(f"RAG augmentation for agent failed: {e}")
+            # ── 意图路由（Step 6） ──
+            # 第一层：规则快过滤（0ms）
+            intent = _quick_intent_check(query_text)
 
-                result = await execute_agent_query(agent, augmented_query, self.llm_client)
-                self.memory.add_short_term_memory(session_id, "user", query_text)
-                self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
-                return {
-                    "query": query_text,
-                    "answer": result["answer"],
-                    "source_documents": [],
-                    "tool_calls": result.get("tool_calls", []),
-                }
-
-            # 2. Non-agent path: General Chat or RAG
-            if not kb_ids:
-                logger.info("No KB selected, using General Chat Mode")
-                context = f"历史对话:\n{history_str}" if history else ""
-                if long_term_context:
-                    context = f"长期记忆:\n{long_term_context}\n\n{context}"
-                if system_prompt:
-                    context = f"系统指令: {system_prompt}\n\n{context}"
-
-                answer = self.llm_client.generate_general_response(query_text, context)
-                self.memory.add_short_term_memory(session_id, "user", query_text)
-                self.memory.add_short_term_memory(session_id, "assistant", answer)
-                return {"query": query_text, "answer": answer, "source_documents": []}
-
-            # 3. RAG Mode (KB selected, no agents)
-            contextual_query = f"历史对话:\n{history_str}\n当前问题: {query_text}" if history else query_text
-            analysis = self.analyzer.analyze(contextual_query)
-            logger.info(f"Question Analysis: {analysis}")
-
-            if settings.ENABLE_MULTI_HOP and analysis.get("is_multi_hop"):
-                result = self._multi_hop_query(query_text, analysis.get("sub_queries", []), top_k, history_str, kb_ids, system_prompt)
+            # 第二层：LLM 意图分类（仅在规则未命中时调用）
+            analysis = None
+            if intent is None:
+                contextual_query = f"历史对话:\n{history_str}\n当前问题: {query_text}" if history else query_text
+                analysis = self.analyzer.analyze(contextual_query)
+                intent = analysis.get("intent", "chat")
+                logger.info(f"Question Analysis: {analysis}")
             else:
-                result = self._single_hop_query(query_text, top_k, history_str, kb_ids, system_prompt)
+                logger.info(f"Quick intent check: {intent}")
 
-            self.memory.add_short_term_memory(session_id, "user", query_text)
-            self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
-            return result
+            has_kb = bool(kb_ids)
+            has_agent = bool(agent_ids and agents)
+
+            # ── 路由决策矩阵 ──
+
+            # chat 意图 → 永远走 General Chat
+            if intent == "chat":
+                return self._general_chat(query_text, history, history_str, long_term_context,
+                                          system_prompt, session_id)
+
+            # knowledge 意图
+            if intent == "knowledge":
+                if has_kb:
+                    return self._rag_path(query_text, top_k, history_str, kb_ids,
+                                             system_prompt, session_id, analysis)
+                else:
+                    return self._general_chat(query_text, history, history_str, long_term_context,
+                                              system_prompt, session_id)
+
+            # diagnosis 意图
+            if intent == "diagnosis":
+                if has_agent:
+                    return await self._agent_path(query_text, top_k, kb_ids, session_id,
+                                                  agent_ids, agents)
+                elif has_kb:
+                    # 无 Agent 但有 KB → 从知识库找排查文档
+                    return self._rag_path(query_text, top_k, history_str, kb_ids,
+                                          system_prompt, session_id, analysis)
+                else:
+                    return self._general_chat(query_text, history, history_str, long_term_context,
+                                              system_prompt, session_id)
+
+            # 兜底 → General Chat
+            return self._general_chat(query_text, history, history_str, long_term_context,
+                                      system_prompt, session_id)
+
+    # ── 路由路径实现 ──
+
+    def _general_chat(
+        self, query_text: str, history: list, history_str: str,
+        long_term_context: str, system_prompt: str, session_id: str
+    ) -> Dict[str, Any]:
+        """General Chat 路径：直接 LLM 对话，不检索不调工具。"""
+        context = f"历史对话:\n{history_str}" if history else ""
+        if long_term_context:
+            context = f"长期记忆:\n{long_term_context}\n\n{context}"
+        if system_prompt:
+            context = f"系统指令: {system_prompt}\n\n{context}"
+
+        answer = self.llm_client.generate_general_response(query_text, context)
+        self.memory.add_short_term_memory(session_id, "user", query_text)
+        self.memory.add_short_term_memory(session_id, "assistant", answer)
+        return {"query": query_text, "answer": answer, "source_documents": []}
+
+    def _rag_path(
+        self, query_text: str, top_k: int, history_str: str,
+        kb_ids: List[int], system_prompt: str, session_id: str,
+        analysis: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """RAG 路径：混合检索 + 生成。支持单跳和多跳。"""
+        if analysis and settings.ENABLE_MULTI_HOP and analysis.get("is_multi_hop"):
+            result = self._multi_hop_query(
+                query_text, analysis.get("sub_queries", []),
+                top_k, history_str, kb_ids, system_prompt
+            )
+        else:
+            result = self._single_hop_query(
+                query_text, top_k, history_str, kb_ids, system_prompt
+            )
+
+        self.memory.add_short_term_memory(session_id, "user", query_text)
+        self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
+        return result
+
+    async def _agent_path(
+        self, query_text: str, top_k: int, kb_ids: Optional[List[int]],
+        session_id: str, agent_ids: list, agents: list
+    ) -> Dict[str, Any]:
+        """Agent 路径：MCP 工具调用 + 可选 RAG 增强。"""
+        agent = agents[0]
+        augmented_query = query_text
+
+        if kb_ids:
+            try:
+                rag_results = self.retriever.retrieve(query_text, top_k=top_k, kb_ids=kb_ids)
+                if rag_results:
+                    if settings.ENABLE_RERANK:
+                        rag_results = self.reranker.rerank(query_text, rag_results)
+                    context_snippets = [r.text for r in rag_results[:top_k]]
+                    augmented_query = (
+                        f"{query_text}\n\n"
+                        f"【知识库参考资料】\n" +
+                        "\n---\n".join(context_snippets)
+                    )
+                    logger.info(f"Agent augmented with {len(context_snippets)} RAG snippets")
+            except Exception as e:
+                logger.warning(f"RAG augmentation for agent failed: {e}")
+
+        result = await execute_agent_query(agent, augmented_query, self.llm_client)
+        self.memory.add_short_term_memory(session_id, "user", query_text)
+        self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
+        return {
+            "query": query_text,
+            "answer": result["answer"],
+            "source_documents": [],
+            "tool_calls": result.get("tool_calls", []),
+        }
 
     def _single_hop_query(
         self,

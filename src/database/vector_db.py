@@ -125,7 +125,8 @@ class MilvusClient:
                 kb_ids = [int(r.metadata.get("kb_id", 0)) for r in records]
                 data.append(kb_ids)
             self.collection.insert(data)
-            logger.info(f"Milvus 插入 {len(records)} 条")
+            self.collection.flush()
+            logger.info(f"Milvus 插入 {len(records)} 条（已 flush）")
         except Exception:
             logger.exception("Milvus insert 失败，数据已存入本地降级存储")
 
