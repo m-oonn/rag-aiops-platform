@@ -192,6 +192,9 @@ async def execute_agent_query(
     tool_timeout = exec_config.get("tool_timeout", _DEFAULT_TOOL_TIMEOUT)
 
     system_prompt = agent.system_prompt or "You are a helpful assistant."
+    # Ensure Markdown output instruction is appended if not already present
+    if "Markdown" not in system_prompt and "markdown" not in system_prompt:
+        system_prompt += "\n\n请使用 Markdown 格式输出回答，合理使用标题、列表、加粗、代码块等排版。"
 
     # 加载 MCP 工具
     tools, error = await load_agent_tools(agent)

@@ -208,7 +208,7 @@
                 
                 <div class="messages" ref="messagesContainer">
                     <div v-for="(msg, index) in chatMessages" :key="index" :class="['message', msg.role]">
-                      <div class="message-content" style="white-space: pre-wrap;">{{ msg.content }}</div>
+                      <div class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
                       <div v-if="msg.sources && msg.sources.length" class="sources">
                         <small>参考来源：</small>
                         <ul>
@@ -254,6 +254,7 @@ import api from '../api'
 import { ElMessage } from 'element-plus'
 import { Back, Position } from '@element-plus/icons-vue'
 import { confirmAction } from '../utils/confirm'
+import { renderMarkdown } from '../utils/chat'
 
 const router = useRouter()
 const assistants = ref([])
@@ -770,5 +771,63 @@ onMounted(() => {
 @keyframes typing {
     0%, 80%, 100% { opacity: 0; }
     40% { opacity: 1; }
+}
+/* Markdown 渲染样式 */
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+    margin-top: 0.6em;
+    margin-bottom: 0.3em;
+    font-weight: 600;
+}
+.markdown-body :deep(p) {
+    margin: 0.4em 0;
+}
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+    padding-left: 1.5em;
+    margin: 0.4em 0;
+}
+.markdown-body :deep(code) {
+    background-color: #f0f0f0;
+    padding: 0.15em 0.4em;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+.markdown-body :deep(pre) {
+    background-color: #f5f5f5;
+    padding: 0.8em;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+}
+.markdown-body :deep(pre code) {
+    background: none;
+    padding: 0;
+}
+.markdown-body :deep(strong) {
+    font-weight: 700;
+}
+.markdown-body :deep(blockquote) {
+    border-left: 3px solid #ddd;
+    padding-left: 0.8em;
+    color: #666;
+    margin: 0.5em 0;
+}
+.markdown-body :deep(table) {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    width: 100%;
+}
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+    border: 1px solid #ddd;
+    padding: 0.4em 0.6em;
+    text-align: left;
+}
+.markdown-body :deep(th) {
+    background-color: #f5f5f5;
+    font-weight: 600;
 }
 </style>

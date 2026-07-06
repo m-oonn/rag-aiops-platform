@@ -37,7 +37,7 @@ class LLMClient:
         
         try:
             messages = [
-                SystemMessage(content="You are a helpful RAG assistant."),
+                SystemMessage(content="You are a helpful RAG assistant. Please format your response in Markdown."),
                 HumanMessage(content=prompt)
             ]
             
@@ -89,6 +89,7 @@ class LLMClient:
 2. 如上下文无相关信息，明确说明"根据提供的信息无法回答"
 3. 引用相关段落编号
 4. 保持回答准确、简洁
+5. 使用 Markdown 格式输出，合理使用标题、列表、加粗等排版
 
 回答："""
 
@@ -102,15 +103,15 @@ class LLMClient:
             return "LLM Service unavailable."
 
         # For general chat, we allow external knowledge
-        prompt = f"""You are a helpful assistant.
+        prompt = f"""你是一个有帮助的 AI 助手，请使用 Markdown 格式回答用户的问题。
 
-Current date: 2026-07-02.
+当前日期: 2026-07-06。
 
 {context}
 
-User Question: {query}
+用户问题: {query}
 
-Answer:"""
+请使用 Markdown 格式回答（合理使用标题、列表、加粗、代码块等排版）："""
 
         return self.generate_custom_response(prompt)
 
@@ -123,18 +124,18 @@ Answer:"""
             yield "LLM Service unavailable."
             return
 
-        prompt = f"""You are a helpful assistant.
+        prompt = f"""你是一个有帮助的 AI 助手，请使用 Markdown 格式回答用户的问题。
 
-Current date: 2026-07-02.
+当前日期: 2026-07-06。
 
 {context}
 
-User Question: {query}
+用户问题: {query}
 
-Answer:"""
+请使用 Markdown 格式回答（合理使用标题、列表、加粗、代码块等排版）："""
 
         messages = [
-            SystemMessage(content="You are a helpful assistant."),
+            SystemMessage(content="你是一个有帮助的 AI 助手，请使用 Markdown 格式输出回答。"),
             HumanMessage(content=prompt)
         ]
 
@@ -151,7 +152,7 @@ Answer:"""
             return "LLM Service unavailable."
             
         try:
-            sys_msg = system_prompt if system_prompt else "You are a helpful RAG assistant."
+            sys_msg = system_prompt if system_prompt else "You are a helpful RAG assistant. Please format your response in Markdown."
             messages = [
                 SystemMessage(content=sys_msg),
                 HumanMessage(content=prompt)

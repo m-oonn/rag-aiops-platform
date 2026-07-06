@@ -180,6 +180,7 @@ class RAGService:
         2. 如上下文无相关信息，明确说明"根据提供的信息无法回答"
         3. 引用相关段落编号
         4. 保持回答准确、简洁
+        5. 使用 Markdown 格式输出，合理使用标题、列表、加粗等排版
 
         回答："""
              answer, first_token, total_time = self.llm_client.generate_response_with_metrics(prompt)
