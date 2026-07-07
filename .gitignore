@@ -28,6 +28,8 @@ logs/
 # ─── IDE / OS ───
 .vscode/
 .idea/
+.codebuddy/
+.workbuddy/
 .DS_Store
 Thumbs.db
 
@@ -36,10 +38,22 @@ dist/
 build/
 *.log
 
-# ─── 私人材料(不公开到简历仓) ───
+# ─── 私人材料(不公开到公共仓) ───
 learning/
-docs/毕设选题说明.md
 rag-agent-curried-acorn.md
 fix_documents_db.py
 docker_error*.png
 ^
+
+# 私人工作文档 / 审查报告 / prompt(不公开)
+code-review-report.md
+docs/毕设选题说明.md
+docs/CODE_WIKI.md
+docs/RD-Agent全面解析.html
+docs/code-review-prompt.md
+docs/project-audit-prompt.md
+docs/rag-agent-integration-plan.md
+docs/resume-project-cv.md
+docs/resume-project.md
+docs/优化工作全量统计报告.md
+docs/superpowers/

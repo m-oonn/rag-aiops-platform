@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG 智库 + AIOps 运维诊断 Agent</title>
+  <meta name="description" content="企业级 RAG 知识库问答系统,并在其上构建基于 LangGraph 的 AIOps 运维诊断 Agent 支线。" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-soft: #121a30;
+      --card: #16203a;
+      --border: #24304f;
+      --text: #e7ecf5;
+      --text-dim: #9aa7c2;
+      --accent: #5b8cff;
+      --accent-2: #38e0c8;
+      --radius: 14px;
+      --maxw: 1080px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+    /* ── Hero ── */
+    header.hero {
+      background:
+        radial-gradient(1200px 500px at 70% -10%, rgba(91,140,255,0.25), transparent),
+        radial-gradient(900px 400px at 0% 10%, rgba(56,224,200,0.15), transparent),
+        var(--bg);
+      padding: 88px 0 72px;
+      border-bottom: 1px solid var(--border);
+    }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+    .badge {
+      font-size: 12px; padding: 4px 12px; border-radius: 999px;
+      background: var(--bg-soft); border: 1px solid var(--border); color: var(--text-dim);
+    }
+    h1 {
+      font-size: clamp(30px, 5vw, 48px); line-height: 1.2; font-weight: 800;
+      letter-spacing: -0.5px; margin-bottom: 18px;
+    }
+    h1 .grad {
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .lead { font-size: clamp(16px, 2.2vw, 19px); color: var(--text-dim); max-width: 720px; margin-bottom: 32px; }
+    .cta { display: flex; flex-wrap: wrap; gap: 14px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 22px; border-radius: 10px; font-weight: 600; font-size: 15px;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .btn:hover { text-decoration: none; transform: translateY(-2px); }
+    .btn-primary { background: linear-gradient(90deg, var(--accent), #7aa0ff); color: #fff; box-shadow: 0 8px 24px rgba(91,140,255,.35); }
+    .btn-ghost { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+
+    /* ── Sections ── */
+    section { padding: 64px 0; }
+    .section-title { font-size: clamp(24px, 3.5vw, 32px); font-weight: 700; margin-bottom: 12px; text-align: center; }
+    .section-sub { color: var(--text-dim); text-align: center; margin-bottom: 44px; }
+
+    .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 26px; transition: border-color .2s ease, transform .2s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-3px); }
+    .card .ico { font-size: 28px; margin-bottom: 12px; }
+    .card h3 { font-size: 18px; margin-bottom: 8px; }
+    .card p { color: var(--text-dim); font-size: 14.5px; }
+
+    /* ── Architecture ── */
+    .arch {
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 28px; overflow-x: auto;
+    }
+    .arch pre {
+      font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+      font-size: 13px; color: var(--text-dim); line-height: 1.5; white-space: pre;
+    }
+
+    /* ── Tech stack ── */
+    .stack { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+    .chip {
+      padding: 8px 16px; border-radius: 999px; background: var(--card);
+      border: 1px solid var(--border); font-size: 14px; color: var(--text);
+    }
+
+    /* ── Steps ── */
+    .steps { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .step { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+    .step .num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 8px; font-weight: 700;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #06122b; margin-bottom: 12px;
+    }
+    .step code { background: var(--bg); padding: 2px 7px; border-radius: 6px; font-size: 13px; color: var(--accent-2); }
+
+    .note {
+      max-width: 720px; margin: 32px auto 0; text-align: center; font-size: 14px;
+      color: var(--text-dim); background: rgba(91,140,255,.08);
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px;
+    }
+
+    footer { border-top: 1px solid var(--border); padding: 40px 0; text-align: center; color: var(--text-dim); font-size: 14px; }
+    footer a { color: var(--accent); }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f9fc; --bg-soft: #eef2f9; --card: #ffffff; --border: #dde4f0;
+        --text: #16203a; --text-dim: #5a6683;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="hero">
+    <div class="wrap">
+      <div class="badges">
+        <span class="badge">Python 3.10+</span>
+        <span class="badge">Vue 3</span>
+        <span class="badge">FastAPI</span>
+        <span class="badge">LangGraph</span>
+        <span class="badge">Apache 2.0</span>
+      </div>
+      <h1>RAG 智库系统 +<br /><span class="grad">AIOps 运维诊断 Agent</span></h1>
+      <p class="lead">
+        企业级 RAG 知识库问答系统,并在其上构建了一条基于 LangGraph 的
+        AIOps 运维诊断 Agent 支线 —— 前者支持多格式文档解析、向量化、智能问答与自动评测;
+        后者通过 Plan-Execute-Replan 工作流 + MCP 协议工具,演示 Agent 自主故障诊断。
+      </p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/m-oonn/rag-aiops-platform" target="_blank" rel="noopener">
+          ⭐ 在 GitHub 上查看
+        </a>
+        <a class="btn btn-ghost" href="#features">了解核心特性 ↓</a>
+      </div>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="wrap">
+      <h2 class="section-title">核心特性</h2>
+      <p class="section-sub">从知识库问答到自主运维诊断,一套底座两条链路</p>
+      <div class="grid">
+        <div class="card">
+          <div class="ico">📚</div>
+          <h3>多模态知识库</h3>
+          <p>支持 PDF / Word / Excel / PPT / Markdown 等格式,内置 OCR 与结构分析,上传后自动异步切分与向量化。</p>
+        </div>
+        <div class="card">
+          <div class="ico">🤖</div>
+          <h3>智能对话助手</h3>
+          <p>可自定义系统提示词、温度与模型;短期记忆滑动窗口;混合检索 + 重排序;回答可溯源到具体段落与页码。</p>
+        </div>
+        <div class="card">
+          <div class="ico">🔧</div>
+          <h3>AIOps 诊断 Agent</h3>
+          <p>基于 LangGraph 的 Plan-Execute-Replan 工作流,通过 MCP 协议调用监控 / 日志工具,自主完成故障诊断。</p>
+        </div>
+        <div class="card">
+          <div class="ico">📊</div>
+          <h3>RAG 自动化评测</h3>
+          <p>自动生成单跳 / 多跳 QA 对,结合 RAGAS 思想给出忠实度、相关性、召回率多维打分与可视化报告。</p>
+        </div>
+        <div class="card">
+          <div class="ico">🛡️</div>
+          <h3>企业级架构</h3>
+          <p>RBAC 权限;FastAPI + Celery + Milvus + MinIO + Redis 高可用组合;多用户隔离。</p>
+        </div>
+        <div class="card">
+          <div class="ico">🪂</div>
+          <h3>优雅降级</h3>
+          <p>Milvus 不可用降级本地文件检索,MCP 不可达降级 LLM 知识分析 —— 任一组件故障都不阻断主流程。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="background: var(--bg-soft);">
+    <div class="wrap">
+      <h2 class="section-title">系统架构</h2>
+      <p class="section-sub">RAG 与 AIOps 共享底座,编排相互独立</p>
+      <div class="arch">
+<pre>
+                          ┌─────────────┐
+     Vue3 前端 ──HTTP──►   │   FastAPI    │
+                          └──────┬──────┘
+              ┌──────────────────┼──────────────────┐
+              ▼                  ▼                  ▼
+        RAG 问答链路        AIOps Agent         异步任务
+     (retrieval+rerank)   (LangGraph 图)      (Celery)
+              │            planner→executor        │
+              │              →replanner            │
+              ▼                  │                  ▼
+     ┌────────────────┐         │          文档解析→切分→向量化
+     │ Milvus / Redis │◄────────┤                  │
+     │ MinIO / SQLite │         ▼                  ▼
+     └────────────────┘   MCP 工具服务        写入 Milvus + SQLite
+                          (monitor / cls)
+</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2 class="section-title">技术选型</h2>
+      <p class="section-sub">每个选择背后都有工程权衡</p>
+      <div class="grid">
+        <div class="card">
+          <h3>LangGraph StateGraph</h3>
+          <p>而非 ReAct 自由循环 —— 诊断任务需收敛出报告,StateGraph + 硬限制保证终止,显式节点便于扩展决策。</p>
+        </div>
+        <div class="card">
+          <h3>MCP 协议解耦工具</h3>
+          <p>而非 <code>@tool</code> 写死 —— 工具作为独立服务,客户端只认 URL,Mock → 真实后端零改动 Agent。</p>
+        </div>
+        <div class="card">
+          <h3>双 LLM 路径</h3>
+          <p>Agent 侧需 function calling 走 ChatOpenAI 兼容模式,RAG 侧走 ChatTongyi 原生 SDK,各取所长。</p>
+        </div>
+      </div>
+      <div class="stack" style="margin-top: 32px;">
+        <span class="chip">FastAPI</span>
+        <span class="chip">Vue 3</span>
+        <span class="chip">LangGraph</span>
+        <span class="chip">Milvus</span>
+        <span class="chip">Celery + RabbitMQ</span>
+        <span class="chip">MinIO</span>
+        <span class="chip">Redis</span>
+        <span class="chip">DashScope / 通义千问</span>
+        <span class="chip">MCP</span>
+      </div>
+    </div>
+  </section>
+
+  <section style="background: var(--bg-soft);">
+    <div class="wrap">
+      <h2 class="section-title">快速开始</h2>
+      <p class="section-sub">四步在本地跑起来</p>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>启动基础服务</h3>
+          <p><code>cd docker && docker-compose up -d</code><br />Milvus / MinIO / Redis / RabbitMQ</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>后端部署</h3>
+          <p><code>pip install -r requirements.txt</code><br /><code>python create_tables.py</code><br /><code>python -m src.main</code></p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>前端部署</h3>
+          <p><code>cd frontend && npm install</code><br /><code>npm run dev</code></p>
+        </div>
+        <div class="step">
+          <div class="num">4</div>
+          <h3>AIOps 诊断(可选)</h3>
+          <p><code>bash scripts/demo.sh</code><br />一键启动 MCP 指标 + 日志 + 后端</p>
+        </div>
+      </div>
+      <p class="note">
+        📌 本页面为项目介绍页,完整源码、部署文档与详细说明请前往
+        <a href="https://github.com/m-oonn/rag-aiops-platform" target="_blank" rel="noopener">GitHub 仓库</a>。
+        后端服务需在本地或服务器自行部署运行。
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <p>RAG 智库系统 + AIOps 运维诊断 Agent · 基于 <a href="https://github.com/m-oonn/rag-aiops-platform/blob/main/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a> 开源</p>
+      <p style="margin-top: 8px;">
+        <a href="https://github.com/m-oonn/rag-aiops-platform" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="https://github.com/m-oonn/rag-aiops-platform/issues" target="_blank" rel="noopener">反馈问题</a>
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>

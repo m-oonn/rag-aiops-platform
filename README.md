@@ -1,6 +1,6 @@
 # RAG 智库系统 + AIOps 运维诊断 Agent
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/vue-3.x-green)](https://vuejs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-teal)](https://fastapi.tiangolo.com/)
@@ -175,3 +175,11 @@ rag-aiops-platform/
 - **MCP 协议(而非 `@tool` 写死)**: 工具作为独立服务,客户端只认 URL,Mock → 真实后端零改动 Agent。
 - **ChatOpenAI compatible-mode(Agent) + ChatTongyi(RAG)**: 两条 LLM 路径分离 —— Agent 侧需 function calling 走兼容模式,RAG 侧走 DashScope 原生 SDK。
 - **优雅降级**: Milvus / MCP 任一不可用都不阻断主流程,分别降级到本地文件检索 / LLM 知识分析。
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 📄 许可证
+
+本项目基于 [Apache License 2.0](LICENSE) 开源。
