@@ -28,8 +28,12 @@
                 </el-form-item>
                 <el-form-item label="模型">
                   <el-select v-model="form.llm_model">
-                    <el-option label="Qwen-Max" value="qwen-max" />
-                    <el-option label="Qwen-Plus" value="qwen-plus" />
+                    <el-option
+                      v-for="m in availableModels"
+                      :key="m.id"
+                      :label="m.name"
+                      :value="m.id"
+                    />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="系统提示词">
@@ -106,9 +110,13 @@
                 <el-tag v-if="currentVersion" type="info" style="margin-left: 10px;">{{ currentVersion }}</el-tag>
             </div>
             <div class="header-right">
-                 <el-select v-model="chatModel" placeholder="模型" style="width: 150px; margin-right: 10px;">
-                    <el-option label="Qwen-Max" value="qwen-max" />
-                    <el-option label="Qwen-Plus" value="qwen-plus" />
+                 <el-select v-model="chatModel" placeholder="模型" style="width: 200px; margin-right: 10px;">
+                    <el-option
+                      v-for="m in availableModels"
+                      :key="m.id"
+                      :label="m.name"
+                      :value="m.id"
+                    />
                  </el-select>
                  <el-select v-model="currentVersion" placeholder="版本" style="width: 120px; margin-right: 10px;" @change="restoreVersion">
                     <el-option v-for="v in assistantVersions" :key="v.version" :label="v.version" :value="v.version" />
@@ -275,6 +283,7 @@ const messagesContainer = ref(null)
 const chatModel = ref('qwen-max')
 const currentVersion = ref('v1.0.0')
 const assistantVersions = ref([])
+const availableModels = ref([])
 
 const form = reactive({
   name: '',
@@ -311,6 +320,19 @@ const fetchKBs = async () => {
 const fetchAgents = async () => {
   const res = await api.get('/agents/')
   agents.value = res.data
+}
+
+const fetchModels = async () => {
+  try {
+    const res = await api.get('/health/models')
+    availableModels.value = res.data.models || []
+  } catch (e) {
+    availableModels.value = [
+      { id: 'qwen-max', name: 'Qwen-Max (旗舰)' },
+      { id: 'qwen-plus', name: 'Qwen-Plus (均衡)' },
+      { id: 'qwen-turbo', name: 'Qwen-Turbo (快速)' },
+    ]
+  }
 }
 
 const chatLinkedKBs = computed(() => {
@@ -550,7 +572,8 @@ const sendMessage = async () => {
     const payload = {
       query: query,
       session_id: currentSessionId.value,
-      assistant_id: currentChatAssistant.value.id
+      assistant_id: currentChatAssistant.value.id,
+      llm_model: chatModel.value
     }
     
     const res = await api.post('/chat/', payload)
@@ -649,6 +672,7 @@ onMounted(() => {
   fetchAssistants()
   fetchKBs()
   fetchAgents()
+  fetchModels()
 })
 </script>
 

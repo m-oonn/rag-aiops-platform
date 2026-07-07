@@ -105,6 +105,16 @@
       </div>
       
       <div class="input-area">
+        <div class="input-toolbar">
+          <el-select v-model="selectedModel" size="small" style="width: 220px;" placeholder="选择模型">
+            <el-option
+              v-for="m in availableModels"
+              :key="m.id"
+              :label="m.name"
+              :value="m.id"
+            />
+          </el-select>
+        </div>
         <el-input 
           v-model="inputQuery" 
           placeholder="请输入问题..." 
@@ -140,6 +150,10 @@ const messages = ref([])
 const inputQuery = ref('')
 const messagesContainer = ref(null)
 let streamAbortController = null
+
+// 模型选择器
+const selectedModel = ref(null)  // 当前选中的模型 ID，null 表示用默认
+const availableModels = ref([])  // 从后端 /health/models 获取的可用模型列表
 
 // Delete features
 const batchDeleteMode = ref(false)
@@ -332,6 +346,7 @@ const sendMessage = async () => {
     const payload = {
       query: query,
       session_id: currentSessionId.value,
+      llm_model: selectedModel.value,
     }
 
     if (selectedAssistant.value) {
@@ -388,7 +403,7 @@ const sendMessageStream = async (query) => {
   try {
     await streamSSE(
       getChatStreamUrl(),
-      { query, session_id: currentSessionId.value },
+      { query, session_id: currentSessionId.value, llm_model: selectedModel.value },
       {
         signal: streamAbortController.signal,
         onEvent: handleEvent,
@@ -419,11 +434,28 @@ const scrollToBottom = () => {
   })
 }
 
+const fetchModels = async () => {
+  try {
+    const res = await api.get('/health/models')
+    availableModels.value = res.data.models || []
+    selectedModel.value = res.data.default_model || null
+  } catch (e) {
+    // 降级：API 不可用时提供默认选项
+    availableModels.value = [
+      { id: 'qwen-max', name: 'Qwen-Max (旗舰)' },
+      { id: 'qwen-plus', name: 'Qwen-Plus (均衡)' },
+      { id: 'qwen-turbo', name: 'Qwen-Turbo (快速)' },
+    ]
+    selectedModel.value = 'qwen-max'
+  }
+}
+
 onMounted(async () => {
   await Promise.all([
     fetchKBs(),
     fetchAssistants(),
-    fetchSessions()
+    fetchSessions(),
+    fetchModels()
   ])
 
   if (route.query.assistant_id) {
@@ -536,6 +568,12 @@ watch(selectedKB, () => {
 .input-area {
   padding: 20px;
   border-top: 1px solid #eee;
+}
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 10px;
 }
 .sources {
   margin-top: 5px;

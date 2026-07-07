@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     kb_id: Optional[int] = None # Deprecated/Override
     assistant_id: Optional[int] = None # New: Select Assistant
     top_k: int = 5
+    llm_model: Optional[str] = None  # 前端手动切换模型，None 则用 Assistant 默认或全局默认
 
 class ChatResponse(BaseModel):
     session_id: str
@@ -115,8 +116,10 @@ async def chat(
         agents = db.query(Agent).filter(Agent.id.in_(assistant.agent_ids)).all()
 
     # Pass assistant config if available
+    # Model resolution order: request.llm_model (前端手动切换) > assistant.llm_model (助手默认) > global default
+    resolved_model = request.llm_model or (assistant.llm_model if assistant else None)
     assistant_config = {
-        "llm_model": assistant.llm_model if assistant else "qwen-max",
+        "llm_model": resolved_model,  # None means use global default
         "temperature": assistant.temperature if assistant else 0.7,
         "system_prompt": assistant.system_prompt if assistant else None,
         "memory_config": assistant.memory_config if assistant else None,
@@ -209,6 +212,7 @@ async def chat_stream(
     session_uid = chat_session.session_uid
     session_db_id = chat_session.id
     query_text = request.query
+    stream_model = request.llm_model  # 前端手动切换的模型，None 则用全局默认
 
     async def event_generator():
         full_answer = ""
@@ -226,7 +230,7 @@ async def chat_stream(
             # 不阻塞 asyncio 事件循环 → SSE 帧实时发出,浏览器可增量渲染。
             async for token in iterate_in_threadpool(
                 rag_service.llm_client.generate_general_response_stream(
-                    query_text, context
+                    query_text, context, model=stream_model
                 )
             ):
                 full_answer += token

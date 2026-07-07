@@ -84,6 +84,8 @@ class RAGService:
             system_prompt = assistant_config.get("system_prompt") if assistant_config else None
             agent_ids = assistant_config.get("agent_ids") if assistant_config else None
             agents = assistant_config.get("agents") if assistant_config else None
+            llm_model = assistant_config.get("llm_model") if assistant_config else None  # 前端/助手切换的模型
+            temperature = assistant_config.get("temperature") if assistant_config else None  # 助手配置的采样温度
 
             memory_config = (assistant_config.get("memory_config") if assistant_config else None) or {}
             enable_short_term = memory_config.get("enable_short_term", True)
@@ -122,16 +124,16 @@ class RAGService:
             # chat 意图 → 永远走 General Chat
             if intent == "chat":
                 return self._general_chat(query_text, history, history_str, long_term_context,
-                                          system_prompt, session_id)
+                                          system_prompt, session_id, llm_model, temperature)
 
             # knowledge 意图
             if intent == "knowledge":
                 if has_kb:
                     return self._rag_path(query_text, top_k, history_str, kb_ids,
-                                             system_prompt, session_id, analysis)
+                                             system_prompt, session_id, llm_model, analysis, temperature)
                 else:
                     return self._general_chat(query_text, history, history_str, long_term_context,
-                                              system_prompt, session_id)
+                                              system_prompt, session_id, llm_model, temperature)
 
             # diagnosis 意图
             if intent == "diagnosis":
@@ -141,20 +143,21 @@ class RAGService:
                 elif has_kb:
                     # 无 Agent 但有 KB → 从知识库找排查文档
                     return self._rag_path(query_text, top_k, history_str, kb_ids,
-                                          system_prompt, session_id, analysis)
+                                          system_prompt, session_id, llm_model, analysis, temperature)
                 else:
                     return self._general_chat(query_text, history, history_str, long_term_context,
-                                              system_prompt, session_id)
+                                              system_prompt, session_id, llm_model, temperature)
 
             # 兜底 → General Chat
             return self._general_chat(query_text, history, history_str, long_term_context,
-                                      system_prompt, session_id)
+                                      system_prompt, session_id, llm_model, temperature)
 
     # ── 路由路径实现 ──
 
     def _general_chat(
         self, query_text: str, history: list, history_str: str,
-        long_term_context: str, system_prompt: str, session_id: str
+        long_term_context: str, system_prompt: str, session_id: str,
+        llm_model: Optional[str] = None, temperature: Optional[float] = None
     ) -> Dict[str, Any]:
         """General Chat 路径：直接 LLM 对话，不检索不调工具。"""
         context = f"历史对话:\n{history_str}" if history else ""
@@ -163,7 +166,7 @@ class RAGService:
         if system_prompt:
             context = f"系统指令: {system_prompt}\n\n{context}"
 
-        answer = self.llm_client.generate_general_response(query_text, context)
+        answer = self.llm_client.generate_general_response(query_text, context, model=llm_model, temperature=temperature)
         self.memory.add_short_term_memory(session_id, "user", query_text)
         self.memory.add_short_term_memory(session_id, "assistant", answer)
         return {"query": query_text, "answer": answer, "source_documents": []}
@@ -171,17 +174,19 @@ class RAGService:
     def _rag_path(
         self, query_text: str, top_k: int, history_str: str,
         kb_ids: List[int], system_prompt: str, session_id: str,
-        analysis: Optional[Dict] = None
+        llm_model: Optional[str] = None,
+        analysis: Optional[Dict] = None,
+        temperature: Optional[float] = None
     ) -> Dict[str, Any]:
         """RAG 路径：混合检索 + 生成。支持单跳和多跳。"""
         if analysis and settings.ENABLE_MULTI_HOP and analysis.get("is_multi_hop"):
             result = self._multi_hop_query(
                 query_text, analysis.get("sub_queries", []),
-                top_k, history_str, kb_ids, system_prompt
+                top_k, history_str, kb_ids, system_prompt, llm_model, temperature
             )
         else:
             result = self._single_hop_query(
-                query_text, top_k, history_str, kb_ids, system_prompt
+                query_text, top_k, history_str, kb_ids, system_prompt, llm_model, temperature
             )
 
         self.memory.add_short_term_memory(session_id, "user", query_text)
@@ -228,7 +233,9 @@ class RAGService:
         top_k: int,
         history_str: str = "",
         kb_ids: Optional[List[int]] = None,
-        system_prompt: str = None
+        system_prompt: str = None,
+        llm_model: Optional[str] = None,
+        temperature: Optional[float] = None
     ) -> Dict[str, Any]:
         # 1. Retrieve
         initial_k = top_k * 2 if settings.ENABLE_RERANK else top_k
@@ -272,7 +279,7 @@ class RAGService:
         5. 使用 Markdown 格式输出，合理使用标题、列表、加粗等排版
 
         回答："""
-             answer, first_token, total_time = self.llm_client.generate_response_with_metrics(prompt)
+             answer, first_token, total_time = self.llm_client.generate_response_with_metrics(prompt, model=llm_model, temperature=temperature)
 
              result = self._format_response(query_text, answer, search_results)
              result["metrics"] = {
@@ -281,7 +288,7 @@ class RAGService:
              }
              return result
         else:
-            answer = self.llm_client.generate_response(query_text, context)
+            answer = self.llm_client.generate_response(query_text, context, model=llm_model, temperature=temperature)
             return self._format_response(query_text, answer, search_results)
 
     def _multi_hop_query(
@@ -291,7 +298,9 @@ class RAGService:
         top_k: int,
         history_str: str = "",
         kb_ids: Optional[List[int]] = None,
-        system_prompt: str = None
+        system_prompt: str = None,
+        llm_model: Optional[str] = None,
+        temperature: Optional[float] = None
     ) -> Dict[str, Any]:
 
         all_results = []
@@ -321,7 +330,7 @@ class RAGService:
         if system_prompt:
              final_context = f"系统指令: {system_prompt}\n\n{final_context}"
 
-        answer = self.llm_client.generate_response(query_text, final_context)
+        answer = self.llm_client.generate_response(query_text, final_context, model=llm_model, temperature=temperature)
 
         return self._format_response(query_text, answer, all_results)
 

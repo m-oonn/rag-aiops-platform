@@ -26,14 +26,24 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-v1"
     EMBEDDING_BATCH_SIZE: int = 20
     EMBEDDING_MAX_BATCH_SIZE: int = 25
-    LLM_MODEL: str = "qwen-max"            # RAG 路径(现有 ChatTongyi,走 dashscope 原生 SDK,仅支持通义 Qwen 系列;勿填 deepseek)
+    LLM_MODEL: str = "qwen3.7-plus"          # RAG 路径默认模型(百炼免费额度,最新代旗舰)
     # —— Agent 路径模型(新增 ChatOpenAI,走 compatible-mode,可调 Qwen 或阿里托管的 DeepSeek)——
     # 探针(scripts/probe_llm.py)实测结论:
     #   qwen-max / deepseek-v3 均支持 function calling;
     #   deepseek-chat 在阿里不存在(404,那是 DeepSeek 自家平台名);
     #   deepseek-r1 是推理模型,不返回 tool_calls,严禁用于 Agent。
     AGENT_MODEL: str = "qwen-max"             # Agent 主推理模型(qwen-max 通义旗舰,function calling 稳定)
-    AGENT_MODEL_SIMPLE: str = "qwen-turbo"  # 简单意图(闲聊/分类/路由)降本用,Phase 3 Supervisor 启用
+    AGENT_MODEL_SIMPLE: str = "qwen-mt-flash"  # 简单意图(闲聊/分类/路由)降本用,百炼免费额度
+
+    # —— 前端模型选择器可用列表(display_name, model_id) ——
+    # 所有模型通过 DashScope compatible-mode 调用,前端下拉框从此读取。
+    # ChatTongyi(RAG 路径)仅支持 Qwen 系列;非 Qwen(glm/deepseek)自动走 ChatOpenAI。
+    AVAILABLE_MODELS: str = (
+        "qwen3.7-plus,qwen-plus-2025-07-28,qwen-mt-flash,deepseek-r1-distill-qwen-7b,glm-5"
+    )
+    MODEL_DISPLAY_NAMES: str = (
+        "Qwen3.7-Plus (旗舰),Qwen-Plus 0728 (均衡),Qwen-MT-Flash (快速),DeepSeek-R1-7B (推理),GLM-5 (智谱)"
+    )
 
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
