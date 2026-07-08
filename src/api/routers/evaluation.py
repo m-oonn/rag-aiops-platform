@@ -23,6 +23,24 @@ llm_client = LLMClient()
 evaluator = RAGEvaluator(llm_client)
 rag_service = RAGService()
 
+
+def _check_task_ownership(task: EvaluationTask, current_user: User, db: Session) -> None:
+    """安全最佳实践: 统一的 EvaluationTask 所有权检查，防止 IDOR。
+
+    检查逻辑:
+    - task.kb_id 不为空: 通过 kb.owner_id 验证所有权
+    - task.kb_id 为空(custom task): 通过 task.created_by 验证所有权
+    无权访问时抛出 403 异常。
+    """
+    if task.kb_id:
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == task.kb_id).first()
+        if not kb or kb.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权操作该评估任务")
+    else:
+        # Custom task: 检查 created_by
+        if task.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="无权操作该评估任务")
+
 class EvalConfig(BaseModel):
     kb_id: Optional[int] = None
     num_questions: int = 10
@@ -300,7 +318,8 @@ def generate_evaluation_dataset(
         kb_id=config.kb_id,
         config=config.dict(),
         status=0, # Pending
-        is_custom_dataset=config.is_custom_upload
+        is_custom_dataset=config.is_custom_upload,
+        created_by=current_user.id,  # 安全最佳实践: 记录创建者用于所有权检查
     )
     db.add(task)
     db.commit()
@@ -324,6 +343,8 @@ async def upload_evaluation_dataset(
 ):
     task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
     if not task: raise HTTPException(status_code=404, detail="Task not found")
+    # 安全最佳实践: 验证任务所有权，防止 IDOR
+    _check_task_ownership(task, current_user, db)
     
     # Process file (JSON/CSV)
     # Expected format: [{"question": "...", "ground_truth": "...", "qa_type": "..."}]
@@ -372,6 +393,8 @@ def run_evaluation(
 ):
     task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
     if not task: raise HTTPException(status_code=404, detail="Task not found")
+    # 安全最佳实践: 验证任务所有权，防止 IDOR
+    _check_task_ownership(task, current_user, db)
     
     if task.status != 4: # Must be generated/ready
         raise HTTPException(status_code=400, detail="Dataset not ready")
@@ -385,6 +408,10 @@ def get_dataset_items(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
+    if not task: raise HTTPException(status_code=404, detail="Task not found")
+    # 安全最佳实践: 验证任务所有权，防止 IDOR
+    _check_task_ownership(task, current_user, db)
     return db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.task_id == task_id).all()
 
 @router.put("/dataset-items/{item_id}")
@@ -396,6 +423,10 @@ def update_dataset_item(
 ):
     item = db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.id == item_id).first()
     if not item: raise HTTPException(status_code=404)
+    # 安全最佳实践: 通过 item.task_id 验证任务所有权，防止 IDOR
+    task = db.query(EvaluationTask).filter(EvaluationTask.id == item.task_id).first()
+    if not task: raise HTTPException(status_code=404, detail="Task not found")
+    _check_task_ownership(task, current_user, db)
     
     item.question = item_in.question
     item.ground_truth = item_in.ground_truth
@@ -412,6 +443,10 @@ def delete_dataset_item(
 ):
     item = db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.id == item_id).first()
     if not item: raise HTTPException(status_code=404)
+    # 安全最佳实践: 通过 item.task_id 验证任务所有权，防止 IDOR
+    task = db.query(EvaluationTask).filter(EvaluationTask.id == item.task_id).first()
+    if not task: raise HTTPException(status_code=404, detail="Task not found")
+    _check_task_ownership(task, current_user, db)
     db.delete(item)
     
     # Update total count in task
@@ -431,24 +466,18 @@ def batch_delete_tasks(
     tasks = db.query(EvaluationTask).filter(EvaluationTask.id.in_(task_ids)).all()
     count = 0
     for task in tasks:
-        # Check permission (via KB or generic owner check if added to Task)
-        # For now, assume open or check KB ownership if KB exists
-        should_delete = False
-        if task.kb_id:
-            kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == task.kb_id).first()
-            if kb and kb.owner_id == current_user.id:
-                should_delete = True
-        else:
-            # Custom task, assume allow delete for now (or check creator if field exists)
-            should_delete = True
-            
-        if should_delete:
-            # Explicitly delete related records to avoid foreign key constraints
-            db.query(EvaluationResult).filter(EvaluationResult.task_id == task.id).delete()
-            db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.task_id == task.id).delete()
-            db.delete(task)
-            count += 1
-            
+        # 安全最佳实践: 统一使用 _check_task_ownership 验证所有权
+        try:
+            _check_task_ownership(task, current_user, db)
+        except HTTPException:
+            continue  # 无权操作的任务跳过
+
+        # 通过所有权检查，执行删除
+        db.query(EvaluationResult).filter(EvaluationResult.task_id == task.id).delete()
+        db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.task_id == task.id).delete()
+        db.delete(task)
+        count += 1
+
     db.commit()
     return {"message": f"Deleted {count} tasks"}
 
@@ -457,12 +486,16 @@ def list_evaluation_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # In a real system, we might filter by user or KB ownership
-    # For now, return all tasks for KBs owned by user
-    # tasks = db.query(EvaluationTask).join(KnowledgeBase).filter(KnowledgeBase.owner_id == current_user.id).all()
-    # But EvaluationTask only has kb_id.
-    
-    tasks = db.query(EvaluationTask).join(KnowledgeBase, EvaluationTask.kb_id == KnowledgeBase.id).filter(KnowledgeBase.owner_id == current_user.id).order_by(EvaluationTask.created_at.desc()).all()
+    # 安全最佳实践: 只返回用户拥有的 KB 关联的 task + 用户创建的 custom task
+    from sqlalchemy import or_
+    tasks = db.query(EvaluationTask).outerjoin(
+        KnowledgeBase, EvaluationTask.kb_id == KnowledgeBase.id
+    ).filter(
+        or_(
+            KnowledgeBase.owner_id == current_user.id,  # KB 关联的 task
+            EvaluationTask.created_by == current_user.id  # custom task
+        )
+    ).order_by(EvaluationTask.created_at.desc()).all()
     return tasks
 
 @router.get("/{task_id}", response_model=EvalTaskOut)
@@ -474,6 +507,8 @@ def get_evaluation_status(
     task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # 安全最佳实践: 验证任务所有权，防止 IDOR
+    _check_task_ownership(task, current_user, db)
     return task
 
 @router.get("/{task_id}/report")
@@ -485,6 +520,8 @@ def get_evaluation_report(
     task = db.query(EvaluationTask).filter(EvaluationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # 安全最佳实践: 验证任务所有权，防止 IDOR
+    _check_task_ownership(task, current_user, db)
         
     if not task.report_path or not os.path.exists(task.report_path):
         raise HTTPException(status_code=404, detail="Report not found")

@@ -1,10 +1,12 @@
 import asyncio
 
 import aiohttp
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from src.settings import settings
 from src.worker.celery_app import celery_app
+from src.api.dependencies import get_current_user
+from src.database.models import User
 
 router = APIRouter()
 
@@ -15,7 +17,8 @@ async def health_check():
 
 
 @router.get("/queues")
-async def get_queue_stats():
+async def get_queue_stats(current_user: User = Depends(get_current_user)):
+    """安全最佳实践: /queues 暴露 Celery 任务详情，需认证。"""
     try:
         i = celery_app.control.inspect()
         if not i:
@@ -150,8 +153,11 @@ async def _check_llm() -> dict:
 
 
 @router.get("/dependencies")
-async def check_dependencies():
-    """并发检查所有依赖服务的可用性。"""
+async def check_dependencies(current_user: User = Depends(get_current_user)):
+    """并发检查所有依赖服务的可用性。
+
+    安全最佳实践: 暴露内网服务状态，需认证。
+    """
     results = await asyncio.gather(
         _check_http("mcp_monitor", settings.MCP_MONITOR_URL.replace("/mcp", "/health")),
         _check_http("mcp_cls", settings.MCP_CLS_URL.replace("/mcp", "/health")),

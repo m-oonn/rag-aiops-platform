@@ -16,6 +16,18 @@ from src.database.models import User
 from src.utils.security import get_password_hash
 from src.main import app
 
+# 安全最佳实践: 测试环境禁用速率限制
+# patch _check_request_limit 设置 view_rate_limit 但不执行限制检查
+from src.utils.rate_limit import limiter as _limiter
+from slowapi import Limiter
+
+def _noop_check_request_limit(self, request, func, *args, **kwargs):
+    # 设置 view_rate_limit 供 SlowAPIMiddleware 响应阶段使用
+    if not hasattr(request.state, 'view_rate_limit'):
+        request.state.view_rate_limit = {}
+
+Limiter._check_request_limit = _noop_check_request_limit
+
 
 async def _fake_aiops_execute(user_input: str, session_id: str = "default"):
     """AIOps 诊断服务的快速假实现，避免测试中调用真实 LLM。"""

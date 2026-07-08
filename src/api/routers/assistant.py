@@ -60,13 +60,17 @@ def create_assistant(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Verify KBs exist and belong to user
+    # 安全最佳实践: 严格校验 KB 存在且属于当前用户，防止关联他人 KB
     if assistant_in.kb_ids:
-        kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(assistant_in.kb_ids)).all()
-        # Basic check, detailed ownership check can be added
+        kbs = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(assistant_in.kb_ids),
+            KnowledgeBase.owner_id == current_user.id
+        ).all()
         if len(kbs) != len(assistant_in.kb_ids):
-             # Or just ignore invalid ones? Let's be strict
-             pass 
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid KB IDs: some knowledge bases do not exist or do not belong to you"
+            )
 
     assistant = Assistant(
         name=assistant_in.name,

@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str = ""  # 必须从环境变量或 .env 填;留空则启动报错
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
+    # —— CORS / Host 白名单(生产环境安全)——
+    # 逗号分隔的显式来源/域名列表。生产环境 main.py 从这里读取,不允许通配 "*"。
+    # 例:ALLOWED_ORIGINS="https://app.example.com,https://admin.example.com"
+    ALLOWED_ORIGINS: str = ""
+    ALLOWED_HOSTS: str = "*"  # TrustedHostMiddleware 白名单(仅生产启用)
+
     DASHSCOPE_API_KEY: Optional[str] = None
     # LLM 底座地址(单一事实来源): 将来 Agent 侧的 ChatQwen 从这里读,显式指向国内
     # compatible-mode 站点,避免默认走新加坡站点导致与现有 ChatTongyi 行为漂移。

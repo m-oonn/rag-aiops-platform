@@ -132,6 +132,8 @@ class EvaluationTask(Base):
     is_custom_dataset = Column(Boolean, default=False) # New: Flag for custom upload
     error_msg = Column(Text, nullable=True) # New: Record task-level error reason
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # 安全最佳实践: 记录任务创建者，用于 custom task（无 kb_id）的所有权检查
+    created_by = Column(Integer, nullable=True)  # 存 User.id
 
     results = relationship("EvaluationResult", back_populates="task")
 

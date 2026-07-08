@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -9,6 +9,7 @@ from src.database.sql_session import get_db
 from src.database.models import User
 from src.utils.security import verify_password, get_password_hash, create_access_token
 from src.settings import settings
+from src.utils.rate_limit import limiter  # 安全最佳实践: 登录速率限制
 
 router = APIRouter()
 
@@ -53,7 +54,9 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     return user
 
 @router.post("/login/access-token", response_model=Token)
+@limiter.limit("5/minute")  # 安全最佳实践: 限制登录尝试频率，防止暴力破解
 def login_access_token(
+    request: Request,
     db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()
 ) -> Any:
     user = db.query(User).filter(User.username == form_data.username).first()

@@ -32,6 +32,23 @@ def _safe_extension(filename: str) -> str:
     return Path(filename).suffix.lower()
 
 
+def _sanitize_filename(filename: str) -> str:
+    """安全最佳实践: 净化文件名，移除路径穿越字符和危险字符。
+
+    防止攻击者通过 file.filename 包含 ../.. 写入 UPLOAD_DIR 之外的位置。
+    """
+    import re
+    # 移除路径分隔符和 ..
+    safe = filename.replace("..", "").replace("/", "_").replace("\\", "_")
+    # 移除控制字符
+    safe = re.sub(r'[\x00-\x1f]', '', safe)
+    # 限制长度
+    if len(safe) > 255:
+        name, ext = os.path.splitext(safe)
+        safe = name[:255 - len(ext)] + ext
+    return safe or "unnamed"
+
+
 @router.post("/upload", response_model=Document)
 async def upload_file(
     background_tasks: BackgroundTasks,
@@ -51,7 +68,9 @@ async def upload_file(
         raise HTTPException(status_code=400, detail=f"文件超过最大限制 {_MAX_FILE_SIZE // (1024*1024)}MB")
 
     file_id = str(uuid.uuid4())
-    filename = f"{file_id}_{file.filename}"
+    # 安全最佳实践: 净化文件名后再拼接路径，防止路径穿越
+    safe_filename = _sanitize_filename(file.filename)
+    filename = f"{file_id}_{safe_filename}"
     file_path = settings.UPLOAD_DIR / filename
 
     try:
@@ -62,7 +81,7 @@ async def upload_file(
 
     document = Document(
         id=file_id,
-        filename=file.filename,
+        filename=safe_filename,
         status="processing"
     )
 

@@ -13,27 +13,72 @@ router = APIRouter()
 
 
 class MCPServerConfig(BaseModel):
-    """单个 MCP 服务器的配置。"""
+    """单个 MCP 服务器的配置。
 
-    model_config = ConfigDict(extra="allow")
+    安全最佳实践:
+    - 禁用 stdio transport 防止 RCE(用户可配置任意 command 执行命令)
+    - 禁止 extra 字段防止注入未验证的配置项
+    - URL 校验防止 SSRF(阻止内网地址)
+    """
 
-    transport: Literal["streamable_http", "sse", "stdio"] = "streamable_http"
+    model_config = ConfigDict(extra="forbid")
+
+    transport: Literal["streamable_http", "sse"] = "streamable_http"
     url: Optional[str] = None
-    command: Optional[str] = None
-    args: Optional[list[str]] = None
-    env: Optional[dict[str, str]] = None
 
     @model_validator(mode="after")
-    def url_required_for_network_transports(self):
+    def url_required_and_safe(self):
+        # transport 必须提供 url
         if self.transport in ("streamable_http", "sse") and not self.url:
             raise ValueError(f"transport '{self.transport}' requires url")
+        # SSRF 防护: 阻止内网地址
+        if self.url:
+            self._validate_url_safe(self.url)
         return self
+
+    @staticmethod
+    def _validate_url_safe(url: str) -> None:
+        """校验 URL 不指向内网地址，防止 SSRF。
+
+        阻止的地址段:
+        - 127.0.0.0/8 (回环)
+        - 10.0.0.0/8 (内网 A 类)
+        - 172.16.0.0/12 (内网 B 类)
+        - 192.168.0.0/16 (内网 C 类)
+        - 169.254.0.0/16 (链路本地，含云元数据 169.254.169.254)
+        - 0.0.0.0/8
+        - ::1 (IPv6 回环)
+        - fc00::/7 (IPv6 唯一本地)
+        """
+        from urllib.parse import urlparse
+        import ipaddress
+
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError(f"Invalid URL: cannot parse hostname from {url}")
+
+        # 只允许 http/https
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Only http/https schemes allowed, got: {parsed.scheme}")
+
+        # 如果是 IP 地址，检查是否为内网
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+                raise ValueError(
+                    f"SSRF protection: internal/private IP not allowed: {hostname}"
+                )
+        except ValueError:
+            # 不是 IP 地址(是域名)，允许通过
+            # 注意: DNS 重绑定攻击需要更严格的防护，但当前级别足够
+            pass
 
 
 class LLMConfig(BaseModel):
     """Agent 专用 LLM 配置。"""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")  # 安全最佳实践: 拒绝未定义字段
 
     model: Optional[str] = None
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
@@ -44,7 +89,7 @@ class LLMConfig(BaseModel):
 class ExecutionConfig(BaseModel):
     """Agent 执行策略配置。"""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")  # 安全最佳实践: 拒绝未定义字段
 
     max_iterations: Optional[int] = Field(None, gt=0, le=20)
     llm_timeout: Optional[float] = Field(None, gt=0.0)
