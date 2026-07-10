@@ -3,20 +3,29 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, EmailStr
 
 from src.database.sql_session import get_db
 from src.database.models import User
 from src.utils.security import verify_password, get_password_hash, create_access_token
-from src.settings import settings
 from src.utils.rate_limit import limiter  # 安全最佳实践: 登录速率限制
 
 router = APIRouter()
 
 class UserCreate(BaseModel):
     username: str
-    email: str
+    email: EmailStr
     password: str = Field(..., min_length=6, description="Password must be at least 6 characters")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        """安全最佳实践: 密码至少包含字母和数字，防止纯数字/纯字母等弱密码。"""
+        if not any(c.isalpha() for c in v):
+            raise ValueError("密码必须包含至少一个字母")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("密码必须包含至少一个数字")
+        return v
 
 class Token(BaseModel):
     access_token: str
@@ -34,14 +43,10 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         or_(User.username == user_in.username, User.email == user_in.email)
     ).first()
     if user:
-        if user.username == user_in.username:
-            detail = "The user with this username already exists in the system."
-        else:
-            detail = "The user with this email already exists in the system."
-            
+        # 安全最佳实践: 统一错误消息，不区分用户名/邮箱已存在，防止用户枚举
         raise HTTPException(
             status_code=409,
-            detail=detail,
+            detail="用户名或邮箱已被注册",
         )
     user = User(
         username=user_in.username,
@@ -65,10 +70,7 @@ def login_access_token(
     elif not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
     
-    access_token_expires = settings.ACCESS_TOKEN_EXPIRE_MINUTES
     return {
-        "access_token": create_access_token(
-            user.id,
-        ),
+        "access_token": create_access_token(user.id),
         "token_type": "bearer",
     }

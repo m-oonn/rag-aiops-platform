@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import uuid
 import json
 
@@ -24,8 +24,20 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     kb_id: Optional[int] = None # Deprecated/Override
     assistant_id: Optional[int] = None # New: Select Assistant
-    top_k: int = 5
+    top_k: int = Field(5, ge=1, le=50)
     llm_model: Optional[str] = None  # 前端手动切换模型，None 则用 Assistant 默认或全局默认
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, v: str | None) -> str | None:
+        """安全最佳实践: 校验 llm_model 在白名单内，防止注入任意模型名。"""
+        if v is None:
+            return v
+        from src.settings import settings
+        allowed = [m.strip() for m in settings.AVAILABLE_MODELS.split(",")]
+        if v not in allowed:
+            raise ValueError(f"不支持的模型: {v}，可用模型: {', '.join(allowed)}")
+        return v
 
 class ChatResponse(BaseModel):
     session_id: str

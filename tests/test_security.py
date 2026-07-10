@@ -126,6 +126,19 @@ class TestPasswordSecurity:
         hashed = get_password_hash("my-secret-password")
         assert verify_password("wrong-password", hashed) is False
 
+    def test_password_must_contain_letter_and_digit(self, client):
+        """密码必须同时包含字母和数字，纯字母或纯数字应被拒绝。"""
+        for weak_password in ["123456", "abcdef", "password"]:
+            response = client.post(
+                "/api/v1/auth/register",
+                json={
+                    "username": f"weak-{weak_password}",
+                    "email": f"weak-{weak_password}@example.com",
+                    "password": weak_password,
+                },
+            )
+            assert response.status_code == 422, f"弱密码 '{weak_password}' 应被拒绝"
+
 
 class TestSensitiveDataExposure:
     """验证敏感字段不会通过 API 泄露。"""
@@ -135,7 +148,7 @@ class TestSensitiveDataExposure:
         unique = "leak-test-user"
         response = client.post(
             "/api/v1/auth/register",
-            json={"username": unique, "email": f"{unique}@example.com", "password": "testpass"},
+            json={"username": unique, "email": f"{unique}@example.com", "password": "testpass1"},
         )
         assert response.status_code == 201, response.text
         data = response.json()
@@ -189,7 +202,7 @@ class TestInputSanitization:
         unique = f"xss-{datetime.now(timezone.utc).timestamp()}"
         response = client.post(
             "/api/v1/auth/register",
-            json={"username": unique, "email": f"{unique}@example.com", "password": "testpass"},
+            json={"username": unique, "email": f"{unique}@example.com", "password": "testpass1"},
         )
         assert response.status_code == 201, response.text
         assert response.json()["username"] == unique

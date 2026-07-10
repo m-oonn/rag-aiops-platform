@@ -39,7 +39,8 @@ class TestAuthFunctional:
             },
         )
         assert response.status_code == 409
-        assert "username" in response.json()["detail"].lower()
+        # 安全最佳实践: 统一错误消息防用户枚举，不区分用户名/邮箱
+        assert "已被注册" in response.json()["detail"]
 
     def test_register_duplicate_email(self, client, test_user):
         """重复邮箱应返回 409。"""
@@ -52,7 +53,7 @@ class TestAuthFunctional:
             },
         )
         assert response.status_code == 409
-        assert "email" in response.json()["detail"].lower()
+        assert "已被注册" in response.json()["detail"]
 
     def test_login_with_valid_credentials(self, client, test_user):
         """正确用户名密码应返回 access_token。"""

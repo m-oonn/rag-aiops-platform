@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 
 from src.database.sql_session import get_db
@@ -14,7 +14,7 @@ class AssistantCreate(BaseModel):
     name: str
     description: Optional[str] = None
     llm_model: str = "qwen-max"
-    temperature: float = 0.7
+    temperature: float = Field(0.7, ge=0.0, le=2.0)  # 安全最佳实践: 限制温度范围
     system_prompt: Optional[str] = None
     greeting_message: Optional[str] = None # New: Opening remarks
     memory_config: Optional[dict] = {"enable": True, "window_size": 10}
@@ -123,8 +123,20 @@ def update_assistant(
         raise HTTPException(status_code=404, detail="Assistant not found")
     if assistant.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     update_data = assistant_in.dict(exclude_unset=True)
+
+    # 安全最佳实践: 更新时校验 kb_ids 归属，防止关联他人 KB
+    if "kb_ids" in update_data and update_data["kb_ids"]:
+        kbs = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(update_data["kb_ids"]),
+            KnowledgeBase.owner_id == current_user.id
+        ).all()
+        if len(kbs) != len(update_data["kb_ids"]):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid KB IDs: some knowledge bases do not exist or do not belong to you"
+            )
     for field, value in update_data.items():
         setattr(assistant, field, value)
         

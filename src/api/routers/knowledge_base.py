@@ -111,6 +111,52 @@ ALLOWED_EXTENSIONS = {
     ".pptx", ".ppt", ".md", ".html", ".htm", ".txt",
 }
 
+# 安全最佳实践: 文件 magic number 签名白名单，防止伪装扩展名
+FILE_SIGNATURES = {
+    b"%PDF": ".pdf",
+    b"PK\x03\x04": ".docx",  # also xlsx, pptx (ZIP format)
+    b"\xd0\xcf\x11\xe0": ".doc",  # also xls, ppt (OLE2 format)
+    b"\xef\xbb\xbf": ".csv",  # UTF-8 BOM (csv/txt/md may have this)
+}
+
+
+def _verify_file_signature(content: bytes, ext: str) -> None:
+    """安全最佳实践: 校验文件头 magic number 与扩展名匹配。
+
+    二进制格式(.pdf/.docx/.xlsx/.pptx/.doc/.xls/.ppt)必须有正确签名。
+    纯文本格式(.txt/.md/.csv/.html/.htm)无固定签名，跳过校验。
+    """
+    _TEXT_EXTS = {".txt", ".md", ".csv", ".html", ".htm"}
+    if ext in _TEXT_EXTS:
+        return
+
+    # 二进制格式按签名组校验
+    _BINARY_GROUPS = {
+        ".pdf": [b"%PDF"],
+        ".docx": [b"PK\x03\x04"],
+        ".xlsx": [b"PK\x03\x04"],
+        ".pptx": [b"PK\x03\x04"],
+        ".doc": [b"\xd0\xcf\x11\xe0"],
+        ".xls": [b"\xd0\xcf\x11\xe0"],
+        ".ppt": [b"\xd0\xcf\x11\xe0"],
+    }
+
+    expected_sigs = _BINARY_GROUPS.get(ext)
+    if not expected_sigs:
+        return  # 未知二进制类型，跳过
+
+    if len(content) < 4:
+        raise HTTPException(status_code=400, detail="文件内容过短，无法验证类型")
+
+    for sig in expected_sigs:
+        if content[:len(sig)] == sig:
+            return
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"文件内容与扩展名 '{ext}' 不匹配（magic number 校验失败）",
+    )
+
 
 def sanitize_filename(filename: str) -> str:
     """清洗文件名，拒绝路径穿越并移除危险字符。"""
@@ -260,6 +306,10 @@ def upload_document(
             status_code=413,
             detail=f"File too large: {file_size} bytes exceeds limit of {MAX_UPLOAD_SIZE} bytes",
         )
+
+    # 安全最佳实践: 校验文件 magic number，防止伪装扩展名的恶意文件
+    # 纯文本类(.txt/.md/.csv/.html)无固定签名，跳过；二进制类必须有正确签名
+    _verify_file_signature(file_content, ext)
 
     file_path = settings.UPLOAD_DIR / f"{doc_uid}_{safe_filename}"
     
@@ -421,17 +471,20 @@ def list_documents(
 @router.post("/documents/{doc_id}/generate-qa", response_model=List[QAPairOut])
 def generate_qa_for_document(
     doc_id: int,
-    num_pairs: int = 5,
+    num_pairs: int = 5,  # 安全最佳实践: 限制 QA 生成数量上限，防止耗尽 LLM 配额
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
+    # 安全最佳实践: 限制单次 QA 生成数量，防止耗尽 LLM 配额
+    num_pairs = min(max(num_pairs, 1), 20)
+
     # Check permission
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
         
     # Fetch chunks to get text
@@ -481,9 +534,9 @@ def create_qa_pair(
         raise HTTPException(status_code=404, detail="Document not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     qa = GeneratedQAPair(
         kb_id=kb.id,
         doc_id=doc.id,
@@ -510,9 +563,9 @@ def update_qa_pair(
         raise HTTPException(status_code=404, detail="QA Pair not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == qa.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     if qa_in.question is not None:
         qa.question = qa_in.question
     if qa_in.answer is not None:
@@ -537,9 +590,9 @@ def delete_qa_pair(
         raise HTTPException(status_code=404, detail="QA Pair not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == qa.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     db.delete(qa)
     db.commit()
     return {"message": "QA Pair deleted"}
@@ -555,9 +608,9 @@ def download_qa_pairs(
         raise HTTPException(status_code=404, detail="Document not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     qa_pairs = db.query(GeneratedQAPair).filter(GeneratedQAPair.doc_id == doc_id).all()
     
     # Generate Markdown content
@@ -587,9 +640,9 @@ def get_document_chunks(
         raise HTTPException(status_code=404, detail="Document not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     return db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).limit(limit).all()
 
 @router.post("/documents/{doc_id}/reprocess")
@@ -605,8 +658,8 @@ def reprocess_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
-         raise HTTPException(status_code=403, detail="Not authorized")
+    if not kb or kb.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     if config:
         doc.chunking_config = config
@@ -638,9 +691,9 @@ def preview_document(
         raise HTTPException(status_code=404, detail="Document not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     file_path = doc.file_path
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found on server")
@@ -658,7 +711,7 @@ def get_document_qa_pairs(
         raise HTTPException(status_code=404, detail="Document not found")
         
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.kb_id).first()
-    if kb.owner_id != current_user.id:
+    if not kb or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     return db.query(GeneratedQAPair).filter(GeneratedQAPair.doc_id == doc_id).all()

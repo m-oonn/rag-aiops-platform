@@ -101,7 +101,11 @@ class StorageService:
         if not self._available:
             return None
         try:
-            return self.client.presigned_get_object(self.bucket_name, object_name)
+            # 安全最佳实践: 限制 presigned URL 有效期为 1 小时，默认 7 天过长
+            from datetime import timedelta
+            return self.client.presigned_get_object(
+                self.bucket_name, object_name, expires=timedelta(hours=1)
+            )
         except Exception as e:
             logger.error(f"Failed to get file URL: {e}")
             return None

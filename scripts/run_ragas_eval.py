@@ -13,7 +13,7 @@ RAGAS 实跑评测脚本 (RAG-PDF-System)
   (question, contexts, answer, reference) 四元组。这能真实反映 "给定上下文时 RAG 的生成
   与忠实度", 指标可解释。
 
-Judge 模型: qwen-max (settings 默认 qwen3.7-plus 在 DashScope 实测无效, 故显式指定)
+Judge 模型: qwen-plus (settings 默认 qwen3.7-plus 在 DashScope 实测无效; qwen-max 额度不足, 故用 qwen-plus)
 Embedding : DashScope text-embedding-v1 (项目既有, 1536 维)
 
 指标 (RAGAS 0.4.3):
@@ -105,7 +105,7 @@ def generate_answer(llm, query: str, contexts: list) -> str:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=10, help="评测样本数 (默认 10, 即全部)")
-    parser.add_argument("--model", type=str, default="qwen-max", help="Judge / 生成模型")
+    parser.add_argument("--model", type=str, default="qwen-plus", help="Judge / 生成模型")
     args = parser.parse_args()
 
     api_key = settings.DASHSCOPE_API_KEY
@@ -188,7 +188,7 @@ def main():
         "judge_model": args.model,
         "embedding_model": settings.EMBEDDING_MODEL,
         "sample_count": n,
-        "metrics_mean": {col: round(float(df[col].mean()), 4) for col in df.columns},
+        "metrics_mean": {col: round(float(df[col].mean()), 4) for col in ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall'] if col in df.columns},
         "metrics_per_sample": df.to_dict(orient="records"),
     }
 

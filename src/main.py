@@ -235,4 +235,6 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
     # 端口 8200 避开 Windows 保留段 7911-8010(Hyper-V/WSL 占用,否则 winerror 10013)
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8200, reload=True)
+    # 安全最佳实践: 生产环境不应开启热重载(与项目统一用 APP_ENV 判定环境)
+    is_dev = settings.APP_ENV != "production"
+    uvicorn.run("src.main:app", host="0.0.0.0", port=8200, reload=is_dev)

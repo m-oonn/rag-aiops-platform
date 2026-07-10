@@ -8,6 +8,7 @@ from src.database.sql_session import get_db
 from src.database.models import Agent, User
 from src.api.dependencies import get_current_user
 from src.services.agent_tool_service import execute_agent_query
+from src.settings import settings
 
 router = APIRouter()
 
@@ -52,6 +53,7 @@ class MCPServerConfig(BaseModel):
         """
         from urllib.parse import urlparse
         import ipaddress
+        import socket
 
         parsed = urlparse(url)
         hostname = parsed.hostname
@@ -62,17 +64,36 @@ class MCPServerConfig(BaseModel):
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"Only http/https schemes allowed, got: {parsed.scheme}")
 
-        # 如果是 IP 地址，检查是否为内网
+        # 如果是 IP 地址，直接检查是否为内网
         try:
             ip = ipaddress.ip_address(hostname)
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified:
-                raise ValueError(
-                    f"SSRF protection: internal/private IP not allowed: {hostname}"
-                )
+                # 开发环境允许回环地址(127.0.0.1/::1)用于本地 MCP 服务器
+                # 与项目统一用 APP_ENV 判定环境
+                if ip.is_loopback and settings.APP_ENV != "production":
+                    pass
+                else:
+                    raise ValueError(
+                        f"SSRF protection: internal/private IP not allowed: {hostname}"
+                    )
         except ValueError:
-            # 不是 IP 地址(是域名)，允许通过
-            # 注意: DNS 重绑定攻击需要更严格的防护，但当前级别足够
-            pass
+            # 不是 IP 地址(是域名)，解析 DNS 后检查所有解析结果
+            # 安全最佳实践: 防止 DNS 重绑定攻击，域名解析的 IP 也不能是内网
+            # 例外: localhost 在开发环境中允许通过(与项目统一用 APP_ENV 判定环境)
+            if hostname == "localhost" and settings.APP_ENV != "production":
+                pass  # 开发环境允许 localhost
+            else:
+                try:
+                    addrs = socket.getaddrinfo(hostname, None)
+                    for addr_info in addrs:
+                        resolved_ip = ipaddress.ip_address(addr_info[4][0])
+                        if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified:
+                            raise ValueError(
+                                f"SSRF protection: domain {hostname} resolves to internal IP: {resolved_ip}"
+                            )
+                except socket.gaierror:
+                    # DNS 解析失败，允许通过(后续连接时自然失败)
+                    pass
 
 
 class LLMConfig(BaseModel):

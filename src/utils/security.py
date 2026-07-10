@@ -25,6 +25,7 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
     else:
         expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode = {"exp": expire, "sub": str(subject)}
+    # 安全最佳实践: 添加 iat(签发时间) 声明，支持审计和 token 生命周期追踪
+    to_encode = {"exp": expire, "sub": str(subject), "iat": now}
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

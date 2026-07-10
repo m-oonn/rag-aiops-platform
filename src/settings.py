@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     VECTOR_DIR: Path = BASE_DIR / "data" / "vectors"
 
     SECRET_KEY: str = ""  # 必须从环境变量或 .env 填;留空则启动报错
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 安全最佳实践: 8 小时，平衡可用性与安全
 
     # —— CORS / Host 白名单(生产环境安全)——
     # 逗号分隔的显式来源/域名列表。生产环境 main.py 从这里读取,不允许通配 "*"。
@@ -44,11 +44,13 @@ class Settings(BaseSettings):
     # —— 前端模型选择器可用列表(display_name, model_id) ——
     # 所有模型通过 DashScope compatible-mode 调用,前端下拉框从此读取。
     # ChatTongyi(RAG 路径)仅支持 Qwen 系列;非 Qwen(glm/deepseek)自动走 ChatOpenAI。
+    # qwen-max 置于首位: 既是 Agent 默认模型(AGENT_MODEL),也是前端默认/降级值,
+    # 纳入统一列表后 RAG 聊天与 Agent 共用同一份可切换选项,白名单校验也自然放行。
     AVAILABLE_MODELS: str = (
-        "qwen3.7-plus,qwen-plus-2025-07-28,qwen-mt-flash,deepseek-r1-distill-qwen-7b,glm-5"
+        "qwen-max,qwen3.7-plus,qwen-plus-2025-07-28,qwen-mt-flash,deepseek-r1-distill-qwen-7b,glm-5"
     )
     MODEL_DISPLAY_NAMES: str = (
-        "Qwen3.7-Plus (旗舰),Qwen-Plus 0728 (均衡),Qwen-MT-Flash (快速),DeepSeek-R1-7B (推理),GLM-5 (智谱)"
+        "Qwen-Max (旗舰),Qwen3.7-Plus (旗舰),Qwen-Plus 0728 (均衡),Qwen-MT-Flash (快速),DeepSeek-R1-7B (推理),GLM-5 (智谱)"
     )
 
     MILVUS_HOST: str = "localhost"
