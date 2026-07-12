@@ -16,6 +16,12 @@ from src.agent.aiops import aiops_service
 from src.api.dependencies import get_current_user
 from src.database.models import User
 from src.utils.logger import logger
+from src.utils.metrics import (
+    AIOPS_DIAGNOSIS_TOTAL,
+    AIOPS_DIAGNOSIS_DURATION,
+    AIOPS_ACTIVE_DIAGNOSES,
+)
+import time
 
 router = APIRouter()
 
@@ -42,8 +48,12 @@ async def diagnose_stream(
       {type: error}         出错
     """
     session_id = request.session_id or "default"
+    start_time = time.time()
+    AIOPS_ACTIVE_DIAGNOSES.inc()
+    final_result = "failed"  # 默认值,出错时记录
 
     async def event_generator():
+        nonlocal final_result
         try:
             async for event in aiops_service.execute(
                 user_input=request.query, session_id=session_id
@@ -52,7 +62,11 @@ async def diagnose_stream(
                     "event": "message",
                     "data": json.dumps(event, ensure_ascii=False),
                 }
-                if event.get("type") in ("complete", "error"):
+                if event.get("type") == "complete":
+                    final_result = "success"
+                    break
+                if event.get("type") == "error":
+                    final_result = "failed"
                     break
         except Exception as e:
             logger.error(f"[aiops] SSE 流异常: {e}", exc_info=True)
@@ -63,5 +77,12 @@ async def diagnose_stream(
                     ensure_ascii=False,
                 ),
             }
+        finally:
+            # Prometheus 业务指标:诊断结果 + 耗时 + 活跃数
+            duration = time.time() - start_time
+            AIOPS_DIAGNOSIS_TOTAL.labels(result=final_result).inc()
+            AIOPS_DIAGNOSIS_DURATION.observe(duration)
+            AIOPS_ACTIVE_DIAGNOSES.dec()
+            logger.info(f"[aiops] 诊断结束 result={final_result} duration={duration:.2f}s")
 
     return EventSourceResponse(event_generator())

@@ -6,6 +6,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, Request
+from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -135,6 +136,32 @@ def _migrate_schema() -> None:
                         logger.warning(f"[schema-migrate] ALTER {table.name}.{col.name} 失败: {e}")
 
 
+def _setup_prometheus(app: FastAPI) -> None:
+    """接入 Prometheus 指标采集 + 暴露 /metrics 端点。
+
+    业务指标(诊断次数/工具调用/并发)见 src/utils/metrics.py,在 router/service 里手动 inc。
+    实现方式:
+      1) Instrumentator 自动采集 HTTP 接口 QPS/延迟/状态码(中间件层)
+      2) prometheus_client.make_asgi_app() 把 /metrics 暴露为 ASGI 子应用
+    """
+    from prometheus_client import make_asgi_app
+
+    # 1) HTTP 接口自动埋点
+    Instrumentator(
+        should_group_status_codes=False,
+        should_ignore_untemplated=True,
+        should_respect_env_var=True,
+        should_instrument_requests_inprogress=True,
+        excluded_handlers=["/metrics", "/docs", "/redoc", "/openapi.json"],
+    ).instrument(app)
+
+    # 2) 把 /metrics 挂成 ASGI 子应用(比 expose() 更稳,兼容所有版本)
+    metrics_app = make_asgi_app()
+    app.mount("/metrics", metrics_app)
+
+    logger.info("[prometheus] /metrics 端点已暴露 (HTTP 自动 + 4 个 AIOps 业务指标)")
+
+
 def create_app() -> FastAPI:
     _validate_secrets()
     _migrate_schema()
@@ -228,6 +255,7 @@ def create_app() -> FastAPI:
     # except Exception as e:
     #     logger.warning("RAG MCP Server 挂载失败: %s", e)
 
+    _setup_prometheus(app)
     return app
 
 app = create_app()

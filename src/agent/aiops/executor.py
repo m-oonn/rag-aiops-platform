@@ -21,6 +21,7 @@ from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tools import load_agent_tools
 from src.agent.aiops_llm import create_agent_llm
 from src.utils.logger import logger
+from src.utils.metrics import AIOPS_TOOL_CALLS_TOTAL
 
 _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步骤。
 
@@ -76,6 +77,7 @@ async def _run_single_tool(tc: dict, tool_map: dict) -> ToolMessage:
 
     if not tool:
         content = f"工具 '{tool_name}' 不存在,跳过"
+        AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="not_found").inc()
     else:
         try:
             result = await asyncio.wait_for(
@@ -83,14 +85,17 @@ async def _run_single_tool(tc: dict, tool_map: dict) -> ToolMessage:
                 timeout=_TOOL_INVOKE_TIMEOUT,
             )
             content = str(result) if not isinstance(result, str) else result
+            AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="success").inc()
         except asyncio.TimeoutError:
             content = f"工具 '{tool_name}' 调用超时(>{_TOOL_INVOKE_TIMEOUT}s)，请检查该服务是否正常运行"
+            AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="timeout").inc()
             logger.warning("[executor] 工具 '%s' 调用超时", tool_name)
         except ConnectionError as e:
             content = f"工具 '{tool_name}' 连接失败(服务可能未启动): {e}"
             logger.warning("[executor] 工具 '%s' 连接失败: %s", tool_name, e)
         except Exception as e:
             content = f"工具 '{tool_name}' 调用失败: {e}"
+            AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="failed").inc()
             logger.warning("[executor] 工具 '%s' 调用异常: %s", tool_name, e)
 
     logger.info(f"[executor] 工具 '{tool_name}' 调用完成,结果长度 {len(content)}")

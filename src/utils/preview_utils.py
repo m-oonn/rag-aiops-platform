@@ -173,8 +173,11 @@ def get_preview_response(file_path: str, file_type: str):
 
     else:
         # 安全最佳实践: 未知文件类型强制下载，不内联渲染(防止浏览器以 text/html 执行)
+        # filename 参数必须传，否则 Starlette 不会设置 content-disposition 头，
+        # 导致 content_disposition_type="attachment" 被忽略，浏览器可能内联渲染危险内容
         return FileResponse(
             file_path,
             media_type="application/octet-stream",
             content_disposition_type="attachment",
+            filename=os.path.basename(file_path),
         )
