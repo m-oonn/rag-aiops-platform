@@ -37,4 +37,8 @@ def create_agent_llm(
         streaming=streaming,
         base_url=settings.DASHSCOPE_API_BASE,
         api_key=settings.DASHSCOPE_API_KEY,
+        request_timeout=60,  # 网络慢/额度受限时快速失败,避免诊断链路被 LLM 卡死
+        # 关键修复: httpx 默认 UA(python-httpx/x.y.z) 被 DashScope 拒绝导致读超时挂起,
+        # 模拟 Python-urllib UA 后 0.6s 即通。所有 Agent LLM 调用必须携带该 UA。
+        default_headers={"User-Agent": "Python-urllib/3.13"},
     )

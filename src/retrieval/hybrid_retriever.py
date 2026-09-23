@@ -80,7 +80,7 @@ class HybridRetriever(BaseRetriever):
         """懒加载 BM25 索引：首次检索时从 SQLite 全量拉取 chunks。
 
         优先从 SQLite document_chunks + knowledge_documents 加载，
-        因为 LocalVectorStore 是进程级内存单例，重启后数据丢失。
+        LocalVectorStore 已持久化到磁盘(重启不丢)，作为 SQLite 不可用时的兜底。
         """
         if self._bm25_populated or self.bm25.is_indexed:
             return
@@ -148,12 +148,17 @@ class HybridRetriever(BaseRetriever):
         query: str,
         top_k: int = 10,
         kb_ids: Optional[list[int]] = None,
+        min_score: float = 0.0,
         **kwargs,
     ) -> list[SearchResult]:
         """混合检索：向量 + BM25 → RRF 融合。
 
         向量和 BM25 各自检索 top_k * 2，RRF 融合后取 top_k。
         这样两边都命中的 chunk 获得更高的融合排名。
+
+        min_score: 相关性阈值(余弦相似度), 过滤低于阈值的弱相关 chunk。
+            (2026-09-16 知识噪声修复: 阈值仅对"向量来源的 score"语义稳定,
+            BM25-only chunk 的 score 是相对归一化值, 阈值弱约束; 主过滤靠 kb_ids 白名单)
         """
         if not query:
             return []
@@ -167,10 +172,13 @@ class HybridRetriever(BaseRetriever):
 
         if not bm25_results:
             # BM25 无结果或未就绪，降级为纯向量检索
-            return vector_results[:top_k]
-
-        if not vector_results:
+            results = vector_results[:top_k]
+        elif not vector_results:
             # 向量无结果但 BM25 有（罕见，文档已索引但向量库空）
-            return bm25_results[:top_k]
+            results = bm25_results[:top_k]
+        else:
+            results = _rrf_fusion(vector_results, bm25_results, top_k)
 
-        return _rrf_fusion(vector_results, bm25_results, top_k)
+        if min_score > 0:
+            results = [r for r in results if r.score is not None and r.score >= min_score]
+        return results
