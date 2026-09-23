@@ -30,3 +30,11 @@ class BaseReplanStrategy(ABC):
             LangGraph 节点兼容的 State 更新字典
         """
         ...
+
+    def reset(self) -> None:
+        """开始新一轮诊断前清理实例状态，默认无操作。
+
+        有状态策略(如 DynamicClassificationStrategy 的假设空间/信念历史)必须覆写，
+        否则上一轮诊断的中间状态(概率已抬升的假设)会泄漏到新一轮——
+        表现为 verify_scenarios 连跑时所有场景结论都被上一轮的 h_infra 带偏。
+        """

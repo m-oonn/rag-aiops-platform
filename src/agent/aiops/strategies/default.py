@@ -149,7 +149,7 @@ class DefaultReplanStrategy(BaseReplanStrategy):
     """
 
     async def decide(self, state: PlanExecuteState) -> Dict[str, Any]:
-        logger.info("=== DefaultReplanStrategy:评估 ===")
+        logger.info("=== [role=replanner] DefaultReplanStrategy:评估 ===")
         input_text = state.get("input", "")
         plan = state.get("plan", [])
         past_steps = state.get("past_steps", [])
