@@ -6,7 +6,7 @@
 """
 
 import operator
-from typing import Annotated, List, Tuple, TypedDict
+from typing import Annotated, List, NotRequired, Tuple, TypedDict
 
 
 class PlanExecuteState(TypedDict):
@@ -27,3 +27,16 @@ class PlanExecuteState(TypedDict):
 
     # 最终诊断报告;非空即触发图结束。
     response: str
+
+    # SSE 进度展示用: {"done": 累计已完成步数, "total": 计划总步数}
+    # 仅 executor 节点增量输出携带,不参与业务决策(checkpointer 照常序列化)。
+    _step_progress: NotRequired[dict]
+
+    # 动态分类策略的假设空间快照（可选，用于前端展示/持久化）
+    hypothesis_space: NotRequired[List[dict]]
+
+    # 旁开引擎的伪并行分支记录（可选，用于前端展示/审计）
+    sidebar_branches: NotRequired[List[dict]]
+
+    # 假设信念变化曲线：每轮各假设概率快照（可选，用于可视化/论文数据）
+    belief_history: NotRequired[List[dict]]
