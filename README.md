@@ -145,6 +145,12 @@ python mcp_servers/cls_server.py       # 日志服务 (127.0.0.1:8003)
 - MinIO 控制台: http://localhost:9001
 - Flower 监控: http://localhost:5555
 
+Supervisor / HITL 端点(需在 `.env` 开启对应开关):
+
+- `POST /api/v1/supervisor/chat` — 多智能体统一入口(SSE)
+- `POST /api/v1/aiops/{thread_id}/review` — HITL 人工审批(SSE)
+- `GET /api/v1/aiops/runs/{thread_id}` — 诊断运行状态查询
+
 ## 📂 目录结构
 
 ```
