@@ -23,9 +23,9 @@ _JSON_SYSTEM_HINT = (
     "你必须只输出一个合法的 JSON 对象。"
     "不要包含任何解释、markdown 围栏、代码块或额外文本。"
     "只输出 JSON。"
-    "例如,对于 Plan 类型,你应该输出: {\"steps\": [\"步骤1\", \"步骤2\"]}"
-    "对于 Act 类型,你应该输出: {\"action\": \"continue\", \"new_steps\": []}"
-    "对于 Response 类型,你应该输出: {\"response\": \"你的回答文本\"}"
+    "例如,对于 Plan 类型,你应该输出: {{\"steps\": [\"步骤1\", \"步骤2\"]}}"
+    "对于 Act 类型,你应该输出: {{\"action\": \"continue\", \"new_steps\": []}}"
+    "对于 Response 类型,你应该输出: {{\"response\": \"你的回答文本\"}}"
     "\n以下是你需要输出的 JSON 格式:\n"
 )
 
@@ -83,7 +83,8 @@ def _format_fields_for_prompt(schema: type[BaseModel]) -> str:
         desc = field.description or ""
         lines.append(f'  "{name}": {ann},  // {desc}')
     lines.append("}")
-    return "\n".join(lines)
+    # 对 LangChain PromptTemplate 转义花括号，避免 JSON 示例被当成变量
+    return "\n".join(lines).replace("{", "{{").replace("}", "}}")
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
