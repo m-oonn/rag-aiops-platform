@@ -1,4 +1,16 @@
-import lint;lint.start()
+"""Plan-Execute-Replan 图装配 + 流式执行服务。
+
+策略注入：replan_strategy 参数决定 replanner 节点的决策逻辑。
+  默认: DefaultReplanStrategy（当前生产行为）
+  Phase 3: DynamicClassificationStrategy（毕设创新）
+
+HITL（人在回路，settings.ENABLE_HITL）：
+  拓扑追加 human_review 节点——replanner 决定 respond 后先挂起等待人工审批，
+  审批端点通过 Command(resume=...) 恢复。挂起期间每线程持有独立策略实例与
+  编译图（_thread_runs），保证假设空间跨 HTTP 请求存活；运行/审批记录落库
+  （run_store / aiops_runs / aiops_approvals）。
+"""
+
 from typing import Any, AsyncGenerator, Dict, Optional
 import time
 
