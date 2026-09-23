@@ -54,6 +54,8 @@ class KnowledgeDocument(Base):
     chunking_config = Column(JSON, nullable=True) # Override KB config
     error_msg = Column(Text, nullable=True)
     celery_task_id = Column(String, nullable=True) # 真实 Celery task id，用于 Monitor
+    # 采集器来源标识(如 "minio://bucket/object")：RAG 知识源接入的增量同步依据
+    source_url = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
@@ -172,7 +174,7 @@ class Assistant(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Configuration
-    llm_model = Column(String, default="qwen-max")
+    llm_model = Column(String, default="qwen3.8-max")
     temperature = Column(Float, default=0.7)
     system_prompt = Column(Text, nullable=True)
     greeting_message = Column(Text, nullable=True) # New: Opening remarks
@@ -258,4 +260,35 @@ class AgentExecutionLog(Base):
     tool_count = Column(Integer, default=0)
     degradation = Column(String, nullable=True)
     latency_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiopsRun(Base):
+    """AIOps 诊断运行记录（HITL 挂起/恢复支撑）。"""
+
+    __tablename__ = "aiops_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String, unique=True, index=True, nullable=False)
+    user_id = Column(Integer, nullable=True)
+    query = Column(Text, nullable=False)
+    # running / pending_review / approved / rejected / completed / failed
+    status = Column(String(32), default="running", nullable=False)
+    report = Column(Text, nullable=True)
+    degraded = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AiopsApproval(Base):
+    """AIOps 诊断人工审批记录（HITL）。"""
+
+    __tablename__ = "aiops_approvals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, nullable=False)
+    reviewer_id = Column(Integer, nullable=True)
+    # approve / reject
+    action = Column(String(16), nullable=False)
+    instruction = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
