@@ -1,6 +1,6 @@
 # 项目理解清单：rag-aiops-thesis 架构与流程梳理
 
-> 本文档基于 `thesis-dynamic-classification-v2` 分支代码，聚焦 AIOps 旁开式动态分类故障诊断机制。
+> 本文档基于 `main` 分支代码，聚焦 AIOps 旁开式动态分类故障诊断机制。
 
 ---
 
