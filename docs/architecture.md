@@ -470,13 +470,17 @@ stateDiagram-v2
 | 2026-09-08 | 鲁棒性F组 | 复验发现方案 C 降级路径 topic 漂移：重规划验证步骤（"验证 网络/连通性问题"）提取不到服务名，stub 回退默认 topic-001，实读 data-sync 日志 → 网络场景高置信误判外部依赖 71% | 方案D（topic 对齐）：executor `_run_single_tool` 对 search_log 用历史真实 topic_id 覆盖自动生成值（`_pick_real_identifier`）；llm_stub 日志摘要保留 `（topic_id=…）` 标记打通 `降级 payload→past_steps→real_ids→对齐` 链路。网络场景 6/8→**7/8**（修复前 6/8），场景 2 判对（网络 93%） | `src/agent/aiops/executor.py`, `scripts/llm_stub.py` |
 | 2026-09-07 | 报告双轨 | 降级机制仅靠人读标注，程序无法消费；缺失/降级/正常三类状态不可机器区分 | 报告头部嵌入 `<!-- diagnostic_meta: {...} -->` JSON 注释块：`evidence_sufficiency(ok/degraded/missing)` + `note` + `conclusion_state(conclusive/degraded_conclusive/insufficient…)` + `top_hypothesis` + `top_probability`；llm_stub 摘要保留 `（{source}）` 使降级标记穿透裁判。人类可读（⚠️ 降级标注）与机器可读（结构化字段）双轨并存 | `src/agent/aiops/strategies/dynamic_classification.py`, `scripts/llm_stub.py` |
 
-> 完整决策背景与证据链见 `docs/superpowers/决策-端到端验收修复：llm_stub路由污染与策略会话隔离.md`。修复后 `scripts/verify_scenarios.py` 8/8 场景通过（5 基础根因 + 多症状叠加 + 级联故障 + 混沌注入），全部 3~4 步收敛；F 组工具故障经 MCP 按 server 容错 + 本地日志兜底后（2026-09-08 复验实测）：停 monitor **8/8**、停 cls **7/8**（残差为单源指标证据不足的诚实 uncertain，不虚报），信息全缺时报告显式声明"证据不足"而非虚报确定。
+> 完整决策背景与证据链见 `docs/superpowers/决策-端到端验收修复：llm_stub路由污染与策略会话隔离.md`（论文侧决策记录，未随本仓库交付）。修复后 `scripts/verify_scenarios.py`〔论文侧脚本，未随仓库交付〕8/8 场景通过（5 基础根因 + 多症状叠加 + 级联故障 + 混沌注入），全部 3~4 步收敛；F 组工具故障经 MCP 按 server 容错 + 本地日志兜底后（2026-09-08 复验实测）：停 monitor **8/8**、停 cls **7/8**（残差为单源指标证据不足的诚实 uncertain，不虚报），信息全缺时报告显式声明"证据不足"而非虚报确定。
+
+> **表中脚本名注解**：本表「涉及文件」列的 `scripts/llm_stub.py` / `scripts/verify_scenarios.py` 均属**论文侧实验脚本，未随本代码仓库交付**（仅保留上述决策与结论）；本仓库可复现的等效采集脚本见下一节说明。
 
 ---
 
 ## 附录：可解释性实验结果（2026-09-07）
 
-执行 `scripts/run_explainability.py`（llm_stub + 规则证据裁判 + MCP 真实工具，固定 seed=0，全离线确定性），输出 `runtime/explainability_report.md / .json`。
+执行 `scripts/run_explainability.py`（MCP 真实工具 + 证据裁判），输出 `runtime/explainability_report.md / .json`。
+
+> **脚本现状与数据来源**：本仓库现版 `run_explainability.py` 已重写为**真实 LLM 语义线为默认**（证据裁判跟随 `.env`），并保留 `--deterministic`（规则关键词裁判）、`--dry-run` / `--self-test`（离线自检）、`--scenarios` / `--repeats`（子集与稳定性复跑）等开关；**无 `.env` 亦可离线自检**。下方 2026-09-07 的数值来自论文侧离线基线跑（确定性 LLM 桩 + 规则裁判 + 固定 seed），口径一致但**具体数值随裁判线路而异**，复现参数见脚本内置 `--help`（`python scripts/run_explainability.py --help`）。
 
 ### A 组 · 决策可审计性（结构性对比，非对称即结论）
 
@@ -528,17 +532,22 @@ stateDiagram-v2
 
 ## 附：文档交叉引用
 
-| 文档 | 内容 | 链接 |
-|------|------|------|
-| **本文件（架构总览）** | 分层架构/时序/数据流/状态机 + 阈值常量 + 修复记录 + 可解释性实验结果 | — |
-| 论文章节提纲 | 7 章提纲 + 素材→章节映射，写作地图 | [论文章节提纲.md](论文章节提纲.md) |
-| 论文第 2 章（相关工作） | 五条研究线文献综述 + 定位声明 + 23 篇参考文献 | [第2章-相关工作.md](第2章-相关工作.md) |
-| 论文第 3 章（方法） | 旁开式动态分类机制：框架/信念更新/两级裁判/决策规则/诚实性/可解释性 | [第3章-方法.md](第3章-方法.md) |
-| 修复工作总结报告 | 10 项修复全景（时间线）+ 关键指标汇总 + F 组三方案详解 + 遗留边界五维展开 | [修复工作总结报告.md](修复工作总结报告.md) |
-| 方法-证据裁判规则 | 两级裁判链路、证据模型、信念更新、8 条决策规则 | [方法-证据裁判规则.md](superpowers/方法-证据裁判规则.md) |
-| 决策-端到端验收修复 | llm_stub 路由污染 + 策略会话隔离两缺陷的决策过程 | [决策-端到端验收修复全链路.md](superpowers/决策-端到端验收修复：llm_stub路由污染与策略会话隔离.md) |
-| 决策-303 外部依赖误判修复 | 规则线 vs LLM 语义线差异 Δ 与口径归因 | [决策-303 外部依赖误判修复.md](superpowers/决策-303外部依赖误判修复.md) |
-| 决策-方案D topic对齐修复 | 降级路径 topic 漂移根因 + 对齐修复 + F 组复验（停 cls 7/8） | [决策-方案D topic对齐修复（降级路径topic漂移）.md](superpowers/决策-方案D topic对齐修复（降级路径topic漂移）.md) |
-| 实验报告 | 可解释性 47 点 ECE 与鲁棒性四组实验原始数据 | [`runtime/explainability_report.md`](../runtime/explainability_report.md)、[`runtime/robustness_report.md`](../runtime/robustness_report.md) |
+| 文档 | 内容 | 链接 | 交付状态 |
+|------|------|------|---------|
+| **本文件（架构总览）** | 分层架构/时序/数据流/状态机 + 阈值常量 + 修复记录 + 可解释性实验结果 | — | ✅ 在库 |
+| 论文章节提纲 | 7 章提纲 + 素材→章节映射，写作地图 | [论文章节提纲.md](论文章节提纲.md) | ✅ 在库 |
+| 论文第 2 章（相关工作） | 五条研究线文献综述 + 定位声明 + 23 篇参考文献 | `docs/第2章-相关工作.md` | 📄 论文正文,不随本仓库交付 |
+| 论文第 3 章（方法） | 旁开式动态分类机制：框架/信念更新/两级裁判/决策规则/诚实性/可解释性 | `docs/第3章-方法.md` | 📄 论文正文,不随本仓库交付 |
+| 修复工作总结报告 | 10 项修复全景（时间线）+ 关键指标汇总 + F 组三方案详解 + 遗留边界五维展开 | [修复工作总结报告.md](修复工作总结报告.md) | ✅ 在库 |
+| 方法-证据裁判规则 | 两级裁判链路、证据模型、信念更新、8 条决策规则 | `docs/superpowers/方法-证据裁判规则.md` | 📄 论文侧决策记录,未随仓库交付 |
+| 决策-端到端验收修复 | llm_stub 路由污染 + 策略会话隔离两缺陷的决策过程 | `docs/superpowers/决策-端到端验收修复：llm_stub路由污染与策略会话隔离.md` | 📄 论文侧决策记录,未随仓库交付 |
+| 决策-303 外部依赖误判修复 | 规则线 vs LLM 语义线差异 Δ 与口径归因 | `docs/superpowers/决策-303外部依赖误判修复.md` | 📄 论文侧决策记录,未随仓库交付 |
+| 决策-方案D topic对齐修复 | 降级路径 topic 漂移根因 + 对齐修复 + F 组复验（停 cls 7/8） | `docs/superpowers/决策-方案D topic对齐修复（降级路径topic漂移）.md` | 📄 论文侧决策记录,未随仓库交付 |
+| 实验报告（可解释性） | 可解释性 47 点 ECE 原始数据 | [`runtime/explainability_report.md`](../runtime/explainability_report.md) | ✅ 在库 |
+| 实验报告（盲测） | 盲测 40 场景命中原始数据 | [`runtime/blind_eval_report.md`](../runtime/blind_eval_report.md) | ✅ 在库 |
+| 实验报告（鲁棒性） | 鲁棒性 F 组原始数据 | `runtime/robustness_report.md` | ⏳ 采集脚本已就绪,报告待生成 |
+
+> **交付状态图例**：✅ 在库 = 随本代码仓库交付；📄 论文侧 = 论文正文/方法/决策记录，仅存于论文侧仓库，**不随本代码仓库交付**（`.gitignore` 第 65 行已排除 `docs/superpowers/`）；⏳ 待生成 = 采集脚本已随仓库交付，报告待补跑。
+> **脚本交付说明**：`scripts/llm_stub.py`（确定性 LLM 桩）与 `scripts/verify_scenarios.py`（8 场景验收）为**论文侧实验脚本，未随本代码仓库交付**（仓库仅保留其决策记录与结论）。本仓库**可复现**的等效采集脚本为 `scripts/run_explainability.py`（可解释性）、`scripts/run_blind_eval.py` + `scripts/blind_fault_gen.py`（盲测）。
 
 **引用路径约定**：`修复记录 → 决策文档（为什么修）→ 架构总览（怎么修/结构）→ 实验报告（效果数据）`，论文写作时按此链回溯证据。
