@@ -1,4 +1,5 @@
 """Health 模块功能测试。"""
+import pytest
 
 
 class TestHealth:
@@ -23,3 +24,6 @@ class TestHealth:
         assert response.status_code == 200, response.text
         data = response.json()
         assert "status" in data
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

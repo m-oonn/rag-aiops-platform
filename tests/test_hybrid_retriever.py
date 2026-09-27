@@ -88,3 +88,6 @@ class TestHybridRetriever:
         chunks = [("id1", "text", {"kb_id": 1})]
         hr.index_bm25_chunks(chunks)
         bm25_mock.index_chunks.assert_called_once_with(chunks)
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

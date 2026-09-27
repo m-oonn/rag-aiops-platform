@@ -123,3 +123,6 @@ class TestAssistantFunctional:
         versions = response.json()
         assert len(versions) == 1
         assert versions[0]["version"] == "v1.0.0"
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

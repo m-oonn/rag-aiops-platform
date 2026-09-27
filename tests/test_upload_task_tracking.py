@@ -63,3 +63,6 @@ class TestUploadTaskTracking:
         items = response.json()
         assert len(items) == 1
         assert items[0]["task_id"] == real_task_id
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

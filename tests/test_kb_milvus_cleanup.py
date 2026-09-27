@@ -1,4 +1,5 @@
 """删除 KB 时 Milvus 向量清理测试。"""
+import pytest
 
 from unittest.mock import patch, MagicMock
 
@@ -24,3 +25,6 @@ class TestKBMilvusCleanup:
             delete_knowledge_base(kb.id, test_user, db)
 
             mock_client.delete_by_kb_id.assert_called_once_with(kb.id)
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

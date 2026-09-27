@@ -182,6 +182,26 @@ rag-aiops-platform/
 - **ChatOpenAI compatible-mode(Agent) + ChatTongyi(RAG)**: 两条 LLM 路径分离 —— Agent 侧需 function calling 走兼容模式,RAG 侧走 DashScope 原生 SDK。
 - **优雅降级**: Milvus / MCP 任一不可用都不阻断主流程,分别降级到本地文件检索 / LLM 知识分析。
 
+## 🧪 测试
+
+测试用例按**是否需要外部服务**分为两类,规则集中在根目录 [`pytest.ini`](pytest.ini):
+
+| 类别 | 数量 | 是否需要外部服务 | 运行方式 |
+|------|------|------------------|----------|
+| 离线单测(默认) | 137 | 否(纯内存 SQLite / 桩替身) | `pytest` |
+| 集成测试 | 98 | 是(PostgreSQL / Redis / Elasticsearch / Milvus) | `pytest -m integration` |
+
+```bash
+# 离线单测:无需任何外部服务,CI 默认门禁(见 .github/workflows/tests.yml)
+pytest                      # 等价于 pytest -m "not integration"
+
+# 集成测试:需先按上文「快速开始」拉起基础服务
+pytest -m integration
+```
+
+> 依赖外部服务的用例已在文件级标注 `pytestmark = pytest.mark.integration`,默认不执行,
+> 因此本地直接运行 `pytest` 即可在无服务环境下全绿(约 15s)。
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。

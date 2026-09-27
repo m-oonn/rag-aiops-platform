@@ -1,0 +1,37 @@
+name: offline-tests
+
+# 离线单测 CI:不需要任何外部服务(PostgreSQL / Redis / Elasticsearch / Milvus / 网络),
+# 只运行 tests/ 中**未**标注 @pytest.mark.integration 的用例(分类规则见根目录 pytest.ini)。
+# 需要外部服务的 98 个集成用例不在本工作流运行,可本地用 `pytest -m integration` 手工触发。
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install dependencies (exclude heavyweight OCR / LLM extras)
+        run: |
+          python -m pip install --upgrade pip
+          # 离线单测不会触发 OCR / 视觉 / 大模型代码路径:
+          #   - paddleocr / cv2 在 src 内均为**函数级惰性导入**;
+          #   - datasets / ragas 仅出现在独立脚本(scripts/)中,不被测试导入。
+          # 故排除数百 MB ~ GB 级重依赖(其中 paddlex 为 beta 版,CI 上有安装失败风险),
+          # 以缩短安装时间、提高稳定性。若后续新增离线用例确实需要,删除对应过滤项即可。
+          grep -viE '^(paddlepaddle|paddleocr|paddlex|modelscope|opencv-contrib-python|datasets|ragas|unstructured)' requirements.txt > /tmp/req-ci.txt
+          python -m pip install -r /tmp/req-ci.txt
+
+      - name: Run offline unit tests
+        run: python -m pytest -q -m "not integration"

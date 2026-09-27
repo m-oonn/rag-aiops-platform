@@ -125,3 +125,6 @@ class TestKnowledgeBaseFunctional:
         )
         assert response.status_code == 200, response.text
         assert response.json()["name"] == "Public KB"
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

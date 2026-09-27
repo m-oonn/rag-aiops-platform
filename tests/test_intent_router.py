@@ -407,3 +407,6 @@ class TestIntentRouting:
             result = await service.query("CPU 飙高了", kb_ids=[1], assistant_config=config)
 
         assert "Agent诊断" in result["answer"]
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

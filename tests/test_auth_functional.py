@@ -101,3 +101,6 @@ class TestAuthFunctional:
         """数据库中必须存储哈希密码，不能是明文。"""
         assert test_user.password_hash != "testpass"
         assert verify_password("testpass", test_user.password_hash)
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

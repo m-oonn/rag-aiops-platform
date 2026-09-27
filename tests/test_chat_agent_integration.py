@@ -62,3 +62,6 @@ class TestChatAgentIntegration:
             data = response.json()
             assert data["answer"] == "CPU is at 15% via agent."
             mock_execute.assert_awaited_once()
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

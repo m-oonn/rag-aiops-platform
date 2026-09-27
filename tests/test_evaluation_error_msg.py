@@ -1,4 +1,5 @@
 """评估任务错误信息持久化测试。"""
+import pytest
 
 from sqlalchemy.orm import sessionmaker
 
@@ -39,3 +40,6 @@ class TestEvaluationErrorMessage:
             assert updated_task.status == 3
             assert updated_task.error_msg is not None
             assert "No documents found" in updated_task.error_msg
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration

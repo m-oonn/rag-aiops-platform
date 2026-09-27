@@ -98,3 +98,6 @@ class TestVectorRetrieverRetrieve:
 
         call_args = mock_client.search.call_args
         assert call_args.kwargs.get("top_k") == 15
+
+# 集成测试标记:依赖外部服务(PostgreSQL/Redis/Elasticsearch/Milvus/网络),默认不执行(见 pytest.ini)
+pytestmark = pytest.mark.integration
