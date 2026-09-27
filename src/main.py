@@ -6,7 +6,6 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, Request
-from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -18,6 +17,14 @@ from src.database.sql_session import engine, Base
 from src.utils.logger import logger
 from src.utils.tracing import set_trace_id, reset_trace_id
 from src.utils.rate_limit import limiter  # 安全最佳实践: 速率限制器
+
+# prometheus 为可选依赖，未安装时跳过指标采集
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    _HAS_PROMETHEUS = True
+except ImportError:
+    Instrumentator = None
+    _HAS_PROMETHEUS = False
 
 # Create Tables
 Base.metadata.create_all(bind=engine)
@@ -144,6 +151,10 @@ def _setup_prometheus(app: FastAPI) -> None:
       1) Instrumentator 自动采集 HTTP 接口 QPS/延迟/状态码(中间件层)
       2) prometheus_client.make_asgi_app() 把 /metrics 暴露为 ASGI 子应用
     """
+    if not _HAS_PROMETHEUS:
+        logger.warning("[prometheus] prometheus-fastapi-instrumentator 未安装，跳过指标采集")
+        return
+
     from prometheus_client import make_asgi_app
 
     # 1) HTTP 接口自动埋点

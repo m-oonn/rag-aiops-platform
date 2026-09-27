@@ -2,7 +2,7 @@
 
 目的(一举三得):
 1. 验证用 langchain-openai 的 ChatOpenAI + DashScope compatible-mode,
-   能否同时调通 qwen-max 和 deepseek 模型(同一个类/key/base_url)。
+   能否同时调通 Qwen 与 DeepSeek 模型(同一个类/key/base_url)。
 2. 验证 DeepSeek 模型在阿里百炼上的确切模型名(逐个试,服务器说了算)。
 3. 验证 bind_tools(function calling)是否真能让模型返回结构化的 tool_calls。
 
@@ -11,6 +11,13 @@
 """
 
 import os
+import sys
+from pathlib import Path
+
+# 让脚本无论从哪运行都能找到 src(与其它探针脚本保持一致)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 # 让访问阿里(及 DeepSeek)时绕过本地代理: 把这些域名加进 NO_PROXY。
 # 诊断已确认: 本地代理(127.0.0.1:15721)不转发阿里域名,会 404。
@@ -58,5 +65,5 @@ if __name__ == "__main__":
     print("api_key 是否存在 =", bool(settings.DASHSCOPE_API_KEY))
 
     # 逐个试: 服务器接受哪个名字, 哪个就是对的
-    for name in ["qwen-max", "deepseek-v3", "deepseek-chat", "deepseek-r1"]:
+    for name in ["qwen3.7-flash-2026-07-15", "deepseek-v3", "deepseek-chat", "deepseek-r1"]:
         probe(name)

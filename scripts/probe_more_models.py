@@ -47,12 +47,12 @@ MODEL_CANDIDATES: list[tuple[str, str]] = [
     # 商业版(非 thinking)
     ("qwen-plus", "Qwen-Plus 最新"),
     ("qwen-turbo", "Qwen-Turbo 最新"),
-    ("qwen-max", "Qwen-Max 最新"),
+    ("qwen3.7-flash-2026-07-15", "Qwen3.7-Flash-0715"),
     ("qwen-long", "Qwen-Long(长文本)"),
     # 时间戳版本
     ("qwen-plus-2025-07-28", "Qwen-Plus 0728"),
     ("qwen-turbo-2025-10-31", "Qwen-Turbo 1031"),
-    ("qwen-max-2025-08-21", "Qwen-Max 0821"),
+    ("qwen3.8-max-0902", "Qwen3.8-Max-0902"),
     # deepseek / glm / kimi / hunyuan / minimax / baichuan
     ("deepseek-v3.1", "DeepSeek-V3.1"),
     ("deepseek-r1", "DeepSeek-R1"),

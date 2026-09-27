@@ -440,13 +440,13 @@ const fetchModels = async () => {
     availableModels.value = res.data.models || []
     selectedModel.value = res.data.default_model || null
   } catch (e) {
-    // 降级：API 不可用时提供默认选项
+    // 降级：API 不可用时提供与 .env AVAILABLE_MODELS 一致的模型
     availableModels.value = [
-      { id: 'qwen-max', name: 'Qwen-Max (旗舰)' },
-      { id: 'qwen-plus', name: 'Qwen-Plus (均衡)' },
-      { id: 'qwen-turbo', name: 'Qwen-Turbo (快速)' },
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' },
+      { id: 'deepseek-v4-flash-0731', name: 'DeepSeek-V4-Flash-0731' },
+      { id: 'deepseek-v4-pro-0813', name: 'DeepSeek-V4-Pro-0813' },
     ]
-    selectedModel.value = 'qwen-max'
+    selectedModel.value = 'deepseek-v4.1-flash'
   }
 }
 

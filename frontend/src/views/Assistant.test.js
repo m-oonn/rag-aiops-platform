@@ -75,7 +75,7 @@ describe('Assistant.vue', () => {
               id: 1,
               name: 'Assistant One',
               description: 'Desc',
-              llm_model: 'qwen-max',
+              llm_model: 'deepseek-v4.1-flash',
               temperature: 0.7,
               system_prompt: '',
               greeting_message: '',
@@ -113,7 +113,7 @@ describe('Assistant.vue', () => {
       if (url === '/assistants/') {
         return Promise.resolve({
           data: [
-            { id: 1, name: 'Assistant One', description: 'Desc', llm_model: 'qwen-max' }
+            { id: 1, name: 'Assistant One', description: 'Desc', llm_model: 'deepseek-v4.1-flash' }
           ]
         })
       }
@@ -137,7 +137,7 @@ describe('Assistant.vue', () => {
       if (url === '/assistants/') {
         return Promise.resolve({
           data: [
-            { id: 1, name: 'Assistant One', description: 'Desc', llm_model: 'qwen-max', kb_ids: [] }
+            { id: 1, name: 'Assistant One', description: 'Desc', llm_model: 'deepseek-v4.1-flash', kb_ids: [] }
           ]
         })
       }

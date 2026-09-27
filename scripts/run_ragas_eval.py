@@ -13,7 +13,7 @@ RAGAS 实跑评测脚本 (RAG-PDF-System)
   (question, contexts, answer, reference) 四元组。这能真实反映 "给定上下文时 RAG 的生成
   与忠实度", 指标可解释。
 
-Judge 模型: qwen-plus (settings 默认 qwen3.7-plus 在 DashScope 实测无效; qwen-max 额度不足, 故用 qwen-plus)
+Judge 模型: qwen-plus (settings 默认 qwen3.7-plus 在 DashScope 实测无效, 故用 qwen-plus; 注意 qwen-plus 免费额度已耗尽, 跑前先用 --model 指定当前免费模型)
 Embedding : DashScope text-embedding-v1 (项目既有, 1536 维)
 
 指标 (RAGAS 0.4.3):

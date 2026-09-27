@@ -348,55 +348,62 @@ class TestIntentRouting:
         service.analyzer.analyze.assert_not_called()
         service.retriever.retrieve.assert_not_called()
 
+    # ── 补充矩阵：覆盖 TestRoutingMatrix 未真实测试的组合 ──
 
-# ──────────────────────────────────────────────
-# 路由决策矩阵总结
-# ──────────────────────────────────────────────
+    @pytest.mark.asyncio
+    async def test_chat_no_kb_with_agent_still_general(self):
+        """闲聊 + 无 KB + 有 Agent → General Chat（不触发 Agent）。"""
+        service = self._make_service(intent="chat")
+        config = self._assistant_config(agent_ids=[1], agents=[self._fake_agent()])
 
-class TestRoutingMatrix:
-    """参数化测试：覆盖完整的 intent × config 矩阵。"""
+        result = await service.query("hello", assistant_config=config)
 
-    def _run_route(self, intent, kb_ids, has_agent):
-        """模拟路由决策，返回路径名称。"""
-        # 模拟 _quick_intent_check 不命中 → 走 LLM 分类
-        # 模拟 LLM 返回 intent
-        # 模拟配置
-        has_kb = bool(kb_ids)
+        service.retriever.retrieve.assert_not_called()
+        assert "General Chat" in result["answer"]
 
-        # 路由规则（待实现的逻辑）
-        if intent == "chat":
-            return "general_chat"
-        elif intent == "knowledge":
-            if has_kb:
-                return "rag"
-            else:
-                return "general_chat"
-        elif intent == "diagnosis":
-            if has_agent:
-                return "agent"
-            elif has_kb:
-                return "rag"
-            else:
-                return "general_chat"
-        return "general_chat"
+    @pytest.mark.asyncio
+    async def test_knowledge_multiple_kbs_goes_rag(self):
+        """知识查询 + 多个 KB → RAG 路径。"""
+        service = self._make_service(intent="knowledge")
+        config = self._assistant_config()
 
-    @pytest.mark.parametrize("intent,kb_ids,has_agent,expected", [
-        # chat 永远走 general_chat
-        ("chat", None, False, "general_chat"),
-        ("chat", [1], False, "general_chat"),
-        ("chat", [1], True, "general_chat"),
-        ("chat", None, True, "general_chat"),
-        # knowledge 看 KB
-        ("knowledge", None, False, "general_chat"),
-        ("knowledge", [1], False, "rag"),
-        ("knowledge", [1, 2], False, "rag"),
-        ("knowledge", None, True, "general_chat"),
-        # diagnosis 优先 Agent，降级 RAG，兜底 general
-        ("diagnosis", None, True, "agent"),
-        ("diagnosis", [1], True, "agent"),
-        ("diagnosis", [1], False, "rag"),
-        ("diagnosis", None, False, "general_chat"),
-    ])
-    def test_routing_matrix(self, intent, kb_ids, has_agent, expected):
-        """完整覆盖 intent × config → path 的所有组合。"""
-        assert self._run_route(intent, kb_ids, has_agent) == expected
+        result = await service.query("查询文档", kb_ids=[1, 2], assistant_config=config)
+
+        service.retriever.retrieve.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_knowledge_no_kb_with_agent_still_general(self):
+        """知识查询 + 无 KB + 有 Agent → General Chat（降级，不走 Agent）。"""
+        service = self._make_service(intent="knowledge")
+        config = self._assistant_config(agent_ids=[1], agents=[self._fake_agent()])
+
+        result = await service.query("查询文档", assistant_config=config)
+
+        service.retriever.retrieve.assert_not_called()
+        assert "General Chat" in result["answer"]
+
+    @pytest.mark.asyncio
+    async def test_diagnosis_no_kb_with_agent_goes_agent(self):
+        """运维诊断 + 无 KB + 有 Agent → Agent 路径。"""
+        service = self._make_service(intent="diagnosis")
+        config = self._assistant_config(agent_ids=[1], agents=[self._fake_agent()])
+
+        with patch("src.services.rag_service.execute_agent_query",
+                    new_callable=AsyncMock,
+                    return_value={"answer": "诊断结果", "tool_calls": []}):
+            result = await service.query("CPU 飙高了", assistant_config=config)
+
+        assert "诊断结果" in result["answer"]
+
+    @pytest.mark.asyncio
+    async def test_diagnosis_with_kb_and_agent_goes_agent(self):
+        """运维诊断 + 有 KB + 有 Agent → Agent 路径（Agent 优先于 RAG）。"""
+        service = self._make_service(intent="diagnosis")
+        config = self._assistant_config(agent_ids=[1], agents=[self._fake_agent()])
+
+        with patch("src.services.rag_service.execute_agent_query",
+                    new_callable=AsyncMock,
+                    return_value={"answer": "Agent诊断", "tool_calls": []}):
+            result = await service.query("CPU 飙高了", kb_ids=[1], assistant_config=config)
+
+        assert "Agent诊断" in result["answer"]

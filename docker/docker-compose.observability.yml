@@ -1,0 +1,70 @@
+version: '3.8'
+
+# 本地可观测性栈(真实 Prometheus + Elasticsearch)
+#
+# 目的: 给 MCP 的双轨真实后端(MONITOR_BACKEND=prometheus / CLS_BACKEND=elasticsearch)
+#       一个可连、可验证的目标 —— 先在本地跑通真实链路(HTTP、索引匹配、字段映射、鉴权),
+#       再切生产集群(只改 .env 里的两个 URL)。
+#
+# 用法:
+#   docker compose -f docker/docker-compose.observability.yml up -d
+#   python scripts/seed_es_demo_logs.py        # ES 是空的,灌入样本日志后日志链路才查得出东西
+#   python scripts/probe_real_backends.py      # 验证;Prometheus 需等 1~2 分钟采够样本
+#
+# 注意: 本栈与 docker-compose.yml(应用主栈)相互独立,单独启停,不影响现有部署。
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: rag_prometheus
+    ports:
+      # 宿主端口刻意用 19090:Windows 的 Hyper-V 保留段 9029-9128 占着 9090,
+      # WSL 无法把它转发到 Windows,Agent(跑在 Windows 上)会连不上。
+      - "19090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    # WSL 空闲会被回收,docker 重启后靠它自动拉回(否则整个指标链路静默失效)
+    restart: unless-stopped
+    networks:
+      - rag_observability
+
+  # 指标来源。不映射端口: 只被 Prometheus 抓取,无需对外暴露。
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: rag_node_exporter
+    restart: unless-stopped
+    networks:
+      - rag_observability
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: rag_elasticsearch
+    environment:
+      - discovery.type=single-node
+      # 仅本地开发关闭安全功能;生产集群必须开启,并在 .env 配 CLS_ES_USERNAME/PASSWORD 或 CLS_ES_API_KEY
+      - xpack.security.enabled=false
+      # 单节点演示限制堆内存,避免吃掉整机内存
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - rag_observability
+
+networks:
+  rag_observability:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  es_data:

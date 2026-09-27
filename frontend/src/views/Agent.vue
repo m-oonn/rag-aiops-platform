@@ -173,10 +173,12 @@
             <el-divider content-position="left">模型配置</el-divider>
             <el-form-item label="底座模型">
                <el-select v-model="form.llm_config.model_name">
-                 <el-option label="Qwen Max" value="qwen-max" />
-                 <el-option label="Qwen Plus" value="qwen-plus" />
-                 <el-option label="GPT-4" value="gpt-4" />
-                 <el-option label="GPT-3.5" value="gpt-3.5-turbo" />
+                 <el-option
+                   v-for="m in availableModels"
+                   :key="m.id"
+                   :label="m.name"
+                   :value="m.id"
+                 />
                </el-select>
             </el-form-item>
             <el-form-item label="温度 (Temperature)">
@@ -228,6 +230,10 @@ const activeTab = ref('basic')
 const availableTools = ['search', 'calculator', 'weather', 'file_reader', 'code_interpreter']
 const availablePermissions = ['read_file', 'write_file', 'internet_access', 'execute_code']
 
+// 可用模型从后端 /health/models 拉取，避免前端硬编码已下架模型
+const availableModels = ref([])
+const defaultModel = ref('')
+
 const form = reactive({
   name: '',
   description: '',
@@ -264,7 +270,7 @@ const form = reactive({
     clarify_enabled: true
   },
   llm_config: {
-    model_name: 'qwen-max',
+    model_name: '',
     temperature: 0.7,
     max_tokens: 2048
   },
@@ -304,6 +310,22 @@ const fetchKnowledgeBases = async () => {
   }
 }
 
+const fetchModels = async () => {
+  try {
+    const res = await api.get('/health/models')
+    availableModels.value = res.data.models || []
+    defaultModel.value = res.data.default_model || availableModels.value[0]?.id || ''
+  } catch (error) {
+    console.error('Failed to fetch models:', error)
+    availableModels.value = [
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' },
+      { id: 'deepseek-v4-flash-0731', name: 'DeepSeek-V4-Flash-0731' },
+      { id: 'deepseek-v4-pro-0813', name: 'DeepSeek-V4-Pro-0813' },
+    ]
+    defaultModel.value = 'deepseek-v4.1-flash'
+  }
+}
+
 const openDialog = (row = null) => {
   activeTab.value = 'basic'
   fetchKnowledgeBases() // Ensure we have latest KBs
@@ -325,7 +347,7 @@ const openDialog = (row = null) => {
     form.reasoning_config = row.reasoning_config || { max_steps: 10, allow_parallel: true }
     form.security_config = row.security_config || { safety_level: 'moderate', allowed_actions: [], allow_internet: false }
     form.interaction_config = row.interaction_config || { output_format: 'markdown', response_style: 'professional', clarify_enabled: true }
-    form.llm_config = row.llm_config || { model_name: 'qwen-max', temperature: 0.7, max_tokens: 2048 }
+    form.llm_config = row.llm_config || { model_name: defaultModel.value, temperature: 0.7, max_tokens: 2048 }
     form.execution_config = row.execution_config || { timeout: 60, retry_times: 3, fallback_response: '' }
     
   } else {
@@ -344,7 +366,7 @@ const openDialog = (row = null) => {
     form.reasoning_config = { max_steps: 10, allow_parallel: true }
     form.security_config = { safety_level: 'moderate', allowed_actions: [], allow_internet: false }
     form.interaction_config = { output_format: 'markdown', response_style: 'professional', clarify_enabled: true }
-    form.llm_config = { model_name: 'qwen-max', temperature: 0.7, max_tokens: 2048 }
+    form.llm_config = { model_name: defaultModel.value, temperature: 0.7, max_tokens: 2048 }
     form.execution_config = { timeout: 60, retry_times: 3, fallback_response: '' }
   }
   dialogVisible.value = true
@@ -407,6 +429,7 @@ const deleteAgent = async (id) => {
 
 onMounted(() => {
   fetchAgents()
+  fetchModels()
 })
 </script>
 

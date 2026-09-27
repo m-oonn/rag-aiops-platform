@@ -31,3 +31,10 @@ AIOPS_ACTIVE_DIAGNOSES = Gauge(
     "aiops_active_diagnoses",
     "当前正在执行的 AIOps 诊断任务数",
 )
+
+# 5) 并行批次执行次数(按结果切片: success/failed)
+AIOPS_PARALLEL_BATCHES = Counter(
+    "aiops_parallel_batches_total",
+    "AIOps 并行批次执行次数",
+    labelnames=["result"],
+)

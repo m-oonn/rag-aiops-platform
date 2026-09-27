@@ -63,13 +63,13 @@ def test_create_agent_accepts_valid_llm_config():
     agent = AgentCreate(
         name="Test Agent",
         llm_config={
-            "model": "qwen-max",
+            "model": "deepseek-v4.1-flash",
             "temperature": 0.5,
             "max_tokens": 2048,
         },
     )
     assert agent.llm_config is not None
-    assert agent.llm_config.model == "qwen-max"
+    assert agent.llm_config.model == "deepseek-v4.1-flash"
 
 
 def test_create_agent_rejects_invalid_llm_config_type():

@@ -24,6 +24,12 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+# SQLite 运行时副产物(WAL/SHM)与备份,勿入库
+*.db-shm
+*.db-wal
+*.db.bak*
+# 探测/评测产物(wav/txt 等),无版本价值
+reports/
 
 # ─── IDE / OS ───
 .vscode/

@@ -7,13 +7,15 @@ from datetime import datetime
 from src.database.sql_session import get_db
 from src.database.models import Assistant, AssistantVersion, User, KnowledgeBase, Agent
 from src.api.dependencies import get_current_user
+from src.settings import settings
 
 router = APIRouter()
 
 class AssistantCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    llm_model: str = "qwen-max"
+    # 默认跟随全局配置(settings.LLM_MODEL),避免硬编码已下架/额度耗尽的模型
+    llm_model: str = settings.LLM_MODEL
     temperature: float = Field(0.7, ge=0.0, le=2.0)  # 安全最佳实践: 限制温度范围
     system_prompt: Optional[str] = None
     greeting_message: Optional[str] = None # New: Opening remarks
@@ -124,7 +126,7 @@ def update_assistant(
     if assistant.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    update_data = assistant_in.dict(exclude_unset=True)
+    update_data = assistant_in.model_dump(exclude_unset=True)
 
     # 安全最佳实践: 更新时校验 kb_ids 归属，防止关联他人 KB
     if "kb_ids" in update_data and update_data["kb_ids"]:

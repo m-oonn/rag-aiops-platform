@@ -73,7 +73,7 @@ describe('Agent.vue', () => {
               reasoning_config: { max_steps: 10, allow_parallel: true },
               security_config: { safety_level: 'moderate', allowed_actions: [], allow_internet: false },
               interaction_config: { output_format: 'markdown', response_style: 'professional', clarify_enabled: true },
-              llm_config: { model_name: 'qwen-max', temperature: 0.7, max_tokens: 2048 },
+              llm_config: { model_name: 'deepseek-v4.1-flash', temperature: 0.7, max_tokens: 2048 },
               execution_config: { timeout: 60, retry_times: 3, fallback_response: '' }
             }
           ]

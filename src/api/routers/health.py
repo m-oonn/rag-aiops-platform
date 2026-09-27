@@ -178,7 +178,7 @@ async def list_models():
     """返回前端模型选择器可用的模型列表。
 
     从 settings.AVAILABLE_MODELS / MODEL_DISPLAY_NAMES 读取，
-    格式: [{"id": "qwen-max", "name": "Qwen-Max (旗舰)"}, ...]
+    格式: [{"id": "deepseek-v4.1-flash", "name": "DeepSeek-V4.1-Flash"}, ...]
     """
     model_ids = [m.strip() for m in settings.AVAILABLE_MODELS.split(",") if m.strip()]
     display_names = [n.strip() for n in settings.MODEL_DISPLAY_NAMES.split(",")]

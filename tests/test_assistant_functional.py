@@ -15,7 +15,7 @@ class TestAssistantFunctional:
             json={
                 "name": "Test Assistant",
                 "description": "for functional test",
-                "llm_model": "qwen-max",
+                "llm_model": "deepseek-v4.1-flash",
                 "temperature": 0.5,
                 "system_prompt": "You are a test assistant.",
                 "kb_ids": [],

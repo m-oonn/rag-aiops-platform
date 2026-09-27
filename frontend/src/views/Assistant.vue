@@ -280,15 +280,16 @@ const chatMessages = ref([])
 const inputQuery = ref('')
 const currentSessionId = ref(null)
 const messagesContainer = ref(null)
-const chatModel = ref('qwen-max')
+const chatModel = ref('')
 const currentVersion = ref('v1.0.0')
 const assistantVersions = ref([])
 const availableModels = ref([])
+const defaultModel = ref('')
 
 const form = reactive({
   name: '',
   description: '',
-  llm_model: 'qwen-max',
+  llm_model: '',
   temperature: 0.7,
   system_prompt: '',
   greeting_message: '',
@@ -326,12 +327,15 @@ const fetchModels = async () => {
   try {
     const res = await api.get('/health/models')
     availableModels.value = res.data.models || []
+    defaultModel.value = res.data.default_model || availableModels.value[0]?.id || ''
   } catch (e) {
+    // 降级：API 不可用时提供与 .env AVAILABLE_MODELS 一致的模型
     availableModels.value = [
-      { id: 'qwen-max', name: 'Qwen-Max (旗舰)' },
-      { id: 'qwen-plus', name: 'Qwen-Plus (均衡)' },
-      { id: 'qwen-turbo', name: 'Qwen-Turbo (快速)' },
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' },
+      { id: 'deepseek-v4-flash-0731', name: 'DeepSeek-V4-Flash-0731' },
+      { id: 'deepseek-v4-pro-0813', name: 'DeepSeek-V4-Pro-0813' },
     ]
+    defaultModel.value = 'deepseek-v4.1-flash'
   }
 }
 
@@ -624,7 +628,7 @@ const openDialog = (row = null) => {
     Object.assign(form, {
       name: '',
       description: '',
-      llm_model: 'qwen-max',
+      llm_model: defaultModel.value,
       temperature: 0.7,
       system_prompt: '',
       greeting_message: '',

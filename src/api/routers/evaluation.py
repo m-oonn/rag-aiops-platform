@@ -316,7 +316,7 @@ def generate_evaluation_dataset(
     task = EvaluationTask(
         name=name,
         kb_id=config.kb_id,
-        config=config.dict(),
+        config=config.model_dump(),
         status=0, # Pending
         is_custom_dataset=config.is_custom_upload,
         created_by=current_user.id,  # 安全最佳实践: 记录创建者用于所有权检查

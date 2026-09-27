@@ -197,7 +197,12 @@ def process_document(doc_id: int, progress: Optional[ProgressCallback] = None) -
             doc.error_msg = str(e)
             db.commit()
         
-        update_progress('FAILURE', 100, f'Failed: {str(e)}')
+        # 注意: 不能用 Celery 保留状态名 FAILURE。update_state(state='FAILURE') 会把
+        # {'progress','message'} 当成异常信息写进 result backend，随后 mark_as_done
+        # 回读该 meta 时 exception_to_python 取不到 exc_type，抛
+        # ValueError: Exception information must include the exception type，导致任务结果丢失。
+        # 这里只做进度上报，文档失败状态由 DB 的 doc.status=3 表达。
+        update_progress('FAILED', 100, f'Failed: {str(e)}')
         # We don't raise exception here to avoid Celery retrying indefinitely if we don't want it to.
         # But if we want retry, we should raise. 
         # Let's not raise for now, as we handled the error state in DB.

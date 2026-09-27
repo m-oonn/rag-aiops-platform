@@ -154,14 +154,25 @@ class Settings(BaseSettings):
     # 工具名/参数/返回结构不变,Agent 侧零改动;Prometheus 不可达时回退 mock。
     MONITOR_BACKEND: str = "mock"
     PROMETHEUS_URL: str = ""
-    # PromQL 模板,{service} 为服务名占位;默认适配 node_exporter 指标
+    # PromQL 模板,{service} 为**值**占位(经 service_map 展开成候选正则);
+    # 标签键(instance/service/pod...)随监控栈而变,生产集群需按实际调整 —— 用
+    # scripts/discover_prometheus_metrics.py 可自动发现指标名与服务名所在标签。
     PROMETHEUS_CPU_PROMQL: str = (
-        '100 - avg(rate(node_cpu_seconds_total{mode="idle", instance=~"{service}.*"}[5m])) * 100'
+        'clamp_min(100 - avg(rate(node_cpu_seconds_total{mode="idle", '
+        'instance=~"{service}.*"}[5m])) * 100, 0)'
     )
+    # 内存模板同样带 {service} 过滤: 不加就变成"整机内存",会被 Agent 误当成该服务的内存
+    # (宁可如实返回空点,也不给出张冠李戴的指标)
     PROMETHEUS_MEMORY_PROMQL: str = (
-        '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)'
+        '100 * (1 - node_memory_MemAvailable_bytes{instance=~"{service}.*"} '
+        '/ node_memory_MemTotal_bytes{instance=~"{service}.*"})'
     )
     PROMETHEUS_TIMEOUT_SECONDS: float = 5.0
+    # Prometheus 鉴权 / TLS(真实环境常启用;三项全留空 = 匿名直连,仅内网可信网络可用)
+    PROMETHEUS_USERNAME: str = ""
+    PROMETHEUS_PASSWORD: str = ""
+    PROMETHEUS_BEARER_TOKEN: str = ""  # 设置后优先于 Basic Auth(如前置网关/Thanos 场景)
+    PROMETHEUS_VERIFY_SSL: bool = True  # 自签证书的内网环境可置 False
 
     # —— RAG 知识源采集(connectors,见 docs/MCP生产化改造方案.md §5)——
     # MinIO 知识源: 扫描该桶内 .md/.txt 文档注入知识库(与文档备份桶 rag-documents 可不同)
@@ -179,6 +190,11 @@ class Settings(BaseSettings):
     CLS_LOG_LEVEL_FIELD: str = "level"
     CLS_LOG_MESSAGE_FIELD: str = "message"
     CLS_TIMEOUT_SECONDS: float = 5.0
+    # ES 鉴权 / TLS(留空 = 匿名直连;真实集群通常至少需要其一)
+    CLS_ES_USERNAME: str = ""
+    CLS_ES_PASSWORD: str = ""
+    CLS_ES_API_KEY: str = ""  # ES ApiKey 鉴权;设置后优先于 Basic Auth
+    CLS_ES_VERIFY_SSL: bool = True  # 自签证书的内网环境可置 False
 
     # —— 服务名别名表(生产关键: 口头名↔监控前缀↔日志索引前缀,见 docs/MCP生产化改造方案.md §3)——
     # JSON 字符串: {"口头服务名": {"monitor": "监控instance前缀", "logs": "日志索引前缀"}}

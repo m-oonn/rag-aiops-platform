@@ -14,11 +14,14 @@ class TestAIOpsAuthentication:
         )
 
     def test_diagnose_with_valid_token_returns_streaming(self, client, auth_headers):
-        """携带有效 token 调用 /api/v1/aiops 应进入流式响应流程（200 或 422）。"""
+        """携带有效 token 调用 /api/v1/aiops 应进入流式响应流程（200）。"""
         response = client.post(
             "/api/v1/aiops",
             json={"query": "test incident"},
             headers=auth_headers,
         )
-        # LLM/MCP 依赖外部服务，测试中只要认证通过即可接受非 401 状态码
-        assert response.status_code != 401
+        # conftest 中 mock_aiops_service 已替换 AIOps 服务为假实现，
+        # 认证通过后应返回 200，不应接受 422/500 等错误状态码
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )

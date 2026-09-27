@@ -277,6 +277,38 @@ async def chat_stream(
 
     return EventSourceResponse(event_generator())
 
+class SessionCreate(BaseModel):
+    assistant_id: Optional[int] = None
+
+@router.post("/sessions", response_model=SessionOut)
+def create_session(
+    payload: SessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """显式创建一个空会话(首条消息之前),供助手页"会话/新会话"按钮调用。
+
+    会话真正落库由 POST /chat/ 在首条消息时完成;这里只预建 shell,
+    让前端能立刻拿到 session_uid。
+    """
+    if payload.assistant_id is not None:
+        assistant = db.query(Assistant).filter(Assistant.id == payload.assistant_id).first()
+        if not assistant:
+            raise HTTPException(status_code=404, detail="Assistant not found")
+        if assistant.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized for this assistant")
+
+    chat_session = ChatSession(
+        session_uid=str(uuid.uuid4()),
+        user_id=current_user.id,
+        assistant_id=payload.assistant_id,
+        title=None,
+    )
+    db.add(chat_session)
+    db.commit()
+    db.refresh(chat_session)
+    return chat_session
+
 @router.get("/sessions", response_model=List[SessionOut])
 def list_sessions(
     current_user: User = Depends(get_current_user),

@@ -1,0 +1,28 @@
+# 本地真实环境 Prometheus 抓取配置(配合 docker/docker-compose.observability.yml)
+#
+# 关键设计: node-exporter 被重复抓取两次,并把 instance 标签重写成"服务名"。
+# 这样 settings 里默认的 PromQL 模板 instance=~"{service}.*" 能直接命中,
+# 本地演示无需改模板(真实环境里 instance 通常就是实例名或服务名,形态一致)。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: node-data-sync-service
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      # instance 默认取 __address__;relabel 在之后执行,故这里可覆盖成服务名
+      - target_label: instance
+        replacement: 'data-sync-service'
+
+  - job_name: node-order-service
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - target_label: instance
+        replacement: 'order-service'

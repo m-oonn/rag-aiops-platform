@@ -159,24 +159,53 @@ async def test_aiops_service_empty_input_yields_error_event():
 
 @pytest.mark.asyncio
 async def test_aiops_service_session_isolation():
-    """不同 session_id 之间的执行状态应互相隔离。"""
+    """不同 session_id 之间的执行状态应互相隔离。
+
+    使用不同的输入、不同的 plan 和不同的报告内容，
+    确保第二次执行不会被第一次执行的状态污染。
+    """
     service = AIOpsService()
-    fake_tool = _make_fake_tool("check_cpu", "CPU usage: 15%")
-    executor_llm = _make_executor_llm([
+
+    # Session A: 检查 CPU，报告 "CPU Report"
+    fake_tool_a = _make_fake_tool("check_cpu", "CPU usage: 15%")
+    executor_llm_a = _make_executor_llm([
         [{"id": "tc_1", "name": "check_cpu", "args": {}}],
         "CPU is normal",
     ])
-    base_llm = _make_base_llm(executor_llm)
+    base_llm_a = _make_base_llm(executor_llm_a)
 
     with ExitStack() as stack:
-        for ctx in _aiops_patches(base_llm, [fake_tool], plan_steps=["check cpu"], response_text="Report A"):
+        for ctx in _aiops_patches(base_llm_a, [fake_tool_a],
+                                  plan_steps=["check cpu"], response_text="CPU Report"):
             stack.enter_context(ctx)
         events_a = await _collect_events(service.execute("check cpu", session_id="session-a"))
-        events_b = await _collect_events(service.execute("check cpu", session_id="session-b"))
 
+    # Session B: 检查内存，报告 "Memory Report"
+    fake_tool_b = _make_fake_tool("check_memory", "Memory usage: 80%")
+    executor_llm_b = _make_executor_llm([
+        [{"id": "tc_1", "name": "check_memory", "args": {}}],
+        "Memory is high",
+    ])
+    base_llm_b = _make_base_llm(executor_llm_b)
+
+    with ExitStack() as stack:
+        for ctx in _aiops_patches(base_llm_b, [fake_tool_b],
+                                  plan_steps=["check memory"], response_text="Memory Report"):
+            stack.enter_context(ctx)
+        events_b = await _collect_events(service.execute("check memory", session_id="session-b"))
+
+    # 两个 session 的事件序列都应完整
     assert [e["type"] for e in events_a] == ["plan", "step_complete", "report", "complete"]
     assert [e["type"] for e in events_b] == ["plan", "step_complete", "report", "complete"]
-# 不同 session 的报告内容应独立
+
+    # Session A 的 plan 和 report 应反映 CPU 诊断，不被 Session B 污染
+    plan_a = events_a[0]["plan"]
     report_a = next(e for e in events_a if e["type"] == "report")["report"]
+    assert plan_a == ["check cpu"], f"Session A plan contaminated: {plan_a}"
+    assert report_a == "CPU Report", f"Session A report contaminated: {report_a}"
+
+    # Session B 的 plan 和 report 应反映内存诊断
+    plan_b = events_b[0]["plan"]
     report_b = next(e for e in events_b if e["type"] == "report")["report"]
-    assert report_a == report_b == "Report A"
+    assert plan_b == ["check memory"], f"Session B plan contaminated: {plan_b}"
+    assert report_b == "Memory Report", f"Session B report contaminated: {report_b}"
