@@ -145,11 +145,11 @@ python mcp_servers/cls_server.py       # 日志服务 (127.0.0.1:8003)
 - MinIO 控制台: http://localhost:9001
 - Flower 监控: http://localhost:5555
 
-Supervisor / HITL 端点(需在 `.env` 开启对应开关):
+HITL(人在回路)说明:
 
-- `POST /api/v1/supervisor/chat` — 多智能体统一入口(SSE)
-- `POST /api/v1/aiops/{thread_id}/review` — HITL 人工审批(SSE)
-- `GET /api/v1/aiops/runs/{thread_id}` — 诊断运行状态查询
+- 人工审批在当前实现中**位于诊断图内部**:当 `ENABLE_HITL=true` 时,诊断图在产出报告草稿后以 `pending_review` 事件挂起,调用方通过 `aiops_service.resume(thread_id, ...)` 恢复执行(底层为 `langgraph.types.interrupt()` + checkpointer 持久化)。
+- 因此**暂无独立的 HTTP 审批端点**;挂起信号表现为 `POST /api/v1/aiops` SSE 流中的 `pending_review` 事件。
+- `ENABLE_SUPERVISOR`(多智能体统一入口 `/supervisor/chat`)**目前为预留配置项,端点尚未实现**,默认关闭,请勿依赖。
 
 ## 📂 目录结构
 
