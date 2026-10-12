@@ -153,6 +153,14 @@ class Settings(BaseSettings):
     ENABLE_LLM_RETRY: bool = True
     LLM_RETRY_MAX_ATTEMPTS: int = 3
 
+    # —— 上下文压缩（B2a，src/agent/aiops/compaction.py）——
+    # True 时: 超过阈值步数的诊断历史改走"旧步骤摘要+近步骤详情"; False=旧口径(最近5步×150字)
+    ENABLE_CONTEXT_COMPACTION: bool = False
+
+    # —— 技能路由（B2b，src/agent/aiops/skills.py）——
+    # True 时: planner 按征兆懒加载 Top-2 技能卡; False=全量注入 9 卡(旧行为)
+    ENABLE_SKILL_ROUTING: bool = False
+
     # —— 论文消融开关（仅实验用；生产保持全 False）——
     # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
     # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；

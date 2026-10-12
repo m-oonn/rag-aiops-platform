@@ -14,6 +14,7 @@ import os
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from src.agent.aiops.skills import SKILLS, render_skills_block, route_skills
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tools import load_agent_tools
 from src.agent.aiops.structured import ainvoke_structured
@@ -201,34 +202,7 @@ planner_prompt = ChatPromptTemplate.from_messages(
                 选择与之匹配的主诊断路径,只挑与当前故障强相关的工具与步骤,宁可精简也不凑数。
 
                 主诊断路径(按征兆对应,选最契合的一套聚焦执行,不必全部覆盖工具):
-                - 网络/连通性:延迟、丢包、连接超时、连通性错误、DNS 解析失败等 → 优先查
-                  网络/连通性指标与日志中的网络错误;若观测含混沌/故障注入,根因锁定为网络;
-                - 网址/网站健康检查:**用户直接给出网址(URL)**、或要求检查某网站能否访问
-                  → 通常**一步完成**:实际访问该网站检查能否正常打开,并逐个检查首页里的
-                  链接和图片资源是否正常(一步即可覆盖全面检查,不必拆成两步);
-                  按探测结果给出结论;**如实报告**:网站正常就写"网站正常"(可附状态码/耗时),
-                  访问不了就报告具体错误类型;**严禁**臆造不存在的故障;
-                - 页面能打开但功能/任务异常(**重要,别漏**):用户说"网页能打开,但点某功能
-                  报错/提交没反应/任务一直不返回/审校卡住"这类"页面好、服务坏"的故障 →
-                  页面检查看不出来,**必须下沉到业务层**:规划成"检查该服务的健康端点/业务
-                  接口是否正常(状态码、是否超时、返回内容)",必要时再查后台日志;
-                  **不要把结论停在"网站正常"**,也不要把根因直接归到"资源耗尽"——
-                  页面正常不等于后台服务正常;
-                - 服务未启动 / 端口不通:用户给出 `主机:端口`、或怀疑"某个服务没起来" →
-                  规划成"探测该主机的端口是否有服务在监听";**同机/同网段**下端口"连接被拒绝"
-                  说明服务未启动,端口"连接超时"只能说明网络层不可达(不能据此断定服务状态);
-                - 基础设施/资源瓶颈:CPU/内存/连接池/线程/IO 等资源耗尽、慢查询、任务堆积
-                  超载 → 优先查资源类指标、连接数、进程/线程状态、队列长度;
-                - 应用层异常:服务崩溃、5xx、接口超时、错误堆栈、近期发布/回滚、SDK/依赖
-                  行为变更 → 优先查应用日志、错误堆栈、发布记录;
-                - 配置错误:配置下发、参数/阈值/超时设置不合理 → 优先核对配置变更时间线,
-                  并结合日志中配置相关报错;
-                - 变更/发布引入(重要,别漏):故障时间点与发布、部署、配置变更、灰度或回滚
-                  高度吻合(如"刚上线/刚发版/刚改过配置就出问题")→ 规划一步"查该服务近期的
-                  变更/发布记录",把变更时间与故障发生时间对齐;排查资源/应用/配置类故障时,
-                  若怀疑与近期改动相关,也应补一步变更核对(变更与指标/日志是相互独立的证据);
-                - 外部依赖:数据库/消息队列/缓存等依赖不可用、连接失败、MQ 堆积 → 优先查
-                  依赖可用性、连接错误、消费端 lag/积压。
+                {skills_block}
 
                 步骤写法(重要——步骤文案会直接展示给不懂技术的用户看):
                 - 每一步用一句通顺的大白话讲清"这一步要做什么、查什么",像给同事交代任务;
@@ -260,6 +234,22 @@ planner_prompt = ChatPromptTemplate.from_messages(
 )
 
 
+def _build_skills_block(input_text: str) -> str:
+    """构建注入 planner 的技能块（B2b 技能路由）。
+
+    ENABLE_SKILL_ROUTING 开启: 按输入征兆懒加载 Top-k 命中卡;
+    关闭 / 零命中: 注入全量 9 卡（= 旧行为,零风险演进）。
+    """
+    from src.settings import settings as app_settings
+
+    if getattr(app_settings, "ENABLE_SKILL_ROUTING", False):
+        skills = route_skills(input_text)
+        logger.info("[planner] 技能路由: %s", [s.name for s in skills])
+    else:
+        skills = list(SKILLS)
+    return render_skills_block(skills)
+
+
 async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     """规划节点:据输入生成诊断步骤列表。"""
     logger.info("=== [role=planner] Planner:制定诊断计划 ===")
@@ -277,6 +267,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             "messages": [("user", input_text)],
             "tools_description": tools_description,
             "experience_context": experience_context,
+            "skills_block": _build_skills_block(input_text),
         })
         steps = result.steps
         # 硬截断，防止 LLM 输出超长计划（超长计划会撞上策略的步数上限，

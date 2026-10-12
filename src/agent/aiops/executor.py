@@ -23,6 +23,7 @@ from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
+from src.agent.aiops.compaction import compress_history
 from src.agent.aiops.evidence_sources import availability_warning, source_availability
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tool_guards import GuardContext, _pick_real_identifier, run_guards
@@ -311,15 +312,14 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
         else:
             sys_content += availability_warning(tools)
 
-        # 少 tokens 压缩(2026-09-23): 历史只带最近 5 步、每条结果截 150 字符,
+        # 历史注入: 默认"少 tokens 压缩"口径(2026-09-23)——最近 5 步、每条结果截 150 字符,
         # 避免随步数增长的二次方输入(LLM 只需近因标识符, 不读垃圾长文)。
-        _HIST_LINES = 5
-        _HIST_CHARS = 150
-        history_lines = [
-            f"[步骤] {s}\n[结果] {str(r)[:_HIST_CHARS]}"
-            for s, r in state.get("past_steps", [])[-_HIST_LINES:]
-        ]
-        history = "\n\n".join(history_lines)
+        # ENABLE_CONTEXT_COMPACTION 开启后, 超过阈值步数改走预算触发式压缩
+        # (旧步骤一行式摘要 + 最近 3 步 400 字详情) → src/agent/aiops/compaction.py
+        history = compress_history(
+            state.get("past_steps", []),
+            enabled=bool(getattr(settings, "ENABLE_CONTEXT_COMPACTION", False)),
+        )
 
         real_ids = _extract_real_identifiers(state.get("past_steps", []))
         task_msg = f"请执行以下诊断步骤: {raw_task}"
