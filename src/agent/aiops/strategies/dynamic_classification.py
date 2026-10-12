@@ -525,6 +525,18 @@ def _maybe_create_judge_llm() -> Any | None:
         return None
 
 
+def _belief_temperature() -> float:
+    """按 settings 返回 softmax 温度（置信度校准，2026-10-12）。
+
+    未开启校准 → 1.0（旧行为，softmax 原样）；开启 → settings.BELIEF_SOFTMAX_TEMPERATURE
+    （>1 平滑，抑制证据真空下的虚高置信度）。非法值兜底为 1.0。
+    """
+    if not getattr(settings, "ENABLE_CONFIDENCE_CALIBRATION", False):
+        return 1.0
+    t = float(getattr(settings, "BELIEF_SOFTMAX_TEMPERATURE", 3.0))
+    return t if t > 1e-6 else 1.0
+
+
 class DynamicClassificationStrategy(BaseReplanStrategy):
     """旁开式动态分类 Replanner 策略。
 
@@ -540,6 +552,7 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
             support_strength=1.5,
             contradiction_strength=2.5,
             strong_contradiction_threshold=0.7,
+            softmax_temperature=_belief_temperature(),
         )
         self.judge = judge or EvidenceJudge(llm=_maybe_create_judge_llm())
         self._step_count = 0
@@ -558,6 +571,7 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
             support_strength=1.5,
             contradiction_strength=2.5,
             strong_contradiction_threshold=0.7,
+            softmax_temperature=_belief_temperature(),
         )
         self._step_count = 0
         self._last_top_prob = None
@@ -588,9 +602,23 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
             pre_top = self.manager.get_top_hypotheses(k=1)
             pre_top_id = pre_top[0].id if pre_top else None
 
+            # 证据裁判的观测文本来源（2026-10-12 命中率根因修复）：
+            #   past_steps 存的是 executor 让 LLM 写的自然语言总结，原始日志的鉴别关键词
+            #   （kubelet/evicted/dial tcp 等）会在转述时被稀释成中文通用词，导致规则裁判
+            #   关键词匹配失效、全倒向"外部依赖故障"（实测命中率 25%）。
+            #   ENABLE_RAW_EVIDENCE_FOR_JUDGE 开启时优先采信未加工的原始工具返回，
+            #   并把转述文本作为补充拼接（保留 LLM 可能抽取出的、原文没有的语义线索）。
+            judge_observation = latest_result
+            if getattr(settings, "ENABLE_RAW_EVIDENCE_FOR_JUDGE", False):
+                raw_for_step = self._raw_evidence_for(latest_step, state)
+                if raw_for_step:
+                    judge_observation = (
+                        f"{raw_for_step}\n\n[补充: 助手对该步骤的文字总结]\n{latest_result}"
+                    )
+
             evidences = await self.judge.judge_async(
                 self.manager.get_active_hypotheses(),
-                latest_result,
+                judge_observation,
                 step=self._step_count,
                 source=latest_step,
             )
@@ -791,6 +819,25 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
             if h.probability < 0.35:
                 # 小幅抬升，避免一步登天；上限 0.35 防止过度自信
                 h.probability = max(0.01, min(h.probability + 0.06, 0.35))
+
+    def _raw_evidence_for(self, step_label: str, state: PlanExecuteState) -> str:
+        """取当前步骤对应的工具原始返回（未加工的原始日志）。
+
+        与 past_steps 同步追加、按序对应；取最后一个匹配步骤标签的原始返回。
+        找不到（旧状态/无工具/工具无返回）返回空串，调用方自动回退到转述文本。
+        """
+        raw = state.get("raw_evidence", []) or []
+        if not raw:
+            return ""
+        # 优先取最后一条同标签记录（同一步骤可能因 replan 重复出现）
+        for s, r in reversed(raw):
+            if s == step_label and r:
+                return str(r)
+        # 标签不匹配时退化为取最后一条非空原始证据（保持鲁棒）
+        for _s, r in reversed(raw):
+            if r:
+                return str(r)
+        return ""
 
     def _hypothesis_contradicted(
         self, hypothesis_id: str | None, evidences: List[Evidence]

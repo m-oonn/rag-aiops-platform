@@ -287,16 +287,22 @@ def _plain_label(task: str) -> str:
     return task.strip()[len("[并行]"):].strip() if _is_parallel_step(task) else task
 
 
-async def _run_step(task: str, state: PlanExecuteState) -> str:
-    """执行单个诊断步骤（不弹 plan），返回步骤结果文本。
+async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
+    """执行单个诊断步骤（不弹 plan），返回 (步骤结果文本, 工具原始返回文本)。
 
     [并行] 前缀仅用于并行批调度标记，执行时剥离，不影响步骤语义。
     与原 executor 单步逻辑完全一致（回归兼容），供串行与并行批共用。
+
+    返回的第二个元素是**工具原始返回的拼接**（未被 LLM 转述加工）：
+    证据裁判在 ENABLE_RAW_EVIDENCE_FOR_JUDGE 开启时优先采信它，避免原始日志里的
+    鉴别关键词（kubelet/dial tcp 等）被 LLM 转述稀释成中文通用词而丢失判别力
+    （2026-10-12 命中率根因诊断）。无工具或工具无返回时为空串。
     """
     raw_task = task
     if _is_parallel_step(raw_task):
         raw_task = raw_task.strip()[len("[并行]"):].strip()
 
+    raw_evidence_parts: list[str] = []
     try:
         tools, err = await _get_tools_cached()
 
@@ -357,6 +363,11 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
                 for tc in tcs:
                     executed[tc.get("name", "")] = True
                 tool_msgs = await _run_tool_calls(tcs, tool_map, real_ids)
+                # 采集**原始工具返回**（未经 LLM 转述）：裁判层可据此绕过转述稀释。
+                for tm in tool_msgs:
+                    _raw = getattr(tm, "content", "")
+                    if isinstance(_raw, str) and _raw.strip():
+                        raw_evidence_parts.append(_raw)
                 messages.extend(tool_msgs)
             if not result:
                 result = messages[-1].content if hasattr(messages[-1], "content") else ""
@@ -371,6 +382,7 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
                 fallback = await _forced_search_log(tool_map, real_ids, histories=state.get("past_steps", []))
                 if fallback:
                     result = fallback
+                    raw_evidence_parts.append(fallback)
                     logger.info("[executor] 确定性兜底调用 search_log 成功,结果长度 %s", len(fallback))
         else:
             llm_no_tools = await ainvoke_with_retry(
@@ -380,11 +392,13 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
 
         result = result if isinstance(result, str) else str(result)
         logger.info(f"[executor] 步骤完成,结果长度 {len(result)}")
-        return result
+        raw_evidence = "\n".join(raw_evidence_parts)
+        return result, raw_evidence
 
     except Exception as e:
         logger.warning("[executor] 执行步骤 '%s' 异常降级: %s", raw_task, e)
-        return f"执行步骤 '{raw_task}' 时遇到异常: {_sanitize_error(e)}"
+        err_text = f"执行步骤 '{raw_task}' 时遇到异常: {_sanitize_error(e)}"
+        return err_text, "\n".join(raw_evidence_parts)
 
 
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
@@ -413,7 +427,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         if (settings.ENABLE_PARALLEL_OBSERVATION and len(plan) >= 2
                 and _is_parallel_step(plan[0]) and _is_parallel_step(plan[1])):
             start_t = time.monotonic()
-            r1, r2 = await asyncio.gather(
+            (r1, raw1), (r2, raw2) = await asyncio.gather(
                 _run_step(plan[0], state), _run_step(plan[1], state)
             )
             elapsed = time.monotonic() - start_t
@@ -423,15 +437,17 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             return {
                 "plan": plan[2:],
                 "past_steps": [(_plain_label(plan[0]), r1), (_plain_label(plan[1]), r2)],
+                "raw_evidence": [(_plain_label(plan[0]), raw1), (_plain_label(plan[1]), raw2)],
                 "_step_progress": {"done": done, "total": done + len(plan[2:])},
                 "evidence_source_availability": availability,
             }
 
-        result = await _run_step(task, state)
+        result, raw_evidence = await _run_step(task, state)
         done = len(state.get("past_steps", [])) + 1
         return {
             "plan": plan[1:],
             "past_steps": [(_plain_label(task), result)],
+            "raw_evidence": [(_plain_label(task), raw_evidence)],
             "_step_progress": {"done": done, "total": done + len(plan[1:])},
             "evidence_source_availability": availability,
         }
@@ -439,9 +455,11 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("[executor] 执行步骤 '%s' 异常降级: %s", task, e)
         done = len(state.get("past_steps", [])) + 1
+        err_text = f"执行步骤 '{task}' 时遇到异常: {_sanitize_error(e)}"
         return {
             "plan": plan[1:],
-            "past_steps": [(task, f"执行步骤 '{task}' 时遇到异常: {_sanitize_error(e)}")],
+            "past_steps": [(task, err_text)],
+            "raw_evidence": [(task, "")],
             "_step_progress": {"done": done, "total": done + len(plan[1:])},
             "evidence_source_availability": availability,
         }

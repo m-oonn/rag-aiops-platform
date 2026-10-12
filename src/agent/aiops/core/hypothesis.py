@@ -63,11 +63,18 @@ class HypothesisManager:
         support_strength: float = 1.5,
         contradiction_strength: float = 2.5,
         strong_contradiction_threshold: float = 0.7,
+        softmax_temperature: float = 1.0,
     ) -> None:
         self._hypotheses: dict[str, Hypothesis] = {}
         self.support_strength = support_strength
         self.contradiction_strength = contradiction_strength
         self.strong_contradiction_threshold = strong_contradiction_threshold
+        # softmax 温度（置信度校准，2026-10-12）：T>1 平滑、T<1 尖锐。
+        # 竞争归一时 logits 除以 T。默认 1.0 = 旧行为不变。
+        # 用途: 证据真空下 7 条假设先验相近(0.20 vs 0.10), 纯 softmax 会把
+        #       微小先验差异放大成 99% 的虚高置信度(实测"0 证据却 99%")。
+        #       T>1 让置信度更贴合证据量, 避免过度自信。
+        self.softmax_temperature = softmax_temperature
 
     def add_hypotheses(self, hypotheses: list[Hypothesis]) -> None:
         """安全添加新假设，避免重复覆盖。"""
@@ -181,6 +188,9 @@ class HypothesisManager:
 
         仅在存在多个候选时生效；单候选(如绝大多数单元测试)保持独立性不动，
         避免破坏『一条假设的概率只由自身证据决定』的语义。
+
+        温度校准（2026-10-12）：logits 先除以 self.softmax_temperature 再 softmax。
+        T=1.0 保持旧行为；T>1 平滑分布、抑制"证据真空下的虚高置信度"。
         """
         active = self.get_active_hypotheses()
         if len(active) <= 1:
@@ -189,6 +199,9 @@ class HypothesisManager:
             log(max(h.probability, 1e-12) / max(1.0 - h.probability, 1e-12))
             for h in active
         ]
+        # 温度缩放：T>1 压缩 logits 差异（更平滑）；T<=0 视为 1.0（安全兜底）
+        temp = self.softmax_temperature if self.softmax_temperature > 1e-6 else 1.0
+        logits = [l / temp for l in logits]
         m = max(logits)
         exps = [exp(l - m) for l in logits]
         total = sum(exps)

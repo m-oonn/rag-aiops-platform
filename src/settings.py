@@ -165,6 +165,21 @@ class Settings(BaseSettings):
     # True 时: 每步节点输出摘要落库（回放/审计）; False=不写（默认,零开销）
     ENABLE_STEP_SNAPSHOTS: bool = False
 
+    # —— 证据裁判采信原始工具返回（2026-10-12 命中率根因修复）——
+    # 背景: executor 存进 past_steps 的是 LLM 写的自然语言总结, 原始日志里的鉴别
+    #       关键词(kubelet/evicted/OOMKilled、dial tcp/connection refused)被转述稀释成
+    #       中文通用词, 规则裁判关键词匹配失效 → 全倒向"外部依赖故障"(实测命中率 25%)。
+    # True 时: 证据裁判优先采信 state.raw_evidence(未加工的原始工具返回),
+    #          转述文本仅作补充; False=沿用旧行为(只吃转述, 回归兼容)。
+    ENABLE_RAW_EVIDENCE_FOR_JUDGE: bool = False
+
+    # —— 信念 softmax 温度（置信度校准，2026-10-12）——
+    # 竞争归一时 logits 除以该温度：1.0=旧行为(不校准)；>1=平滑，抑制"证据真空下
+    # 7 条相近先验被 softmax 放大成 99% 虚高置信度"（实测"0 证据却 99%"）。
+    # 仅在 ENABLE_CONFIDENCE_CALIBRATION 开启时生效。
+    ENABLE_CONFIDENCE_CALIBRATION: bool = False
+    BELIEF_SOFTMAX_TEMPERATURE: float = 3.0
+
     # —— 论文消融开关（仅实验用；生产保持全 False）——
     # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
     # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；
