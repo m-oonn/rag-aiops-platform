@@ -26,6 +26,10 @@ plan → step_complete ×N（中途可由 status 提示）→ report / draft
 | `complete` | `complete` | 诊断终态 | `response: str` + 4 个元数据数组 | 终态报告 + 可视化 |
 | `error` | `error` / `validation_error` / `not_found` | 异常 / 输入校验 / 恢复失败 | `message: str` | 错误提示 |
 
+> **附：`usage` 事件**（API 层附加，非图内事件）——诊断结束后由
+> `src/api/routers/aiops.py` 追加推送 `{"type": "usage", ...}`（本次 LLM 调用次数 /
+> token 消耗 / 折算费用），前端可选择性展示。字段定义见 `src/utils/token_meter.py` 的 `as_dict()`。
+
 ## 字段明细（JSON 示例）
 
 ```jsonc

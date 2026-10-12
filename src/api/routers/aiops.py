@@ -7,12 +7,13 @@
 """
 
 import json
+import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from src.agent.aiops import aiops_service
+from src.agent.aiops import aiops_service, run_store
 from src.api.dependencies import get_current_user
 from src.database.models import User
 from src.utils.logger import logger
@@ -110,3 +111,20 @@ async def diagnose_stream(
                 logger.warning(f"[aiops] token 计量汇总失败(不影响诊断): {ue}")
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/runs/{thread_id}/steps")
+async def get_run_steps(
+    thread_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """诊断步级快照（B3：回放/审计数据源）。
+
+    快照由 AIOpsService 在图执行时落库（ENABLE_STEP_SNAPSHOTS 开启时）；
+    未开启或无记录时返回空列表。
+    """
+    # thread_id 形如 "{session_id}-{毫秒时间戳}"；白名单校验防注入/异常输入
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", thread_id):
+        raise HTTPException(status_code=400, detail="thread_id 非法")
+    steps = run_store.list_step_snapshots(thread_id)
+    return {"thread_id": thread_id, "total": len(steps), "steps": steps}

@@ -63,6 +63,25 @@ def _diagnostic_extras(final_state) -> Dict[str, Any]:
     }
 
 
+def _snapshot_payload(node_name: str, state: Dict | None) -> Dict[str, Any]:
+    """从节点输出抽取 JSON-安全的快照摘要（B3 步快照 payload）。"""
+    st = state or {}
+    if node_name == NODE_PLANNER:
+        return {"plan": list(st.get("plan", []) or [])}
+    if node_name == NODE_EXECUTOR:
+        past = st.get("past_steps", []) or []
+        if past:
+            step, result = past[-1]
+            return {"last_step": step, "result_digest": str(result)[:200]}
+        return {}
+    if node_name == NODE_REPLANNER:
+        return {
+            "remaining_plan": list(st.get("plan", []) or []),
+            "response_digest": str(st.get("response", ""))[:200],
+        }
+    return {}
+
+
 class AIOpsService:
     """运维诊断服务：封装 Plan-Execute-Replan 图，提供流式 execute() / resume()。
 
@@ -137,11 +156,23 @@ class AIOpsService:
     async def _stream_events(
         self, graph, config, input
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """统一的事件流封装：跳过 __interrupt__ 内部事件，格式化节点事件。"""
+        """统一的事件流封装：跳过 __interrupt__ 内部事件，格式化节点事件。
+
+        ENABLE_STEP_SNAPSHOTS 开启时：顺路把每步节点输出摘要落库
+        （run_store.add_step_snapshot，best-effort，供回放/审计）。
+        """
+        thread_id = str((config.get("configurable") or {}).get("thread_id", ""))
+        step_index = 0
         async for event in graph.astream(input, config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
                     continue
+                if settings.ENABLE_STEP_SNAPSHOTS and thread_id:
+                    run_store.add_step_snapshot(
+                        thread_id, step_index, node_name,
+                        _snapshot_payload(node_name, node_output),
+                    )
+                step_index += 1
                 yield self._format_event(node_name, node_output)
 
     def _yield_pending_review(self, thread_id: str, draft: str) -> Dict[str, Any]:

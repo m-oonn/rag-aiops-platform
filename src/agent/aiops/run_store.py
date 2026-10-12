@@ -4,9 +4,10 @@
 同步 SQLite 写（快、幂等），异常只告警不阻断主流程（沿用项目降级约定）。
 """
 
+import json
 from typing import Optional
 
-from src.database.models import AiopsApproval, AiopsRun
+from src.database.models import AiopsApproval, AiopsRun, AiopsStepSnapshot
 from src.database.sql_session import Base, SessionLocal, engine
 from src.utils.logger import logger
 
@@ -99,3 +100,60 @@ def get_run(thread_id: str) -> Optional[AiopsRun]:
     except Exception as e:
         logger.warning("[run_store] 查询运行记录失败(thread=%s): %s", thread_id, e)
         return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# 步级快照（B3：可回放/可审计；以 thread_id 为键，独立于 HITL run 记录）
+# ═══════════════════════════════════════════════════════════════
+
+
+def add_step_snapshot(thread_id: str, step_index: int, node: str, payload: dict) -> None:
+    """落一条步级快照（best-effort：异常只告警，不阻断诊断主流程）。
+
+    payload 由调用方给出 JSON-安全 dict；此处再兜底 default=str 防序列化失败。
+    """
+    try:
+        db = SessionLocal()
+        try:
+            db.add(AiopsStepSnapshot(
+                thread_id=thread_id,
+                step_index=step_index,
+                node=node,
+                payload=json.dumps(payload or {}, ensure_ascii=False, default=str),
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[run_store] 记录步快照失败(thread=%s): %s", thread_id, e)
+
+
+def list_step_snapshots(thread_id: str) -> list:
+    """按序返回某诊断的步级快照（回放数据源）；失败返回空列表（不抛异常）。"""
+    try:
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(AiopsStepSnapshot)
+                .filter(AiopsStepSnapshot.thread_id == thread_id)
+                .order_by(AiopsStepSnapshot.step_index.asc(), AiopsStepSnapshot.id.asc())
+                .all()
+            )
+            out = []
+            for r in rows:
+                try:
+                    payload = json.loads(r.payload) if r.payload else {}
+                except (TypeError, ValueError):
+                    payload = {}
+                out.append({
+                    "step_index": r.step_index,
+                    "node": r.node,
+                    "payload": payload,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                })
+            return out
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[run_store] 查询步快照失败(thread=%s): %s", thread_id, e)
+        return []

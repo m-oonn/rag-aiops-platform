@@ -292,3 +292,18 @@ class AiopsApproval(Base):
     action = Column(String(16), nullable=False)
     instruction = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiopsStepSnapshot(Base):
+    """AIOps 诊断步级快照（B3：可回放/可审计；以 thread_id 为键，独立于 HITL run 记录）。"""
+
+    __tablename__ = "aiops_step_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String(64), index=True, nullable=False)
+    step_index = Column(Integer, nullable=False)
+    # planner / executor / replanner / human_review
+    node = Column(String(32), nullable=False)
+    # JSON: 本步节点输出摘要（计划 / 观测 digest / 决策）
+    payload = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

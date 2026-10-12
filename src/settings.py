@@ -161,6 +161,10 @@ class Settings(BaseSettings):
     # True 时: planner 按征兆懒加载 Top-2 技能卡; False=全量注入 9 卡(旧行为)
     ENABLE_SKILL_ROUTING: bool = False
 
+    # —— 步级快照（B3，aiops_step_snapshots 表）——
+    # True 时: 每步节点输出摘要落库（回放/审计）; False=不写（默认,零开销）
+    ENABLE_STEP_SNAPSHOTS: bool = False
+
     # —— 论文消融开关（仅实验用；生产保持全 False）——
     # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
     # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；
