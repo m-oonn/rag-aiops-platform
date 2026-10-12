@@ -143,6 +143,11 @@ class Settings(BaseSettings):
     # Phase 3 动态分类策略开关
     ENABLE_DYNAMIC_CLASSIFICATION: bool = False
 
+    # —— 工具调用守卫层（B1，src/agent/aiops/tool_guards.py）——
+    # 逗号分隔的守卫停用列表（空=全开）。论文消融/定位用。
+    # 可选值: topic_alignment / generic_filter / metric_time_anchor / change_time_anchor
+    DISABLED_TOOL_GUARDS: str = ""
+
     # —— 论文消融开关（仅实验用；生产保持全 False）——
     # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
     # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；

@@ -4,6 +4,8 @@
   - 无工具时让 LLM 基于现有信息直接分析,不反问用户(反问在 demo 里是坏体验);
   - 有工具时 bind_tools + 手动工具执行(绕过 ToolNode 与 langchain-mcp-adapters
     的配置键兼容问题);
+  - 工具参数确定性纠偏(topic 对齐/检索净化/指标与变更时间窗锚定)统一走
+    **工具守卫层**(tool_guards.run_guards, 行为与迁移前内联版一致);
   - 执行完移除该步、把 (步骤, 结果) 追加进 past_steps。
 
 注意:langchain-mcp-adapters 0.2.1 的 MCP 工具(StructuredTool)不含 config 属性,
@@ -17,13 +19,13 @@ import re
 
 import asyncio
 import time
-from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from src.agent.aiops.evidence_sources import availability_warning, source_availability
 from src.agent.aiops.state import PlanExecuteState
+from src.agent.aiops.tool_guards import GuardContext, _pick_real_identifier, run_guards
 from src.agent.aiops.tools import load_agent_tools
 from src.agent.aiops_llm import create_agent_llm
 from src.settings import settings
@@ -133,29 +135,8 @@ async def _get_tools_cached() -> tuple[list, str | None]:
     return _tools_cache
 
 
-# ── B2 检索净化辅助(确定性) ─────────────────────────────────
-# search_log 的 query 由 LLM 生成时常用裸泛词(error/exception/timeout/失败/异常),
-# 这类词在应用层/依赖/网络日志里都常见,检索结果的子集天然偏"含 app 字样"的行,
-# 是盲测端到端 202/303/606 判偏(应用层/外部依赖被无差别抬升)的输入侧根因。
-# 这里在工具参数层过滤裸泛词:过滤后余词聚焦真实症状词(connection refused、oom、
-# gc pause 等对假设有区分度的词);余词为空则退化为全量检索,让裁判看到整批日志。
-
-# 需要剔除的裸泛词:与"具体层"词(connection refused / oom / gc pause / 令牌过期)区分开,
-# 这些词在 505(应用层 SQL 超时)等多场景日志里同样出现,无层级区分度。
-_GENERIC_RETRIEVAL_WORDS = re.compile(
-    r"\b(error|errors|exception|exceptions|timeout|timed out|failed|fail|失败的?|错误|异常|故障)\b",
-    flags=re.IGNORECASE,
-)
-
-# 字段限定子句(ES query_string 的 field:value,如 level:ERROR、log.level:WARN)。
-# 这类子句的"值"是查询语法的一部分,不能被泛词过滤削掉 —— 否则 level:ERROR 会被
-# 削成非法语法 level:,ES 直接 400(实测:level: → search_phase_execution_exception)。
-_FIELD_SCOPED_CLAUSE = re.compile(r"^[A-Za-z_][\w.]*:")
-
-
-def _query_key_in(tool_args: dict) -> bool:
-    """search_log 是否存在 query 参数。"""
-    return "query" in tool_args
+# 注: 检索净化 / topic 对齐 / 时间窗锚定等参数确定性纠偏
+# 已统一迁至工具守卫层 → src/agent/aiops/tool_guards.py（run_guards）。
 
 
 # 本地日志降级源目录(与 cls_server 的 runtime/log_cache 一致):模拟真实系统"日志有本地磁盘副本",
@@ -200,119 +181,6 @@ def _local_log_fallback(tool_args: dict) -> str | None:
         return None
 
 
-def _sanitize_search_log_query(query: str) -> str:
-    """过滤 search_log.query 中的裸泛词,返回净化后的词串(空串表示无可聚焦词)。
-
-    'error OR exception OR timeout' -> ''(退化为全量检索)
-    'connection refused OR oom'     -> 'connection refused OR oom'
-    'level:ERROR'                   -> 'level:ERROR'(字段限定子句整体保留,不削值)
-    'level:ERROR OR level:WARN'     -> 'level:ERROR OR level:WARN'
-    """
-    if not query:
-        return ""
-    # 归一化 "field: value" → "field:value",避免字段限定被空格拆散成 level: + ERROR
-    normalized = re.sub(r"\b([A-Za-z_][\w.]*):\s+", r"\1:", query)
-    kept: list[str] = []
-    for tok in normalized.split():
-        if _FIELD_SCOPED_CLAUSE.match(tok):
-            if tok.endswith(":"):
-                continue  # 字段后为空是非法语法(如 level:),丢弃整段
-            kept.append(tok)
-            continue
-        if _GENERIC_RETRIEVAL_WORDS.search(tok):
-            continue
-        kept.append(tok)
-    # 清理因剔除而变孤立的连词(前导/连续/结尾),保留两个有效词之间的 OR/AND
-    final: list[str] = []
-    for tok in kept:
-        if tok.upper() in ("OR", "AND"):
-            if not final or final[-1].upper() in ("OR", "AND"):
-                continue
-            final.append(tok)
-        else:
-            final.append(tok)
-    while final and final[-1].upper() in ("OR", "AND"):
-        final.pop()
-    return " ".join(final).strip(" ,|")
-
-
-# 指标工具:时间窗必须贴近"现在"。LLM 会自行推算绝对时间(实测给过比当前早 2h40m 的
-# 窗口 09:48~10:48),而 Prometheus 只保留近期数据 → "最近一段时间"反而全空。
-_METRIC_TIME_TOOLS = ("query_cpu_metrics", "query_memory_metrics")
-_METRIC_TIME_FMT = "%Y-%m-%d %H:%M:%S"
-
-
-def _reanchor_metric_time_window(tool_name: str, tool_args: dict) -> None:
-    """把指标查询的时间窗确定性地锚定到"现在",只保留 LLM 想查的时长。
-
-    与 search_log 的 topic_id/query 纠偏同属"工具参数层确定性纠偏":
-      - 窗口右端已贴近当前(15 分钟内)则原样保留;
-      - 否则右端对齐 now,左端按原窗口时长前推(缺失/非法/超长时用 1 小时),
-        与工具自身默认口径(-1h~now)一致。修正会打日志,不静默篡改。
-    """
-    now = datetime.now()
-    dur = timedelta(hours=1)
-    raw_s = str(tool_args.get("start_time") or "")
-    raw_e = str(tool_args.get("end_time") or "")
-    try:
-        s = datetime.strptime(raw_s, _METRIC_TIME_FMT)
-        e = datetime.strptime(raw_e, _METRIC_TIME_FMT)
-        if e > s and timedelta(minutes=1) <= (e - s) <= timedelta(hours=24):
-            dur = e - s
-    except (ValueError, TypeError):
-        pass
-    if raw_e:
-        try:
-            if datetime.strptime(raw_e, _METRIC_TIME_FMT) >= now - timedelta(minutes=15):
-                return  # 窗口本身就贴近当前,不动
-        except ValueError:
-            pass
-    new_s = (now - dur).strftime(_METRIC_TIME_FMT)
-    new_e = now.strftime(_METRIC_TIME_FMT)
-    tool_args["start_time"] = new_s
-    tool_args["end_time"] = new_e
-    logger.info("[executor] %s 时间窗锚定到当前: '%s~%s' -> '%s~%s'",
-                tool_name, raw_s or "-", raw_e or "-", new_s, new_e)
-
-
-# 变更工具:时间窗同样必须贴近"现在"。与指标同因(LLM 自行推算绝对时间会偏离当前),
-# 但参数是毫秒时间戳(int),且"故障时间 ↔ 变更时间"对齐是变更证据成立的前提 ——
-# 窗口错位会查成"窗口内无变更",进而误判 h_change 矛盾,把结论从变更根因上带反。
-_CHANGE_TIME_TOOLS = ("search_changes",)
-_CHANGE_DEFAULT_DUR_MS = 3600 * 1000  # 1 小时,与 search_changes 自身默认口径一致
-
-
-def _reanchor_change_time_window(tool_name: str, tool_args: dict) -> None:
-    """把变更查询的时间窗确定性地锚定到"现在"(毫秒时间戳),只保留 LLM 想查的时长。
-
-    与 _reanchor_metric_time_window 同属"工具参数层确定性纠偏":
-      - 窗口右端已贴近当前(15 分钟内)则原样保留;
-      - 否则右端对齐 now,左端按原窗口时长前推(缺失/非法/超长时用 1 小时)。
-    修正会打日志,不静默篡改。
-    """
-    now_ms = int(datetime.now().timestamp() * 1000)
-    dur_ms = _CHANGE_DEFAULT_DUR_MS
-
-    def _to_ms(v: Any) -> int:
-        try:
-            return int(float(v))
-        except (TypeError, ValueError):
-            return 0
-
-    raw_s = _to_ms(tool_args.get("start_time"))
-    raw_e = _to_ms(tool_args.get("end_time"))
-    if raw_s > 0 and raw_e > raw_s and (raw_e - raw_s) <= 24 * 3600 * 1000:
-        dur_ms = raw_e - raw_s
-    if raw_e > 0 and raw_e >= now_ms - 15 * 60 * 1000:
-        return  # 窗口本身就贴近当前,不动
-    new_s = now_ms - dur_ms
-    new_e = now_ms
-    tool_args["start_time"] = new_s
-    tool_args["end_time"] = new_e
-    logger.info("[executor] %s 时间窗锚定到当前: '%s~%s' -> '%s~%s'",
-                tool_name, raw_s or "-", raw_e or "-", new_s, new_e)
-
-
 async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> ToolMessage:
     """执行单个工具调用(带超时保护),返回 ToolMessage。
 
@@ -326,41 +194,12 @@ async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> Tool
     tool_id = tc.get("id", "")
     tool = tool_map.get(tool_name)
 
-    # topic 漂移修复: search_log 优先使用历史步骤真实返回的 topic_id,
-    # 覆盖自动生成的占位/默认值(如重规划"验证 网络/连通性问题"被回退到默认 topic)。
-    # 首次查询(历史无 search_log 记录)时 real_ids 无 topic_id,保持原 args 不变。
-    if tool_name == "search_log" and real_ids:
-        rid = _pick_real_identifier(real_ids, "topic_id")
-        if rid:
-            prev = tool_args.get("topic_id", "")
-            tool_args["topic_id"] = rid
-            if prev != rid:
-                logger.info("[executor] search_log topic 对齐: '%s' -> '%s'(历史真实)", prev, rid)
-
-    # B2 确定性检索净化(2026-08-26)：search_log 的 query 由 LLM 生成,常带回
-    # 'error OR exception OR timeout' 等裸泛词——盲测端到端 202/303/606 等场景
-    # 判偏(应用层/外部依赖被无差别抬升)的根因正是这些检索词让 execuutor 返回
-    # 带 app 特征的日志子集。这里在**工具参数层**确定性过滤裸泛词:
-    #   1) 过滤后的剩余词 >0 → 保留,检索反而更聚焦真实症状(连接失败/资源指标);
-    #   2) 过滤后为空 → 退化为全量检索(等价于把"整批日志"交给裁判,与静态
-    #      debug_llm_judge_miss 验证成立的"全量判定"条件一致)。
-    if tool_name == "search_log" and _query_key_in(tool_args):
-        raw_q = str(tool_args.get("query", ""))
-        cleaned = _sanitize_search_log_query(raw_q)
-        if cleaned:
-            tool_args["query"] = cleaned
-            logger.info("[executor] search_log query 净化: '%s' -> '%s'", raw_q[:60], cleaned[:60])
-        else:
-            tool_args.pop("query", None)
-            logger.info("[executor] search_log query 净化后为空,退化为全量检索 (原: '%s')", raw_q[:60])
-
-    # 指标时间窗纠偏:LLM 推算的绝对时间常偏离当前,导致近期指标查空(实测)
-    if tool_name in _METRIC_TIME_TOOLS:
-        _reanchor_metric_time_window(tool_name, tool_args)
-
-    # 变更时间窗纠偏:同为"贴近当前",但走毫秒时间戳;窗口错位会把变更证据误判成"无变更"
-    if tool_name in _CHANGE_TIME_TOOLS:
-        _reanchor_change_time_window(tool_name, tool_args)
+    # ── 工具守卫层（LLM 提议 → 确定性净化 → MCP 执行）─────────────
+    # topic 对齐 / 检索词泛词净化 / 指标与变更时间窗锚定，统一由守卫链处理
+    # （见 tool_guards.run_guards）；各守卫行为与迁移前内联逻辑一致，
+    # 可用 settings.DISABLED_TOOL_GUARDS 停用单个守卫（消融实验用）。
+    gr = run_guards(tool_name, tool_args, GuardContext(real_ids=real_ids))
+    tool_args = gr.rewritten
 
     if not tool:
         # 方案 C: 日志工具(服务)不可达时,尝试从本地日志缓存读取同 topic 日志作为降级观测。
@@ -407,19 +246,6 @@ async def _run_tool_calls(tool_calls: list, tool_map: dict, real_ids: str = "") 
     返回顺序与输入顺序一致,保证 LLM 回填时 tool_call_id 能对应上。
     """
     return await asyncio.gather(*(_run_single_tool(tc, tool_map, real_ids) for tc in tool_calls))
-
-
-def _pick_real_identifier(real_ids: str, key: str) -> str | None:
-    """从 _extract_real_identifiers 生成的文本块里按 key 取第一个真实值。"""
-    if not real_ids:
-        return None
-    for line in real_ids.splitlines():
-        line = line.strip()
-        if line.startswith(f"{key} = "):
-            v = line.split("=", 1)[1].strip().strip("'\"")
-            if v:
-                return v
-    return None
 
 
 async def _forced_search_log(tool_map: dict, real_ids: str, histories: list) -> str:
