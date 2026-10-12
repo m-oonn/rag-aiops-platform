@@ -19,11 +19,21 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command
 
 from src.agent.aiops import run_store
+from src.agent.aiops.events import (
+    make_complete_event,
+    make_draft_event,
+    make_error_event,
+    make_pending_review_event,
+    make_plan_event,
+    make_report_event,
+    make_status_event,
+    make_step_complete_event,
+)
 from src.agent.aiops.executor import executor
 from src.agent.aiops.human_review import build_human_review_node
 from src.agent.aiops.planner import planner
 from src.agent.aiops.replanner import create_replanner
-from src.agent.aiops.roles import ROLE_EXECUTOR, ROLE_PLANNER, ROLE_REPLANNER
+from src.agent.aiops.roles import ROLE_EXECUTOR, ROLE_REPLANNER
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.strategies.default import DefaultReplanStrategy
@@ -135,13 +145,7 @@ class AIOpsService:
                 yield self._format_event(node_name, node_output)
 
     def _yield_pending_review(self, thread_id: str, draft: str) -> Dict[str, Any]:
-        return {
-            "type": "pending_review",
-            "stage": "pending_review",
-            "thread_id": thread_id,
-            "message": "报告草稿已生成, 等待人工审批",
-            "draft": draft,
-        }
+        return make_pending_review_event(thread_id, draft)
 
     async def execute(
         self, user_input: str, session_id: str = "default", user_id: Optional[int] = None
@@ -171,11 +175,9 @@ class AIOpsService:
 
             if not user_input or not user_input.strip():
                 logger.warning(f"[aiops][{session_id}] 输入为空,拒绝执行")
-                yield {
-                    "type": "error",
-                    "stage": "validation_error",
-                    "message": "诊断输入不能为空,请描述当前遇到的故障现象",
-                }
+                yield make_error_event(
+                    "诊断输入不能为空,请描述当前遇到的故障现象", stage="validation_error"
+                )
                 return
 
             initial: PlanExecuteState = {
@@ -207,20 +209,14 @@ class AIOpsService:
                 if settings.ENABLE_HITL:
                     run_store.mark_completed(unique_session, final_response)
                     self._thread_runs.pop(unique_session, None)
-                yield {
-                    "type": "complete",
-                    "stage": "complete",
-                    "message": "诊断完成",
-                    "response": final_response,
-                    **_diagnostic_extras(final_state),
-                }
+                yield make_complete_event(final_response, **_diagnostic_extras(final_state))
                 logger.info(f"[aiops][{session_id}] 诊断完成")
             except Exception as e:
                 logger.error(f"[aiops][{session_id}] 诊断失败: {e}", exc_info=True)
                 if settings.ENABLE_HITL:
                     run_store.mark_failed(unique_session, str(e))
                     self._thread_runs.pop(unique_session, None)
-                yield {"type": "error", "stage": "error", "message": f"诊断出错: {e}"}
+                yield make_error_event(f"诊断出错: {e}")
 
     async def resume(
         self, thread_id: str, decision: Dict[str, Any]
@@ -234,11 +230,7 @@ class AIOpsService:
         run = self._thread_runs.get(thread_id)
         if not run:
             logger.warning(f"[aiops] 恢复失败: 线程 {thread_id} 不存在或已过期")
-            yield {
-                "type": "error",
-                "stage": "not_found",
-                "message": f"诊断 {thread_id} 不存在或已过期",
-            }
+            yield make_error_event(f"诊断 {thread_id} 不存在或已过期", stage="not_found")
             return
 
         _strategy, graph = run
@@ -260,32 +252,20 @@ class AIOpsService:
                 final_response = (final_state.values or {}).get("response", "") if final_state else ""
                 run_store.mark_completed(thread_id, final_response)
                 self._thread_runs.pop(thread_id, None)
-                yield {
-                    "type": "complete",
-                    "stage": "complete",
-                    "message": "诊断完成",
-                    "response": final_response,
-                    **_diagnostic_extras(final_state),
-                }
+                yield make_complete_event(final_response, **_diagnostic_extras(final_state))
                 logger.info(f"[aiops] 诊断恢复完成 {thread_id}")
             except Exception as e:
                 logger.error(f"[aiops] 恢复诊断失败: {e}", exc_info=True)
                 run_store.mark_failed(thread_id, str(e))
                 self._thread_runs.pop(thread_id, None)
-                yield {"type": "error", "stage": "error", "message": f"恢复诊断出错: {e}"}
+                yield make_error_event(f"恢复诊断出错: {e}")
 
     @staticmethod
     def _format_event(node_name: str, state: Dict | None) -> Dict[str, Any]:
+        """节点输出 → SSE 事件（统一经 events.py 构造函数产出，字段结构不变）。"""
         state = state or {}
         if node_name == NODE_PLANNER:
-            plan = state.get("plan", [])
-            return {
-                "type": "plan",
-                "stage": "plan_created",
-                "role": ROLE_PLANNER,
-                "message": f"诊断计划已制定,共 {len(plan)} 步",
-                "plan": plan,
-            }
+            return make_plan_event(state.get("plan", []))
         if node_name == NODE_EXECUTOR:
             past_steps = state.get("past_steps", [])
             plan = state.get("plan", [])
@@ -296,22 +276,11 @@ class AIOpsService:
                 progress = state.get("_step_progress")
                 if progress:
                     done, total = progress.get("done"), progress.get("total")
-                    message = f"步骤完成 ({done}/{total})"
                 else:
                     done = len(past_steps)
                     total = done + len(plan)
-                    message = f"步骤完成 ({done}/{total})"
-                return {
-                    "type": "step_complete",
-                    "stage": "step_executed",
-                    "role": ROLE_EXECUTOR,
-                    "message": message,
-                    "done": done,          # 累计已完成步数(前端进度条按此对齐)
-                    "total": total,        # 计划总步数
-                    "current_step": last_step,
-                    "remaining_steps": len(plan),
-                }
-            return {"type": "status", "stage": "executor", "role": ROLE_EXECUTOR, "message": "执行步骤中"}
+                return make_step_complete_event(done, total, last_step, len(plan))
+            return make_status_event("executor", ROLE_EXECUTOR, "执行步骤中")
         if node_name == NODE_REPLANNER:
             response = state.get("response", "")
             plan = state.get("plan", [])
@@ -321,28 +290,15 @@ class AIOpsService:
             if response:
                 # HITL 开启时 replanner 产出的是"草稿"，最终报告需人工审批
                 if settings.ENABLE_HITL:
-                    return {
-                        "type": "draft",
-                        "stage": "draft_ready",
-                        "role": ROLE_REPLANNER,
-                        "message": "报告草稿已生成",
-                        "report": response,
-                    }
-                return {
-                    "type": "report",
-                    "stage": "final_report",
-                    "role": ROLE_REPLANNER,
-                    "message": "诊断报告已生成",
-                    "report": response,
-                }
-            return {
-                "type": "status",
-                "stage": "replanner",
-                "role": ROLE_REPLANNER,
-                "message": f"继续执行剩余步骤{sidebar_note}" if plan else f"准备生成报告{sidebar_note}",
-                "remaining_steps": len(plan),
-            }
-        return {"type": "status", "stage": node_name, "role": node_name, "message": f"{node_name} 执行中"}
+                    return make_draft_event(response)
+                return make_report_event(response)
+            return make_status_event(
+                "replanner",
+                ROLE_REPLANNER,
+                f"继续执行剩余步骤{sidebar_note}" if plan else f"准备生成报告{sidebar_note}",
+                remaining_steps=len(plan),
+            )
+        return make_status_event(node_name, node_name, f"{node_name} 执行中")
 
 
 # 全局单例（根据 settings 自动选择策略）
