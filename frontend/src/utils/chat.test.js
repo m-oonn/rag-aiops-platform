@@ -15,6 +15,14 @@ describe('renderMarkdown', () => {
     expect(renderMarkdown('**bold**')).toContain('<strong>bold</strong>')
   })
 
+  it('renders GFM tables (诊断报告探测数据表)', () => {
+    const md = '| 项目 | 结果 |\n| --- | --- |\n| 状态码 | 200 |'
+    const html = renderMarkdown(md)
+    expect(html).toContain('<table>')
+    expect(html).toContain('<th>项目</th>')
+    expect(html).toContain('<td>200</td>')
+  })
+
   it('strips script tags to prevent XSS', () => {
     const html = renderMarkdown('<script>alert(1)</script>')
     expect(html).not.toContain('<script')

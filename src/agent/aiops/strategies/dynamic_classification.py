@@ -26,6 +26,7 @@ from src.agent.aiops.core.evidence_judge import EvidenceJudge
 from src.agent.aiops.core.hypothesis import Evidence, Hypothesis, HypothesisManager
 from src.agent.aiops.core.hypothesis_generator import HypothesisGenerator
 from src.agent.aiops.core.hypothesis_reinterpreter import HypothesisReinterpreter
+from src.agent.aiops.evidence_sources import format_availability_note
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.strategies.sidebar import SidebarBranch, SidebarEngine
@@ -251,6 +252,25 @@ _DEFAULT_HYPOTHESES: List[Hypothesis] = [
     ),
 ]
 
+# ── 变更/发布假设(2026-10-10, 独立证据源) ──────────────────────────
+# 不进 _DEFAULT_HYPOTHESES: 仅在**实际观测到变更证据**时按需注入(懒加载),
+# 避免无变更场景下多一个候选稀释其余假设的 softmax 竞争(回归安全)。
+_CHANGE_HYPOTHESIS = Hypothesis(
+    id="h_change",
+    name="变更/发布引入",
+    description="近期发布、部署、配置变更、灰度或回滚引入的故障",
+    expected_findings=[
+        "变更事件", "发布记录", "变更记录", "部署记录", "灰度发布",
+        "配置变更", "版本变更", "索引重建", "回滚", "上线",
+        "change event", "deployment", "release", "rollout", "config change",
+    ],
+    contradictions=[
+        "无变更", "未发现变更", "没有变更", "无发布记录", "无部署记录",
+        "未发生变更", "窗口内无变更",
+    ],
+    probability=0.10,
+    protection_rounds=2,
+)
 
 _XML_TAG_RE = __import__("re").compile(r"<[^<>]{0,40}>")  # 剥离工具返回的 XML/HTML 标签
 _CTRL_RE = __import__("re").compile(r"[\x00-\x1f\x7f]+")
@@ -307,9 +327,61 @@ def _evidence_sufficiency_problem(past_steps: list) -> str | None:
     return None
 
 
+# ── 变更事件相关性判定(2026-10-10) ────────────────────────────────
+# 把"故障时间 ↔ 变更时间对齐"确定性转成对假设的显式证据, 让"指标异常 + 刚发过版"
+# 可靠走矛盾触发(4.3 旁开 replan), 而不是停在"资源瓶颈"这类症状层。
+_CHANGE_STEP_MARKERS = ("变更", "发布", "部署", "灰度", "回滚", "上线")
+_CHANGE_RESULT_MARKERS = ("变更事件", "变更记录", "发布记录", "部署记录", "变更类型", "change event")
+_CHANGE_ABSENT_MARKERS = ("无变更", "未发现变更", "没有变更", "无发布记录", "无部署记录",
+                          "未发生变更", "窗口内无变更", "无任何变更")
+# 变更数据"没查成"的信号: 不可达/未取得/工具缺失 —— 不能当成"无变更"
+_CHANGE_UNAVAILABLE_MARKERS = ("不可用", "未取得", "unavailable", "不存在", "跳过",
+                               "调用失败", "连接失败", "超时")
+# 症状层假设(非根因): 有同期变更时让位于变更根因(链首触发事件优先)
+_SYMPTOM_HYPOTHESIS_IDS = {"h_infra", "h_app", "h_net", "h_dep", "h_container", "h_api"}
+
+
+def _is_change_step(step: str) -> bool:
+    return any(k in str(step) for k in _CHANGE_STEP_MARKERS)
+
+
+def _change_conflict_evidences(step: str, result: Any, pre_top_id: Optional[str],
+                               step_no: int, source: str) -> List[Evidence]:
+    """变更事件 → 假设证据的确定性判定(仿 chaos 注入 override 的做法)。
+
+    - 窗口内**有**变更: 支持 h_change, 并对当前领先的**症状层**假设给一条有界矛盾
+      (strength 0.5) → 触发旁开 replan; 语义上把变更视为链首触发事件, 症状是次生现象。
+    - 窗口内**无**变更: 对 h_change 判矛盾, 让 Agent 换向。
+    - 变更数据**不可用**/非变更步骤: 不产出任何证据(避免把"没查成"当成"无变更")。
+    """
+    text = str(result)
+    looks_like_change = _is_change_step(step) or any(k in text for k in _CHANGE_RESULT_MARKERS)
+    if not looks_like_change:
+        return []
+    if any(k in text for k in _CHANGE_UNAVAILABLE_MARKERS):
+        return []
+    if any(k in text for k in _CHANGE_ABSENT_MARKERS):
+        return [Evidence(source=source, target_hypothesis_id=_CHANGE_HYPOTHESIS.id,
+                         relation="contradict", strength=0.6,
+                         description="[变更相关性] 窗口内无变更记录, 排除'变更/发布引入'",
+                         step=step_no)]
+    evs = [Evidence(source=source, target_hypothesis_id=_CHANGE_HYPOTHESIS.id,
+                    relation="support", strength=0.7,
+                    description="[变更相关性] 窗口内存在变更, 支持'变更/发布引入'",
+                    step=step_no)]
+    # 仅在已有至少 2 步观测(领先假设已由真实证据确立)时, 才对症状假设判矛盾,
+    # 避免首步"领先"是任意先验导致的误触发。
+    if step_no >= 2 and pre_top_id and pre_top_id in _SYMPTOM_HYPOTHESIS_IDS:
+        evs.append(Evidence(source=source, target_hypothesis_id=pre_top_id,
+                            relation="contradict", strength=0.5,
+                            description="[变更相关性] 存在同期变更, 领先症状假设让位于变更根因",
+                            step=step_no))
+    return evs
+
+
 def _local_respond(
     state: PlanExecuteState, hypothesis_space: List[dict] | None = None,
-    sufficiency_note: str | None = None,
+    sufficiency_note: str | None = None, degradation_label: bool = True,
 ) -> Dict[str, Any]:
     """兜底响应生成：不调 LLM，基于假设空间与已执行步骤拼接结构化 Markdown 报告。
 
@@ -320,9 +392,23 @@ def _local_respond(
       当关键证据源(日志)整体缺失、观测无鉴别力时, 即使 top 假设概率 >=0.50
       也**不输出确定性结论行**, 改为显式标注"证据不足, 结论为推测"——
       避免把"信息不足以决策"伪装成"已锁定根因"(cls 停服场景的诚实性修复)。
+
+    degradation_label(消融开关,默认 True):
+      为 False 时关闭"降级标注"——不再输出证据来源小节、也不再附加降级来源 caveat。
+      降级来源(本地副本)本身是**真实**证据,关闭标注只是不披露来源、结论照常给出;
+      "证据缺失→推测"由证据门控单独控制,两者互不覆盖,保证消融可归因。
     """
     input_text = state.get("input", "")
     past_steps = state.get("past_steps", [])
+    # 证据源可用性快照(由 executor 确定性映射而来): 部分 MCP 服务缺席时如实标注,
+    # 让"这次结论其实缺了某类证据"可见,避免静默失效。
+    availability = state.get("evidence_source_availability") or []
+    if not degradation_label:
+        # 关降级标注:不披露来源可用性,且降级类说明不再降级结论(降级来源是真实证据)。
+        availability = []
+        if sufficiency_note and ("降级" in sufficiency_note or "本地副本" in sufficiency_note):
+            sufficiency_note = None
+    missing_sources = [it.get("label") for it in availability if not it.get("available")]
 
     # 证据状态判定: 降级(本地副本兜底,证据真实) vs 缺失(观测空洞,真不足)
     is_degraded = bool(sufficiency_note) and ("降级" in sufficiency_note or "本地副本" in sufficiency_note)
@@ -350,6 +436,13 @@ def _local_respond(
         "conclusion_state": conclusion_state,
         "top_hypothesis": top["name"] if top else None,
         "top_probability": round(top["probability"], 4) if top else None,
+        "evidence_sources_missing": missing_sources,
+        # 消融自描述: 记录本次运行的机制开关状态,让每次诊断可归因、可复现(供实验归档)
+        "ablation": {
+            "hypothesis_protection": not settings.ABLATION_DISABLE_HYPOTHESIS_PROTECTION,
+            "evidence_gate": not settings.ABLATION_DISABLE_EVIDENCE_GATE,
+            "degradation_label": degradation_label,
+        },
     }
     report = (
         f"# 诊断结果\n\n"
@@ -410,6 +503,8 @@ def _local_respond(
                 f"- **{h['name']}** ({h['probability']:.0%})" for h in top3
             )
             report += f"## 候选根因\n{lines}\n\n"
+    # 证据来源标注: 明确本次可用/缺席的证据源,让结论的可信边界可见(静默失效可见化)
+    report += format_availability_note(availability)
     report += "_系统已收集足够信息，诊断完成。_"
     return {"response": report}
 
@@ -499,13 +594,24 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
                 step=self._step_count,
                 source=latest_step,
             )
+            # 变更事件相关性: 把"故障时间 ↔ 变更时间对齐"确定性转成显式证据。
+            # 命中时按需注入 h_change 假设(懒加载, 无变更场景不参与竞争, 回归安全)。
+            change_evs = _change_conflict_evidences(
+                latest_step, latest_result, pre_top_id, self._step_count, latest_step
+            )
+            if change_evs:
+                if self.manager.get_hypothesis(_CHANGE_HYPOTHESIS.id) is None:
+                    self.manager.add_hypotheses([_CHANGE_HYPOTHESIS.model_copy(deep=True)])
+                evidences = evidences + change_evs
             # 记录是否观测到真实证据(孵化门控依据)。505 误孵化根因:前几步观测全 neutral
             # (步骤文本/时间戳/错误回显), top 停在先验 0.20 < 0.35 就触发孵化,凭空扩展
             # 假设空间——必须等默认假设被真实证据检验过才允许"现有假设解释不了"的判断。
             if any(ev.relation != "neutral" for ev in evidences):
                 self._evidence_seen = True
             self.manager.update_beliefs(evidences)
-            self._incubate_weak_signals(evidences)
+            # 消融(关假设保护): 不施加弱信号保护性抬升,让低概率假设直接参与淘汰竞争。
+            if not settings.ABLATION_DISABLE_HYPOTHESIS_PROTECTION:
+                self._incubate_weak_signals(evidences)
             latest_contradiction = self._hypothesis_contradicted(pre_top_id, evidences)
 
         # 3. 获取当前领先假设
@@ -530,14 +636,20 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
 
         # 证据充分性门控: 关键证据源(日志)整体缺失(工具故障/服务不可达)时记下说明,
         # 供 _local_respond 在报告中诚实标注"证据不足", 不把并列猜测伪装成锁定根因。
-        sufficiency_note = _evidence_sufficiency_problem(past_steps)
+        # 消融(关证据门控): 不再计算该说明 → 报告一律给出确定性结论(诚实性关闭)。
+        sufficiency_note = (
+            None if settings.ABLATION_DISABLE_EVIDENCE_GATE
+            else _evidence_sufficiency_problem(past_steps)
+        )
+        # 消融开关透传给报告层(降级标注)
+        degradation_label = not settings.ABLATION_DISABLE_DEGRADATION_LABEL
 
         # 4. 决策
         # 4.0 步数上限 → respond
         if self._step_count >= _MAX_STEPS:
             logger.warning("[dynamic_class] 已达步数上限, 强制 respond")
             return {
-                **_local_respond(state, snapshot, sufficiency_note),
+                **_local_respond(state, snapshot, sufficiency_note, degradation_label=degradation_label),
                 "hypothesis_space": snapshot,
                 "belief_history": self._belief_history,
             }
@@ -545,7 +657,11 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
         # 4.1 深度回溯重解释：已淘汰假设在后续观测中出现净支持证据时复活。
         # 置于"计划执行完毕/高置信 respond"之前——否则原计划耗尽的那一轮，
         # 回溯信号会被 4.x 的出报告分支吞掉，漏掉被错杀的真根因。
-        reactivated = self._maybe_reactivate_hypotheses(past_steps)
+        # 消融(关假设保护): 不做回溯复活,被淘汰的假设不再有机会被救回。
+        reactivated = (
+            [] if settings.ABLATION_DISABLE_HYPOTHESIS_PROTECTION
+            else self._maybe_reactivate_hypotheses(past_steps)
+        )
         if reactivated:
             snapshot = self._snapshot()  # 复活后重新快照，包含被激活假设
             self._last_top_prob = current_top_prob  # 防跃迁检测失效
@@ -561,7 +677,7 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
         if not plan and past_steps:
             logger.info("[dynamic_class] 计划执行完毕, 出报告")
             return {
-                **_local_respond(state, snapshot, sufficiency_note),
+                **_local_respond(state, snapshot, sufficiency_note, degradation_label=degradation_label),
                 "hypothesis_space": snapshot,
                 "belief_history": self._belief_history,
             }
@@ -591,7 +707,7 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
                     current_top_prob, runner_gap, runner_up_excluded, len(plan),
                 )
                 return {
-                    **_local_respond(state, snapshot, sufficiency_note),
+                    **_local_respond(state, snapshot, sufficiency_note, degradation_label=degradation_label),
                     "hypothesis_space": snapshot,
                     "belief_history": self._belief_history,
                 }

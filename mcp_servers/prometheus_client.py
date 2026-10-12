@@ -1,16 +1,16 @@
-"""Prometheus 指标后端(monitor_server "Mock→真实"双轨中的真实侧)。
+"""Prometheus 指标后端(monitor_server 真实链路唯一实现)。
 
-monitor_server 的 query_cpu_metrics / query_memory_metrics 在
-MONITOR_BACKEND=prometheus 且 PROMETHEUS_URL 已配置、可达时,把取数交给本模块;
-否则(默认)走 mock_scenario 剧本。本模块返回结构与 mock 路径**完全一致**
+monitor_server 的 query_cpu_metrics / query_memory_metrics 把取数交给本模块;
+运行时 Mock 回退已彻底移除 —— 未启用真实后端或后端不可达时,monitor_server 一律
+如实返回"数据不可用"声明,绝不返回编造指标。本模块返回结构与工具输出契约一致
 (service_name / metric_name / scenario / interval / data_points / statistics / alert_info),
-所以 Agent 侧(planner/executor)零改动 —— 这是"先 Mock 后真实"策略的落地方式。
+所以 Agent 侧(planner/executor)零改动。
 
 设计取舍:
   - 只用 requests 直连 Prometheus HTTP API(/api/v1/query_range),不引入
     prometheus-api-client 之类额外 SDK,生产部署依赖越少越省事。
   - 实例化时探活一次。连接层失败(不可达/超时)标记 available=False,后续调用由
-    monitor_server 自动回退 mock;查询本身报错(如 PromQL 非法)不回退,而是返回空
+    monitor_server 返回"不可用"声明;查询本身报错(如 PromQL 非法)则返回空
     data_points + error —— 宁可让 Agent 看到"取数失败",也不伪造指标数据污染根因判断。
 
 由 monitor_server.py 在独立进程中 import 使用。
@@ -163,11 +163,15 @@ class PrometheusClient:
         logger.debug("PromQL(%s, service=%s): %s", metric, service_name, promql)
 
         def _payload(points: List[Dict[str, Any]], error: str = "") -> Dict[str, Any]:
+            # 取数失败时 data_source 标为 unavailable:Agent 据此知道"没有真实指标",
+            # 不得把空数据当"指标正常",更不得编造数值。
             data = {"service_name": service_name, "metric_name": metric_name,
                     "scenario": "prometheus", "interval": interval_str,
+                    "data_source": "unavailable" if error else "prometheus",
                     "data_points": points, **_summarize(points, threshold)}
             if error:
                 data["error"] = error
+                data["data_source_note"] = f"[数据来源: 真实监控不可用({error}), 无有效指标]"
             return data
 
         try:
@@ -186,7 +190,8 @@ class PrometheusClient:
                 raise RuntimeError(body.get("error") or "Prometheus 返回非 success")
             points = self._to_points(body.get("data", {}).get("result", []))
         except (requests.ConnectionError, requests.Timeout) as e:
-            # 连接层失败 = 后端真的不可达,标记后由 monitor_server 回退 mock
+            # 连接层失败 = 后端真的不可达,标记 available=False 后由 monitor_server
+            # 返回"不可用"声明(不回退 mock)
             self.available = False
             logger.warning("Prometheus 不可达(service=%s, metric=%s): %s",
                            service_name, metric, e)

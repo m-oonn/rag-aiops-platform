@@ -63,8 +63,15 @@ def get_mcp_client() -> MultiServerMCPClient:
 async def load_mcp_tools_safe() -> tuple[list[BaseTool], Optional[str]]:
     """加载全局单例 MCP 工具；失败时返回 (空列表, 错误信息)，不抛异常。
 
+    容错策略（2026-10-09 加固）：
+      1) 先整体加载（一次连所有服务，最快）；
+      2) 若整体失败（例如某台服务未启动 → TaskGroup 抛错），**降级为逐服务加载**，
+         能连上几个就返回几个，并在 error 里说明哪些服务不可用。
+    背景：知识库服务(8105)是可选的，它没起来时不应把指标/日志工具一起拖下水
+    （旧行为：任一服务不可达 → 全部工具加载失败 → 诊断链路整体降级）。
+
     Returns:
-        (tools, error): 成功时 error 为 None；失败时 tools 为 [] 且 error 为可读信息。
+        (tools, error): 全部成功时 error 为 None；部分/全部失败时 error 为可读信息。
     """
     try:
         client = get_mcp_client()
@@ -76,10 +83,33 @@ async def load_mcp_tools_safe() -> tuple[list[BaseTool], Optional[str]]:
         logger.info("成功加载 %d 个 MCP 工具", len(tools))
         return tools, None
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.warning("加载 MCP 工具失败(已降级): %s", error_msg)
-        reset_mcp_client()
-        return [], error_msg
+        logger.warning("整体加载 MCP 工具失败，降级为逐服务加载: %s", f"{type(e).__name__}: {e}")
+
+    # —— 降级：逐个服务独立加载 ——
+    collected: list[BaseTool] = []
+    failed_servers: list[str] = []
+    for name, cfg in settings.MCP_SERVERS.items():
+        try:
+            sub_client = MultiServerMCPClient({name: cfg})
+            sub_tools = await _with_timeout(
+                sub_client.get_tools(),
+                timeout=_DEFAULT_MCP_LOAD_TIMEOUT,
+                description=f"加载 {name} 工具",
+            )
+            collected.extend(sub_tools)
+            logger.info("[逐服务] %s: %d 个工具", name, len(sub_tools))
+        except Exception as se:
+            failed_servers.append(name)
+            logger.warning("[逐服务] %s 不可用: %s", name, f"{type(se).__name__}: {se}")
+
+    reset_mcp_client()  # 让下次重试重新整体建连
+    if collected:
+        err = f"部分服务不可用: {', '.join(failed_servers)}" if failed_servers else None
+        logger.info("逐服务加载成功: %d 个工具（缺失: %s）", len(collected), failed_servers or "无")
+        return collected, err
+    error_msg = f"全部 MCP 服务不可用: {', '.join(failed_servers) or '无配置'}"
+    logger.warning("加载 MCP 工具失败(已降级): %s", error_msg)
+    return [], error_msg
 
 
 def reset_mcp_client() -> None:

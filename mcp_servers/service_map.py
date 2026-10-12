@@ -36,7 +36,7 @@ from src.settings import settings
 logger = logging.getLogger("Service_Map")
 
 # 支持的后端命名空间(与 settings.SERVICE_ALIASES 的 value 键名一致)
-ALIAS_BACKENDS = ("monitor", "logs")
+ALIAS_BACKENDS = ("monitor", "logs", "changes")
 
 
 def _as_list(value: Any) -> List[str]:
@@ -117,7 +117,8 @@ def resolve_service(service_name: str, backend: str) -> List[str]:
 
     Args:
         service_name: 任意命名空间下的服务名(口头名 / 监控名 / 日志索引名均可)。
-        backend: "monitor"(Prometheus instance 前缀)或 "logs"(ES 索引前缀)。
+        backend: "monitor"(Prometheus instance 前缀)、"logs"(ES 索引前缀)或
+                 "changes"(变更事件 service 字段值)。
 
     Returns:
         候选名列表,index 0 最具体。命中别名时返回别名表里该 backend 的候选;

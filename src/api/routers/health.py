@@ -134,12 +134,12 @@ async def _check_minio() -> dict:
 
 
 async def _check_llm() -> dict:
-    """检测 LLM API 是否可达。"""
+    """检测 LLM API 是否可达（供应商无关，跟随 RESOLVED_LLM_* 配置）。"""
     try:
-        llm_url = f"{settings.DASHSCOPE_API_BASE}/models"
+        llm_url = f"{settings.RESOLVED_LLM_API_BASE}/models"
         headers = {}
-        if settings.DASHSCOPE_API_KEY:
-            headers["Authorization"] = f"Bearer {settings.DASHSCOPE_API_KEY}"
+        if settings.RESOLVED_LLM_API_KEY:
+            headers["Authorization"] = f"Bearer {settings.RESOLVED_LLM_API_KEY}"
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 llm_url, headers=headers,
