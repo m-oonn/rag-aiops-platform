@@ -38,3 +38,10 @@ AIOPS_PARALLEL_BATCHES = Counter(
     "AIOps 并行批次执行次数",
     labelnames=["result"],
 )
+
+# 6) LLM 调用重试次数(按结果切片: retried/exhausted；B5)
+AIOPS_LLM_RETRIES_TOTAL = Counter(
+    "aiops_llm_retries_total",
+    "AIOps Agent LLM 调用重试次数",
+    labelnames=["result"],
+)

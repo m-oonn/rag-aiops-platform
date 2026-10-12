@@ -148,6 +148,11 @@ class Settings(BaseSettings):
     # 可选值: topic_alignment / generic_filter / metric_time_anchor / change_time_anchor
     DISABLED_TOOL_GUARDS: str = ""
 
+    # —— LLM 调用统一重试（B5，src/agent/aiops_llm.py）——
+    # 瞬态错误(429/5xx/连接超时)指数退避重试; False=单次调用(旧行为,回归兼容)
+    ENABLE_LLM_RETRY: bool = True
+    LLM_RETRY_MAX_ATTEMPTS: int = 3
+
     # —— 论文消融开关（仅实验用；生产保持全 False）——
     # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
     # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；

@@ -17,6 +17,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
+from src.agent.aiops_llm import ainvoke_with_retry
+
 _T = TypeVar("_T", bound=BaseModel)
 
 _JSON_SYSTEM_HINT = (
@@ -53,7 +55,9 @@ async def ainvoke_structured(
     try:
         structured_llm = llm.with_structured_output(schema, method="function_calling")
         chain = prompt | structured_llm
-        result = await chain.ainvoke(prompt_input)
+        result = await ainvoke_with_retry(
+            chain, prompt_input, label="structured.function_calling"
+        )
         if isinstance(result, schema):
             return result
         return schema.model_validate(result)
@@ -68,7 +72,9 @@ async def ainvoke_structured(
     json_prompt = ChatPromptTemplate.from_messages(
         [*prompt.messages, ("system", hint_msg)]
     )
-    raw = await (json_prompt | llm).ainvoke(prompt_input)
+    raw = await ainvoke_with_retry(
+        json_prompt | llm, prompt_input, label="structured.json_fallback"
+    )
     content = getattr(raw, "content", "") or str(raw)
     content = content.strip()
 

@@ -27,7 +27,7 @@ from src.agent.aiops.evidence_sources import availability_warning, source_availa
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tool_guards import GuardContext, _pick_real_identifier, run_guards
 from src.agent.aiops.tools import load_agent_tools
-from src.agent.aiops_llm import create_agent_llm
+from src.agent.aiops_llm import ainvoke_with_retry, create_agent_llm
 from src.settings import settings
 from src.utils.logger import logger
 from src.utils.metrics import AIOPS_PARALLEL_BATCHES, AIOPS_TOOL_CALLS_TOTAL
@@ -348,7 +348,7 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
             result = ""
             executed: dict[str, bool] = {}
             for _ in range(max_iter):
-                resp = await llm_with_tools.ainvoke(messages)
+                resp = await ainvoke_with_retry(llm_with_tools, messages, label="executor.react")
                 messages.append(resp)
                 tcs = getattr(resp, "tool_calls", None)
                 if not tcs:
@@ -373,7 +373,9 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
                     result = fallback
                     logger.info("[executor] 确定性兜底调用 search_log 成功,结果长度 %s", len(fallback))
         else:
-            llm_no_tools = await llm_with_tools.ainvoke(messages)
+            llm_no_tools = await ainvoke_with_retry(
+                llm_with_tools, messages, label="executor.no_tools"
+            )
             result = llm_no_tools.content if hasattr(llm_no_tools, "content") else str(llm_no_tools)
 
         result = result if isinstance(result, str) else str(result)

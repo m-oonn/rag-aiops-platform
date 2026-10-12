@@ -11,9 +11,13 @@ settings.RESOLVED_LLM_API_BASE / RESOLVED_LLM_API_KEY(供应商无关,
 支持 DeepSeek 官方 API: .env 里 LLM_API_BASE=https://api.deepseek.com + LLM_API_KEY=sk-xxx)。
 """
 
+import asyncio
+
 from langchain_openai import ChatOpenAI
 
 from src.settings import settings
+from src.utils.logger import logger
+from src.utils.metrics import AIOPS_LLM_RETRIES_TOTAL
 
 
 def create_agent_llm(
@@ -61,3 +65,70 @@ def create_agent_llm(
         default_headers={"User-Agent": "Python-urllib/3.13"},
         callbacks=cbs or None,
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# LLM 调用统一重试（B5——借鉴 pi auto-retry 的指数退避）
+# ═══════════════════════════════════════════════════════════════
+
+# 可重试的 HTTP 状态码（瞬态服务端/限流错误）
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+# 可重试的异常类名（连接/超时类；openai SDK 与 httpx 的常见类型）
+_RETRYABLE_EXC_NAMES = frozenset({
+    "APITimeoutError", "APIConnectionError", "InternalServerError",
+    "RateLimitError", "ReadTimeout", "ConnectTimeout", "TimeoutException",
+    "TimeoutError", "ConnectError", "RemoteProtocolError",
+})
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """判定异常是否属于「瞬态、可重试」类（429/5xx/连接超时）。
+
+    判定依据（任一命中）：
+      - 异常携带 status_code ∈ {429,500,502,503,504}；
+      - 异常类名在 _RETRYABLE_EXC_NAMES 白名单。
+    其他异常（如 400 参数错误、鉴权失败）立即上抛——不掩盖真错误（pi"不隐藏"哲学）。
+    """
+    status = getattr(e, "status_code", None)
+    if isinstance(status, int) and status in _RETRYABLE_STATUS:
+        return True
+    return type(e).__name__ in _RETRYABLE_EXC_NAMES
+
+
+async def ainvoke_with_retry(
+    runnable,
+    messages,
+    *,
+    label: str = "",
+    max_attempts: int | None = None,
+    base_delay: float = 1.0,
+):
+    """调用 runnable.ainvoke(messages)，对瞬态错误指数退避重试。
+
+    - 开关: settings.ENABLE_LLM_RETRY=False 时直接单次调用（旧行为,回归兼容）；
+    - 次数: 入参 max_attempts > settings.LLM_RETRY_MAX_ATTEMPTS > 3；
+    - 退避: base_delay * 2^(n-1)（默认 1s, 2s, 4s ...）；
+    - 可见化: 每次重试 logger.warning + AIOPS_LLM_RETRIES_TOTAL 计数。
+    """
+    attempts = max_attempts or int(getattr(settings, "LLM_RETRY_MAX_ATTEMPTS", 3) or 3)
+    enabled = bool(getattr(settings, "ENABLE_LLM_RETRY", True))
+    if not enabled or attempts <= 1:
+        return await runnable.ainvoke(messages)
+
+    for i in range(attempts):
+        try:
+            return await runnable.ainvoke(messages)
+        except Exception as e:  # noqa: BLE001 —— 去留由 _is_retryable_error 判定
+            if not _is_retryable_error(e):
+                raise
+            if i == attempts - 1:
+                AIOPS_LLM_RETRIES_TOTAL.labels(result="exhausted").inc()
+                raise
+            delay = base_delay * (2 ** i)
+            logger.warning(
+                "[llm_retry] %s 第 %d/%d 次调用失败(%s: %s)，%.1fs 后重试",
+                label or "llm", i + 1, attempts, type(e).__name__, str(e)[:120], delay,
+            )
+            AIOPS_LLM_RETRIES_TOTAL.labels(result="retried").inc()
+            await asyncio.sleep(delay)
