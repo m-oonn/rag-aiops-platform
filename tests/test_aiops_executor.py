@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.agent.aiops.executor import (
-    _reanchor_change_time_window,
     _run_single_tool,
     _run_tool_calls,
 )
+from src.agent.aiops.tool_guards import _reanchor_change_time_window
 
 
 def _make_fake_tool(name: str, delay: float):

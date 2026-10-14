@@ -25,6 +25,16 @@ class PlanExecuteState(TypedDict):
     # 已执行步骤历史 (步骤, 结果)。operator.add = 追加而非覆盖。
     past_steps: Annotated[List[Tuple[str, str]], operator.add]
 
+    # 已执行步骤的**工具原始返回** (步骤, 原始工具输出)，与 past_steps 一一对应、同步追加。
+    # 存在的理由（2026-10-12 命中率根因诊断）：
+    #   past_steps 里存的是 executor 让 LLM 写的"自然语言总结"，原始日志里的鉴别关键词
+    #   （如 kubelet/evicted/OOMKilled、dial tcp/connection refused）会被转述稀释成中文
+    #   通用词，导致规则裁判的关键词匹配失效、全倒向"外部依赖故障"。
+    #   本字段保留未加工的原始工具返回，供证据裁判在开启
+    #   settings.ENABLE_RAW_EVIDENCE_FOR_JUDGE 时优先采信，恢复判别力。
+    # 默认不参与任何判定（旧行为零变化）；开关关闭时该字段只写不用。
+    raw_evidence: Annotated[List[Tuple[str, str]], operator.add]
+
     # 最终诊断报告;非空即触发图结束。
     response: str
 
