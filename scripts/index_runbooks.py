@@ -16,6 +16,7 @@ os.environ.setdefault("USE_TORCH", "0")
 from src.database.vector_db import MilvusClient
 from src.embedding import get_embedding_service
 from src.models.vector import VectorRecord
+from src.settings import settings
 from src.utils.logger import logger
 
 RUNBOOKS_DIR = project_root / "data" / "runbooks"
@@ -72,7 +73,7 @@ def main() -> int:
 
     for source, text in iter_chunks():
         vector = emb.embed_query(text)
-        if not vector or len(vector) != 1536:
+        if not vector or len(vector) != settings.MILVUS_DIMENSION:
             continue
         rec = VectorRecord(
             id=f"runbook_{abs(hash(text))}",

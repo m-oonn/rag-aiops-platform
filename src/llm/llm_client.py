@@ -26,23 +26,47 @@ class LLMClient:
         self._llm_cache: dict = {}
         
         try:
-            self.llm = ChatTongyi(
-                model=self.model_name,
-                temperature=_DEFAULT_TEMPERATURE,
-                top_p=0.8,
-                api_key=self.api_key,
-                streaming=True
-            )
+            # 2026-10-13 修复: 对话主模型已切 DeepSeek 官方 API(.env LLM_API_BASE/LLM_API_KEY),
+            # 默认实例必须按模型分派 —— 旧版硬编码 ChatTongyi 会把 deepseek 模型发往 DashScope,
+            # 报错还会被 langchain_community 包装成误导性的 KeyError: 'request'。
+            if _is_qwen_model(self.model_name):
+                self.llm = ChatTongyi(
+                    model=self.model_name,
+                    temperature=_DEFAULT_TEMPERATURE,
+                    top_p=0.8,
+                    api_key=self.api_key,
+                    streaming=True
+                )
+            else:
+                self.llm = self._build_compatible_llm(self.model_name, _DEFAULT_TEMPERATURE)
             self._llm_cache[(self.model_name, _DEFAULT_TEMPERATURE)] = self.llm
         except Exception as e:
             logger.error(f"Failed to initialize LLM Client: {e}")
             self.llm = None
 
+    @staticmethod
+    def _build_compatible_llm(model: str, temperature: float) -> ChatOpenAI:
+        """非 Qwen 模型统一走 OpenAI 兼容模式(地址/密钥跟随 RESOLVED_LLM_*,支持 DeepSeek 官方 API)。
+
+        配置对齐 src/agent/aiops_llm.py: 60s 超时、UA 防挂起、thinking 按开关禁用。
+        """
+        extra_body = {"thinking": {"type": "disabled"}} if settings.AGENT_DISABLE_THINKING else None
+        return ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=settings.RESOLVED_LLM_API_KEY,
+            base_url=settings.RESOLVED_LLM_API_BASE,
+            streaming=True,
+            request_timeout=60,
+            extra_body=extra_body,
+            default_headers={"User-Agent": "Python-urllib/3.13"},
+        )
+
     def _get_llm(self, model: Optional[str] = None, temperature: Optional[float] = None):
         """获取指定模型 + 温度的 LLM 实例，支持 Qwen 和非 Qwen 模型。
 
         - Qwen 系列 → ChatTongyi（dashscope 原生 SDK）
-        - 非 Qwen（如 deepseek-v3）→ ChatOpenAI（dashscope compatible-mode）
+        - 非 Qwen（如 deepseek-v4-flash）→ ChatOpenAI（DeepSeek 官方 compatible-mode, 读 RESOLVED_LLM_*）
         - model=None 且 temperature=None → 返回缓存的默认实例
         - 实例按 (model, temperature) 缓存，不同温度不复用
         """
@@ -67,14 +91,8 @@ class LLMClient:
                     streaming=True
                 )
             else:
-                # 非 Qwen 模型走 OpenAI 兼容模式（如 deepseek-v3）
-                new_llm = ChatOpenAI(
-                    model=target_model,
-                    temperature=temp,
-                    api_key=self.api_key,
-                    base_url=settings.DASHSCOPE_API_BASE,
-                    streaming=True
-                )
+                # 非 Qwen 模型走 OpenAI 兼容模式（DeepSeek 官方等, 地址/密钥跟随 RESOLVED_LLM_*）
+                new_llm = self._build_compatible_llm(target_model, temp)
             self._llm_cache[cache_key] = new_llm
             logger.info(f"[LLMClient] 创建模型实例: {target_model}@{temp} ({'ChatTongyi' if _is_qwen_model(target_model) else 'ChatOpenAI'})")
             return new_llm

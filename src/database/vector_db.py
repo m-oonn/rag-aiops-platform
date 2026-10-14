@@ -105,15 +105,30 @@ class MilvusClient:
         )
 
     # ── 插入 ──────────────────────────────────────────
-    def insert(self, records: List[VectorRecord]) -> None:
+    def insert(self, records: List[VectorRecord], flush: bool = False) -> bool:
+        """批量插入向量记录。
+
+        2026-10-14 修复(去除逐批 flush 反模式): 原实现每次 insert 都执行
+        collection.flush(), 批量灌库时产生海量微小段与逐段索引 —— 实测 1.7 万条
+        即膨胀出 ~19GB 段/索引文件, 且崩溃恢复后频繁触发 flush 状态异常。
+        Milvus 2.x 下未 flush 的增量数据对检索同样可见; 持久化由后台 WAL/自动封段
+        机制保障。批量任务请在收尾时调用 flush_now() 显式落盘一次。
+
+        Args:
+            records: 待插入的向量记录列表。
+            flush: 是否立即持久化(默认 False, 仅少量且需即时落盘的写入传 True)。
+
+        Returns:
+            True = 已成功写入 Milvus; False = Milvus 不可用或写入失败(已降级本地存储)。
+        """
         if not records:
-            return
+            return True
 
         # 始终写入本地存储作为降级备份（Milvus 重启后数据仍在本地）
         self._local_store.insert(records)
 
         if not self._available:
-            return
+            return False
 
         try:
             ids = [r.id for r in records]
@@ -125,10 +140,27 @@ class MilvusClient:
                 kb_ids = [int(r.metadata.get("kb_id", 0)) for r in records]
                 data.append(kb_ids)
             self.collection.insert(data)
-            self.collection.flush()
-            logger.info(f"Milvus 插入 {len(records)} 条（已 flush）")
+            if flush:
+                self.collection.flush()
+                logger.info(f"Milvus 插入 {len(records)} 条（已 flush）")
+            else:
+                logger.debug(f"Milvus 插入 {len(records)} 条（未 flush, 收尾统一持久化）")
+            return True
         except Exception:
             logger.exception("Milvus insert 失败，数据已存入本地降级存储")
+            return False
+
+    def flush_now(self) -> bool:
+        """显式持久化: 封存当前增量段(批量灌库收尾调用一次即可)。"""
+        if not self._available:
+            return False
+        try:
+            self.collection.flush()
+            logger.info("Milvus flush 完成(收尾持久化)")
+            return True
+        except Exception:
+            logger.exception("Milvus flush 失败")
+            return False
 
     # ── 检索 ──────────────────────────────────────────
     def search(

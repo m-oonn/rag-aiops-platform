@@ -38,6 +38,21 @@ NODE_REPLANNER = "replanner"
 NODE_HUMAN_REVIEW = "human_review"
 
 
+def _diagnostic_extras(final_state) -> Dict[str, Any]:
+    """从终态抽取供前端可视化的诊断元数据。
+
+    假设空间/旁开支线/信念历史/证据源可用性都已在 state 里累积,这里统一取出,
+    随 complete 事件下发,避免"后端算了、前端看不到"的静默丢弃。
+    """
+    values = final_state.values if final_state and final_state.values else {}
+    return {
+        "hypothesis_space": values.get("hypothesis_space", []),
+        "sidebar_branches": values.get("sidebar_branches", []),
+        "belief_history": values.get("belief_history", []),
+        "evidence_source_availability": values.get("evidence_source_availability", []),
+    }
+
+
 class AIOpsService:
     """运维诊断服务：封装 Plan-Execute-Replan 图，提供流式 execute() / resume()。
 
@@ -197,8 +212,7 @@ class AIOpsService:
                     "stage": "complete",
                     "message": "诊断完成",
                     "response": final_response,
-                    "hypothesis_space": (final_state.values.get("hypothesis_space", [])
-                                         if final_state and final_state.values else []),
+                    **_diagnostic_extras(final_state),
                 }
                 logger.info(f"[aiops][{session_id}] 诊断完成")
             except Exception as e:
@@ -251,6 +265,7 @@ class AIOpsService:
                     "stage": "complete",
                     "message": "诊断完成",
                     "response": final_response,
+                    **_diagnostic_extras(final_state),
                 }
                 logger.info(f"[aiops] 诊断恢复完成 {thread_id}")
             except Exception as e:

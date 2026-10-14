@@ -29,9 +29,25 @@ class Settings(BaseSettings):
     # compatible-mode 站点,避免默认走新加坡站点导致与现有 ChatTongyi 行为漂移。
     # 注意: 现有 ChatTongyi 不接受此参数(走 dashscope 原生 SDK),故仅 Agent 侧消费。
     DASHSCOPE_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    EMBEDDING_MODEL: str = "text-embedding-v1"
+
+    # —— LLM 供应商切换(2026-10-09 新增,支持 DeepSeek 官方 API)——
+    # 目的: 把"换模型供应商"收敛成纯配置切换,代码零改动(.env 改 2 行即可)。
+    #   LLM_API_BASE: 显式指定时优先于各供应商默认地址(DASHSCOPE_API_BASE / deepseek 默认)
+    #   LLM_API_KEY : 显式指定时优先;否则依次回退 DEEPSEEK_API_KEY → DASHSCOPE_API_KEY
+    # 兼容性: 两者都不设置时,行为与旧版完全一致(走 DASHSCOPE_API_BASE + DASHSCOPE_API_KEY)。
+    LLM_API_BASE: Optional[str] = None     # 例: "https://api.deepseek.com"
+    LLM_API_KEY: Optional[str] = None      # DeepSeek 官方 API Key(sk-xxx)
+    DEEPSEEK_API_KEY: Optional[str] = None # 备选变量名(给只认这个名字的场景)
+
+    # 2026-10-10 切换: text-embedding-v1 已欠费(Arrearage),换免费的 qwen3.7-text-embedding(1024维)。
+    # 换模型必须同步 MILVUS_DIMENSION 与 index_runbooks.py 的维度校验。
+    EMBEDDING_MODEL: str = "qwen3.7-text-embedding"
     EMBEDDING_BATCH_SIZE: int = 20
     EMBEDDING_MAX_BATCH_SIZE: int = 25
+    # OpenAI 兼容嵌入服务(2026-10-13 新增; 如硅基流动 https://api.siliconflow.cn/v1):
+    # 与 EMBEDDING_API_KEY 同时配置时优先启用, 否则回退 DashScope(见 src/embedding/__init__.py)
+    EMBEDDING_API_BASE: Optional[str] = None
+    EMBEDDING_API_KEY: Optional[str] = None
     LLM_MODEL: str = "glm-5.3"  # RAG 路径默认模型(2026-09-23 复测: qwen3.8-max-0902 已耗尽,切 glm-5.3)
     # —— Agent 路径模型(新增 ChatOpenAI,走 compatible-mode,可调 Qwen 或阿里托管的 DeepSeek)——
     # 免费额度探针结论(2026-09-10, 脚本 scripts/_tmp_probe_new_models.py / probe_more_models.py):
@@ -58,6 +74,13 @@ class Settings(BaseSettings):
     AGENT_MODEL: str = "glm-5.3"        # Agent 主推理模型(2026-09-23 复测: qwen3.8-max-0902 已 403 耗尽,切 glm-5.3; function calling OK)
     AGENT_MODEL_SIMPLE: str = "qwen3.7-flash-2026-07-15"  # 简单意图(闲聊/分类/路由)降本用,flash 档更快
 
+    # —— Agent 是否关闭模型 thinking 模式(2026-10-10 新增)——
+    # 背景: DeepSeek thinking 模型拒绝"强制 tool_choice",导致 with_structured_output
+    # (method="function_calling") 400 报错并降级成正则抠 JSON。实测关闭 thinking 后
+    # 原生强制工具调用直接可用(见 scripts/_probe_structured_fix2.py 结论)。
+    # 仅对支持的供应商(DeepSeek)生效;换回保留推理能力的模型时置 False 即可。
+    AGENT_DISABLE_THINKING: bool = True
+
     # —— 证据裁判 LLM（动态分类策略用）——
     # 开启后 EvidenceJudge 用 LLM 语义判断观测对假设的支持/矛盾关系，
     # 可理解同义词、否定句与隐含证据（修复对抗测试 synonym_blind / negation_trap）。
@@ -79,7 +102,7 @@ class Settings(BaseSettings):
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
     MILVUS_COLLECTION_NAME: str = "rag_documents_v2"
-    MILVUS_DIMENSION: int = 1536
+    MILVUS_DIMENSION: int = 1024  # 2026-10-10: 随 EMBEDDING_MODEL 切 qwen3.7-text-embedding(1024维)
 
     REDIS_URL: str = "redis://localhost:6379/0"
     RABBITMQ_HOST: str = "localhost"
@@ -104,7 +127,7 @@ class Settings(BaseSettings):
     
     # Rerank Config
     ENABLE_RERANK: bool = True
-    RERANK_MODEL: str = "gte-rerank-v2"  # DashScope rerank model (v2 is current)
+    RERANK_MODEL: str = "qwen3.7-text-rerank"  # 2026-10-10: gte-rerank-v2 已欠费,换免费的 qwen3.7-text-rerank
     RERANK_TOP_N: int = 5
 
     # —— 诊断经验注入(AIOps planner) ——
@@ -123,6 +146,17 @@ class Settings(BaseSettings):
     # —— AIOps Agent Config ——
     # Phase 3 动态分类策略开关
     ENABLE_DYNAMIC_CLASSIFICATION: bool = False
+
+    # —— 论文消融开关（仅实验用；生产保持全 False）——
+    # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
+    # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；
+    # 关闭只影响该机制，不改变其余链路，保证消融结果可归因。
+    #   假设保护: 弱信号保护(_incubate_weak_signals) + 深度回溯复活(_maybe_reactivate_hypotheses)
+    #   证据门控: 证据充分性门控(_evidence_sufficiency_problem) → 关后不再把结论降级为"推测"
+    #   降级标注: 报告的证据来源小节与降级来源 caveat → 关后不再披露来源降级/缺席
+    ABLATION_DISABLE_HYPOTHESIS_PROTECTION: bool = False
+    ABLATION_DISABLE_EVIDENCE_GATE: bool = False
+    ABLATION_DISABLE_DEGRADATION_LABEL: bool = False
 
     # —— 多智能体协同（Supervisor / HITL / 并行观测）——
     # Supervisor 统一入口：注册 /supervisor/chat 端点，前端显示"统一入口"开关
@@ -147,13 +181,19 @@ class Settings(BaseSettings):
     MCP_MONITOR_URL: str = "http://127.0.0.1:8104/mcp"  # 指标服务: query_cpu_metrics / query_memory_metrics
     MCP_CLS_URL: str = "http://127.0.0.1:8103/mcp"      # 日志服务: search_topic_by_service_name / search_log
     MCP_RAG_URL: str = "http://127.0.0.1:8105/mcp"  # 知识库检索: search_knowledge_base / list_knowledge_bases
+    MCP_CHANGE_URL: str = "http://127.0.0.1:8106/mcp"  # 变更/发布事件: search_changes / get_change_detail
 
     # —— Monitor MCP 生产化后端(Mock→Prometheus 双轨,见 docs/MCP生产化改造方案.md)——
     # MONITOR_BACKEND: "mock"(默认,演示剧本) 或 "prometheus"(真实监控查询)
     # PROMETHEUS_URL 配置后且 MONITOR_BACKEND=prometheus 时,指标查询走 Prometheus HTTP API;
-    # 工具名/参数/返回结构不变,Agent 侧零改动;Prometheus 不可达时回退 mock。
+    # 工具名/参数/返回结构不变,Agent 侧零改动;不可达时**不回退 mock**,如实返回
+    # data_source=unavailable(见下方生产纪律)。
     MONITOR_BACKEND: str = "mock"
     PROMETHEUS_URL: str = ""
+    # 生产纪律(2026-10-10): 配置了真实后端(指标 MONITOR_BACKEND=prometheus / 日志
+    # CLS_BACKEND=elasticsearch)却不可达时,**一律不回退 Mock** —— 宁可如实返回
+    # "数据不可用",也不拿编造的指标/日志当真实证据(实测中 Mock 日志的 OOM 堆栈
+    # 曾让 Agent 编出错误根因)。
     # PromQL 模板,{service} 为**值**占位(经 service_map 展开成候选正则);
     # 标签键(instance/service/pod...)随监控栈而变,生产集群需按实际调整 —— 用
     # scripts/discover_prometheus_metrics.py 可自动发现指标名与服务名所在标签。
@@ -180,7 +220,8 @@ class Settings(BaseSettings):
 
     # —— CLS MCP 生产化后端(Mock→Elasticsearch 双轨,见 docs/MCP生产化改造方案.md §4.2)——
     # CLS_BACKEND: "mock"(默认,演示剧本) 或 "elasticsearch"(真实日志平台)
-    # 配置 CLS_ES_URL 且 CLS_BACKEND=elasticsearch 时,日志查询走 ES;不可达回退 mock。
+    # 配置 CLS_ES_URL 且 CLS_BACKEND=elasticsearch 时,日志查询走 ES;不可达时**不回退 mock**,
+    # 如实返回 data_source=unavailable(见上方生产纪律)。
     CLS_BACKEND: str = "mock"
     CLS_ES_URL: str = ""
     # 服务名→日志索引模式;search_topic 用该模式匹配索引,search_log 查具体索引
@@ -196,6 +237,23 @@ class Settings(BaseSettings):
     CLS_ES_API_KEY: str = ""  # ES ApiKey 鉴权;设置后优先于 Basic Auth
     CLS_ES_VERIFY_SSL: bool = True  # 自签证书的内网环境可置 False
 
+    # —— 变更/发布事件 MCP(2026-10-10 新增,独立证据源) ——
+    # 变更事件与指标/日志正交,是根因鉴别(尤其"指标异常 + 刚发过版")的第二类独立证据。
+    # 数据源复用现有 ES 集群: CHANGE_ES_URL 留空时回退 CLS_ES_URL(同集群不同索引)。
+    # 无 mock 分支 —— 与日志侧同纪律: 后端不可达时如实返回"数据不可用",绝不编造变更记录。
+    CHANGE_ES_URL: str = ""  # 留空则用 CLS_ES_URL(同一 ES 集群)
+    CHANGE_INDEX_PATTERN: str = "change-events-*"  # 变更事件集中索引(用 service 字段区分服务)
+    # 变更事件字段映射(真实平台字段名 → 语义字段)
+    CHANGE_TIMESTAMP_FIELD: str = "@timestamp"
+    CHANGE_SERVICE_FIELD: str = "service"
+    CHANGE_ID_FIELD: str = "change_id"
+    CHANGE_TYPE_FIELD: str = "change_type"  # deploy / config / scale / rollback
+    CHANGE_OPERATOR_FIELD: str = "operator"
+    CHANGE_VERSION_FIELD: str = "version"
+    CHANGE_DESCRIPTION_FIELD: str = "description"
+    CHANGE_STATUS_FIELD: str = "status"
+    CHANGE_TIMEOUT_SECONDS: float = 5.0
+
     # —— 服务名别名表(生产关键: 口头名↔监控前缀↔日志索引前缀,见 docs/MCP生产化改造方案.md §3)——
     # JSON 字符串: {"口头服务名": {"monitor": "监控instance前缀", "logs": "日志索引前缀"}}
     # 双轨真实路径查询前先经 service_map.resolve_service 归一化并展开候选,
@@ -209,7 +267,31 @@ class Settings(BaseSettings):
             "monitor": {"transport": "streamable_http", "url": self.MCP_MONITOR_URL},
             "cls": {"transport": "streamable_http", "url": self.MCP_CLS_URL},
             "knowledge_base": {"transport": "streamable_http", "url": self.MCP_RAG_URL},
+            "change": {"transport": "streamable_http", "url": self.MCP_CHANGE_URL},
         }
+
+    @property
+    def RESOLVED_CHANGE_ES_URL(self) -> str:
+        """变更事件 ES 地址: CHANGE_ES_URL 显式配置优先,否则回退 CLS_ES_URL(同集群)。"""
+        return (self.CHANGE_ES_URL or self.CLS_ES_URL).strip()
+
+    @property
+    def RESOLVED_LLM_API_BASE(self) -> str:
+        """解析后的 LLM 接口地址(供应商无关)。
+
+        优先级: LLM_API_BASE(显式) → 检测到 DEEPSEEK_API_KEY 时用 DeepSeek 官方地址
+                → DASHSCOPE_API_BASE(旧行为,兼容)
+        """
+        if self.LLM_API_BASE:
+            return self.LLM_API_BASE.rstrip("/")
+        if self.DEEPSEEK_API_KEY:
+            return "https://api.deepseek.com"
+        return self.DASHSCOPE_API_BASE.rstrip("/")
+
+    @property
+    def RESOLVED_LLM_API_KEY(self) -> Optional[str]:
+        """解析后的 LLM API Key。优先级: LLM_API_KEY → DEEPSEEK_API_KEY → DASHSCOPE_API_KEY。"""
+        return self.LLM_API_KEY or self.DEEPSEEK_API_KEY or self.DASHSCOPE_API_KEY
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -219,6 +301,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# ── 本机内部通信绕过系统代理（2026-10-09 修复）─────────────────────────
+# 背景: 本机环境存在 HTTP_PROXY/HTTPS_PROXY(如 127.0.0.1:14118 的调试代理),
+# httpx/urllib 默认会读取它,导致连本机 MCP 服务(127.0.0.1:8103/8104/8105)时
+# 请求被代理劫持 → 502 Bad Gateway → "MCP 工具加载失败"整个诊断链路瘫掉。
+# 修复: 进程启动时设置 NO_PROXY,让 localhost/127.0.0.1 直连。
+# 注意: 这是**增量**设置(不覆盖已有的 NO_PROXY 值),只补上本机地址。
+_LOCAL_NO_PROXY = "127.0.0.1,localhost,::1"
+for _var in ("NO_PROXY", "no_proxy"):
+    _existing = os.environ.get(_var, "").strip()
+    if _LOCAL_NO_PROXY not in _existing:
+        os.environ[_var] = f"{_existing},{_LOCAL_NO_PROXY}".lstrip(",") if _existing else _LOCAL_NO_PROXY
 
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.PROCESSED_DIR, exist_ok=True)

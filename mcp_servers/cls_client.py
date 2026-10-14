@@ -1,12 +1,10 @@
-"""Elasticsearch 日志后端(cls_server "Mock→真实"双轨中的真实侧)。
+"""Elasticsearch 日志后端(cls_server 真实链路唯一实现)。
 
-cls_server 的 search_topic_by_service_name / search_log 在
-CLS_BACKEND=elasticsearch 且 CLS_ES_URL 已配置、可达时,把查询交给本模块;
-否则(默认)走 mock_scenario 剧本。本模块返回结构与 mock 路径**完全一致**
-(search_topic → total/topics/query/message;search_log → topic_id/logs/took_ms/...),
-所以 Agent 侧零改动。
+cls_server 的 search_topic_by_service_name / search_log 把查询交给本模块;
+运行时 Mock 回退已彻底移除 —— 未启用真实后端或后端不可达时,cls_server 一律
+如实返回"数据不可用"声明,绝不返回编造日志。
 
-语义映射(Mock 概念 → ES 概念):
+语义映射(日志主题 → ES 概念):
   - "日志主题 topic" → ES 索引(index)。故 topics[i]["topic_id"] 即索引名,
     search_log 拿它当索引查询,两层链路语义不变。
   - 服务名 → 索引模式用 settings.CLS_INDEX_PATTERN(默认 "{service}-logs-*")。
@@ -15,9 +13,9 @@ CLS_BACKEND=elasticsearch 且 CLS_ES_URL 已配置、可达时,把查询交给�
 
 设计取舍:
   - 只用 requests 直连 ES REST API,不引入 elasticsearch SDK(少一个重依赖)。
-  - 探活失败(不可达/超时)标记 available=False,由 cls_server 自动回退 mock;
-    单次查询报错不回退,如实返回空结果 + error,不伪造日志(日志是根因鉴别的
-    关键证据,造假会直接污染结论)。
+  - 探活失败(不可达/超时)标记 available=False,由 cls_server 返回"不可用"声明;
+    单次查询报错如实返回空结果 + error,不伪造日志(日志是根因鉴别的关键证据,
+    造假会直接污染结论)。
 
 由 cls_server.py 在独立进程中 import 使用。
 """
@@ -121,6 +119,8 @@ class ClsClient:
         except Exception as e:
             logger.warning("ES 索引列举失败: %s", e)
             return {"total": 0, "topics": [], "query": query,
+                    "data_source": "unavailable",
+                    "data_source_note": f"[数据来源: 真实日志平台查询失败({e}); 无有效主题]",
                     "error": f"ES 查询失败: {e}",
                     "message": "ES 索引列举失败,未找到日志主题"}
 
@@ -140,6 +140,7 @@ class ClsClient:
         # 最新的排最前 —— 调用方默认取 topics[0] 时拿到的才是当天的日志
         matched.sort(key=lambda t: t["topic_id"], reverse=True)
         return {"total": len(matched), "topics": matched, "query": query,
+                "data_source": "elasticsearch",
                 "message": (f"找到 {len(matched)} 个日志主题" if matched
                             else f"未找到服务 '{service_name}' 的日志主题")}
 
@@ -182,6 +183,8 @@ class ClsClient:
         except Exception as e:
             logger.warning("ES 日志查询失败(topic=%s): %s", topic_id, e)
             return {**base, "total": 0, "logs": [], "took_ms": 0,
+                    "data_source": "unavailable",
+                    "data_source_note": f"[数据来源: 真实日志平台查询失败({e}); 无有效日志]",
                     "error": f"ES 查询失败: {e}", "message": "ES 日志查询失败"}
 
         hits = body.get("hits", {})
@@ -191,6 +194,7 @@ class ClsClient:
         logs = [self._to_log(h.get("_source", {})) for h in hits.get("hits", [])]
         return {**base, "total": total, "logs": logs,
                 "took_ms": body.get("took", 0),
+                "data_source": "elasticsearch",
                 "message": f"成功查询 {len(logs)} 条日志"}
 
     def _to_log(self, src: Dict[str, Any]) -> Dict[str, Any]:

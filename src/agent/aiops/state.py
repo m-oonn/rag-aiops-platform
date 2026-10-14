@@ -40,3 +40,7 @@ class PlanExecuteState(TypedDict):
 
     # 假设信念变化曲线：每轮各假设概率快照（可选，用于可视化/论文数据）
     belief_history: NotRequired[List[dict]]
+
+    # 证据源可用性快照（可选）：本次诊断实际可用的 MCP 证据源(指标/日志/变更/知识库/探测)。
+    # 部分服务缺席时如实记录，供报告与 complete 事件标注"结论的可信边界"，避免静默失效。
+    evidence_source_availability: NotRequired[List[dict]]

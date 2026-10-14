@@ -17,10 +17,12 @@ import re
 
 import asyncio
 import time
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
+from src.agent.aiops.evidence_sources import availability_warning, source_availability
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tools import load_agent_tools
 from src.agent.aiops_llm import create_agent_llm
@@ -33,8 +35,12 @@ _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步
 原则:
 1. 理解步骤目标;
 2. 有可用工具就调用工具获取真实数据;无工具则基于你的运维知识给出合理分析;
-3. **调用工具时,必须使用 bind_tools 注册的实际参数名**(如 start_time/end_time/interval),
-   步骤描述中若提到不存在的参数名(如 duration),忽略它,以工具 schema 为准;
+   **网站检查要到位**:若步骤要求"逐个检查页面里的链接与图片资源"或排查网站问题,
+   调用网站检查工具时**必须开启深度检查(deep=true)**;仅当步骤只要求"能不能打开"
+   时才用默认的基本检查;
+3. **步骤描述是给用户看的自然语言(可能不含工具名和参数),由你判断该调用哪个工具、
+   并按其 schema 传入正确参数**(如 start_time/end_time/interval);步骤描述中若提到
+   不存在的参数名(如 duration),忽略它,以工具 schema 为准;
 4. 结果要具体可操作,不要反问用户或要求提供更多信息;
 5. 只返回实际获取的信息或基于知识的分析,不要编造数据;
 6. 专注当前步骤,不考虑其他任务;
@@ -45,7 +51,13 @@ _EXECUTOR_SYSTEM = """你是资深运维诊断专家,负责执行单个诊断步
    的占位 topic_id,或写死的假时间戳);
    8. **不得因标识符是占位而跳过工具**: 只要本次给出的"可用真实标识符"里存在某步骤
    所需工具(如 search_log)需要的真实 topic_id,且本步明确要求查日志,就**必须调用该工具**，
-   用真实 topic_id + 真实时间窗执行,并以工具返回结果作答;不要自行"认为查不到"而不调用。"""
+   用真实 topic_id + 真实时间窗执行,并以工具返回结果作答;不要自行"认为查不到"而不调用;
+   9. **数据来源诚实性(重要)**: 判定数据真伪**只看工具返回的 `data_source` 字段**,
+   不得凭日志内容(如出现 OutOfMemoryError / Exception 等异常堆栈字样)去猜是不是演示数据:
+   - `data_source=elasticsearch`(或其它真实后端名) = **真实数据**,必须作为证据采用;
+   - `data_source=mock`(演示数据)、`data_source=unavailable`(真实数据源不可用),
+     或含"[数据来源: …非真实/不可用]"字样 = 未取得真实数据:必须如实说明"该项未取得真实
+     数据",**不得**把它当成真实观测、不得据此下根因结论、不得引用其中具体数值或堆栈内容。"""
 
 _NO_TOOLS_WARNING = """
 ⚠️ 重要提醒：当前没有可用的监控/日志工具，你无法获取任何真实系统数据。
@@ -135,6 +147,11 @@ _GENERIC_RETRIEVAL_WORDS = re.compile(
     flags=re.IGNORECASE,
 )
 
+# 字段限定子句(ES query_string 的 field:value,如 level:ERROR、log.level:WARN)。
+# 这类子句的"值"是查询语法的一部分,不能被泛词过滤削掉 —— 否则 level:ERROR 会被
+# 削成非法语法 level:,ES 直接 400(实测:level: → search_phase_execution_exception)。
+_FIELD_SCOPED_CLAUSE = re.compile(r"^[A-Za-z_][\w.]*:")
+
 
 def _query_key_in(tool_args: dict) -> bool:
     """search_log 是否存在 query 参数。"""
@@ -188,16 +205,112 @@ def _sanitize_search_log_query(query: str) -> str:
 
     'error OR exception OR timeout' -> ''(退化为全量检索)
     'connection refused OR oom'     -> 'connection refused OR oom'
-    '5xx error rate'                -> '5xx rate'? 不:保留 5xx(应用层特征)…
-    过滤仅剔除无层级区分度的裸词,保留有特征性的词。
+    'level:ERROR'                   -> 'level:ERROR'(字段限定子句整体保留,不削值)
+    'level:ERROR OR level:WARN'     -> 'level:ERROR OR level:WARN'
     """
     if not query:
         return ""
-    cleaned = _GENERIC_RETRIEVAL_WORDS.sub("", query)
-    # 去掉过滤后残留的孤立连词/空段与多余空白
-    cleaned = re.sub(r"\b(OR|AND|or|and)\b", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,|")
-    return cleaned
+    # 归一化 "field: value" → "field:value",避免字段限定被空格拆散成 level: + ERROR
+    normalized = re.sub(r"\b([A-Za-z_][\w.]*):\s+", r"\1:", query)
+    kept: list[str] = []
+    for tok in normalized.split():
+        if _FIELD_SCOPED_CLAUSE.match(tok):
+            if tok.endswith(":"):
+                continue  # 字段后为空是非法语法(如 level:),丢弃整段
+            kept.append(tok)
+            continue
+        if _GENERIC_RETRIEVAL_WORDS.search(tok):
+            continue
+        kept.append(tok)
+    # 清理因剔除而变孤立的连词(前导/连续/结尾),保留两个有效词之间的 OR/AND
+    final: list[str] = []
+    for tok in kept:
+        if tok.upper() in ("OR", "AND"):
+            if not final or final[-1].upper() in ("OR", "AND"):
+                continue
+            final.append(tok)
+        else:
+            final.append(tok)
+    while final and final[-1].upper() in ("OR", "AND"):
+        final.pop()
+    return " ".join(final).strip(" ,|")
+
+
+# 指标工具:时间窗必须贴近"现在"。LLM 会自行推算绝对时间(实测给过比当前早 2h40m 的
+# 窗口 09:48~10:48),而 Prometheus 只保留近期数据 → "最近一段时间"反而全空。
+_METRIC_TIME_TOOLS = ("query_cpu_metrics", "query_memory_metrics")
+_METRIC_TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _reanchor_metric_time_window(tool_name: str, tool_args: dict) -> None:
+    """把指标查询的时间窗确定性地锚定到"现在",只保留 LLM 想查的时长。
+
+    与 search_log 的 topic_id/query 纠偏同属"工具参数层确定性纠偏":
+      - 窗口右端已贴近当前(15 分钟内)则原样保留;
+      - 否则右端对齐 now,左端按原窗口时长前推(缺失/非法/超长时用 1 小时),
+        与工具自身默认口径(-1h~now)一致。修正会打日志,不静默篡改。
+    """
+    now = datetime.now()
+    dur = timedelta(hours=1)
+    raw_s = str(tool_args.get("start_time") or "")
+    raw_e = str(tool_args.get("end_time") or "")
+    try:
+        s = datetime.strptime(raw_s, _METRIC_TIME_FMT)
+        e = datetime.strptime(raw_e, _METRIC_TIME_FMT)
+        if e > s and timedelta(minutes=1) <= (e - s) <= timedelta(hours=24):
+            dur = e - s
+    except (ValueError, TypeError):
+        pass
+    if raw_e:
+        try:
+            if datetime.strptime(raw_e, _METRIC_TIME_FMT) >= now - timedelta(minutes=15):
+                return  # 窗口本身就贴近当前,不动
+        except ValueError:
+            pass
+    new_s = (now - dur).strftime(_METRIC_TIME_FMT)
+    new_e = now.strftime(_METRIC_TIME_FMT)
+    tool_args["start_time"] = new_s
+    tool_args["end_time"] = new_e
+    logger.info("[executor] %s 时间窗锚定到当前: '%s~%s' -> '%s~%s'",
+                tool_name, raw_s or "-", raw_e or "-", new_s, new_e)
+
+
+# 变更工具:时间窗同样必须贴近"现在"。与指标同因(LLM 自行推算绝对时间会偏离当前),
+# 但参数是毫秒时间戳(int),且"故障时间 ↔ 变更时间"对齐是变更证据成立的前提 ——
+# 窗口错位会查成"窗口内无变更",进而误判 h_change 矛盾,把结论从变更根因上带反。
+_CHANGE_TIME_TOOLS = ("search_changes",)
+_CHANGE_DEFAULT_DUR_MS = 3600 * 1000  # 1 小时,与 search_changes 自身默认口径一致
+
+
+def _reanchor_change_time_window(tool_name: str, tool_args: dict) -> None:
+    """把变更查询的时间窗确定性地锚定到"现在"(毫秒时间戳),只保留 LLM 想查的时长。
+
+    与 _reanchor_metric_time_window 同属"工具参数层确定性纠偏":
+      - 窗口右端已贴近当前(15 分钟内)则原样保留;
+      - 否则右端对齐 now,左端按原窗口时长前推(缺失/非法/超长时用 1 小时)。
+    修正会打日志,不静默篡改。
+    """
+    now_ms = int(datetime.now().timestamp() * 1000)
+    dur_ms = _CHANGE_DEFAULT_DUR_MS
+
+    def _to_ms(v: Any) -> int:
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return 0
+
+    raw_s = _to_ms(tool_args.get("start_time"))
+    raw_e = _to_ms(tool_args.get("end_time"))
+    if raw_s > 0 and raw_e > raw_s and (raw_e - raw_s) <= 24 * 3600 * 1000:
+        dur_ms = raw_e - raw_s
+    if raw_e > 0 and raw_e >= now_ms - 15 * 60 * 1000:
+        return  # 窗口本身就贴近当前,不动
+    new_s = now_ms - dur_ms
+    new_e = now_ms
+    tool_args["start_time"] = new_s
+    tool_args["end_time"] = new_e
+    logger.info("[executor] %s 时间窗锚定到当前: '%s~%s' -> '%s~%s'",
+                tool_name, raw_s or "-", raw_e or "-", new_s, new_e)
 
 
 async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> ToolMessage:
@@ -240,6 +353,14 @@ async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> Tool
         else:
             tool_args.pop("query", None)
             logger.info("[executor] search_log query 净化后为空,退化为全量检索 (原: '%s')", raw_q[:60])
+
+    # 指标时间窗纠偏:LLM 推算的绝对时间常偏离当前,导致近期指标查空(实测)
+    if tool_name in _METRIC_TIME_TOOLS:
+        _reanchor_metric_time_window(tool_name, tool_args)
+
+    # 变更时间窗纠偏:同为"贴近当前",但走毫秒时间戳;窗口错位会把变更证据误判成"无变更"
+    if tool_name in _CHANGE_TIME_TOOLS:
+        _reanchor_change_time_window(tool_name, tool_args)
 
     if not tool:
         # 方案 C: 日志工具(服务)不可达时,尝试从本地日志缓存读取同 topic 日志作为降级观测。
@@ -356,10 +477,13 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
         llm = create_agent_llm(temperature=0)
         llm_with_tools = llm.bind_tools(tools) if tools else llm
 
-        # 无工具时注入数据诚实性警告
+        # 无工具时注入数据诚实性警告;有工具但部分证据源缺席时,显式告知 LLM
+        # 本次缺哪些证据源,避免用通用经验顶替真实观测(静默失效可见化)。
         sys_content = _EXECUTOR_SYSTEM
         if not tools:
             sys_content += _NO_TOOLS_WARNING
+        else:
+            sys_content += availability_warning(tools)
 
         # 少 tokens 压缩(2026-09-23): 历史只带最近 5 步、每条结果截 150 字符,
         # 避免随步数增长的二次方输入(LLM 只需近因标识符, 不读垃圾长文)。
@@ -411,10 +535,13 @@ async def _run_step(task: str, state: PlanExecuteState) -> str:
             if not result:
                 result = messages[-1].content if hasattr(messages[-1], "content") else ""
 
-            # 确定性兜底: 步骤明确点名 search_log 且已拿到真实 topic_id,
-            # 但 LLM 始终没产出日志结果时,强制用真实 topic_id 调一次,保证证据链不因
-            # LLM 工具选择不稳而断裂。
-            if (not result) and ("search_log" in raw_task) and (not executed.get("search_log")):
+            # 确定性兜底: 步骤要求查日志(点名 search_log,或自然语言提到"日志")且已拿到
+            # 真实 topic_id,但 LLM 始终没产出日志结果时,强制用真实 topic_id 调一次,
+            # 保证证据链不因 LLM 工具选择不稳而断裂。
+            # (2026-10-09: planner 步骤改为自然语言后可能不含 "search_log" 字样,
+            #  故同时接受中文"日志"描述。)
+            needs_log_evidence = ("search_log" in raw_task) or ("日志" in raw_task)
+            if (not result) and needs_log_evidence and (not executed.get("search_log")):
                 fallback = await _forced_search_log(tool_map, real_ids, histories=state.get("past_steps", []))
                 if fallback:
                     result = fallback
@@ -448,6 +575,11 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
     task = plan[0]
     logger.info(f"[executor] 当前步骤: {task}")
 
+    # 证据源可用性快照: 由本次实际加载到的 MCP 工具确定性映射,随状态回传,
+    # 供报告/complete 事件标注"本次可用/缺席的证据源"(静默失效可见化)。
+    _tools, _err = await _get_tools_cached()
+    availability = source_availability(_tools)
+
     try:
         # ── L4 并行批：两个独立观测步骤并发执行 ──
         if (settings.ENABLE_PARALLEL_OBSERVATION and len(plan) >= 2
@@ -464,6 +596,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
                 "plan": plan[2:],
                 "past_steps": [(_plain_label(plan[0]), r1), (_plain_label(plan[1]), r2)],
                 "_step_progress": {"done": done, "total": done + len(plan[2:])},
+                "evidence_source_availability": availability,
             }
 
         result = await _run_step(task, state)
@@ -472,6 +605,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             "plan": plan[1:],
             "past_steps": [(_plain_label(task), result)],
             "_step_progress": {"done": done, "total": done + len(plan[1:])},
+            "evidence_source_availability": availability,
         }
 
     except Exception as e:
@@ -481,4 +615,5 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             "plan": plan[1:],
             "past_steps": [(task, f"执行步骤 '{task}' 时遇到异常: {_sanitize_error(e)}")],
             "_step_progress": {"done": done, "total": done + len(plan[1:])},
+            "evidence_source_availability": availability,
         }

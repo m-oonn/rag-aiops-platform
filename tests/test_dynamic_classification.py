@@ -30,9 +30,13 @@ from src.agent.aiops.core.hypothesis import Evidence, Hypothesis, HypothesisMana
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.dynamic_classification import (
     DynamicClassificationStrategy,
+    _CHANGE_HYPOTHESIS,
     _MAX_STEPS,
     _REPLAN_TRIGGER_DELTA,
     _RESPOND_THRESHOLD,
+    _change_conflict_evidences,
+    _evidence_sufficiency_problem,
+    _local_respond,
 )
 
 # 默认假设空间的期望构成（与 _DEFAULT_HYPOTHESES 对齐，改动此处即测试失败）
@@ -424,3 +428,99 @@ async def test_reset_clears_state_for_reuse():
     assert strategy._step_count == 0
     assert strategy._last_top_prob is None
     assert strategy._evidence_seen is False
+
+
+# ── C. 变更/发布事件的矛盾触发判定（_change_conflict_evidences） ──────────
+# 锁死两条纪律: (1) 窗口内有变更 → 支持 h_change,并对领先症状假设判矛盾(触发旁开);
+# (2) 变更数据"没查成"(不可用/未取得)绝不等于"无变更" —— 不得据此判矛盾。
+
+
+def test_change_evidence_supports_change_hypothesis():
+    """窗口内存在变更 → 对 h_change 判支持。"""
+    evs = _change_conflict_evidences(
+        "查询最近变更记录", "命中 1 条变更事件: config change by ops", None, 1, "查询变更"
+    )
+    assert len(evs) == 1
+    assert evs[0].target_hypothesis_id == _CHANGE_HYPOTHESIS.id
+    assert evs[0].relation == "support"
+
+
+def test_change_absent_contradicts_change_hypothesis():
+    """窗口内无变更 → 对 h_change 判矛盾(排除'变更/发布引入')。"""
+    evs = _change_conflict_evidences("查询变更记录", "窗口内无变更记录", None, 1, "查询变更")
+    assert len(evs) == 1
+    assert evs[0].target_hypothesis_id == _CHANGE_HYPOTHESIS.id
+    assert evs[0].relation == "contradict"
+
+
+def test_change_unavailable_not_treated_as_absent():
+    """变更数据不可用/未取得 → 不产出任何证据(不得当成'无变更'判矛盾)。"""
+    for text in ("变更服务不可用", "未取得变更数据", "search_changes 调用失败"):
+        evs = _change_conflict_evidences("查询变更记录", text, "h_infra", 3, "查询变更")
+        assert evs == [], f"'{text}' 不应被当成无变更"
+
+
+def test_change_evidence_contradicts_leading_symptom():
+    """已有≥2步观测且领先为症状层假设时,同期变更对其判矛盾(触发旁开式 replan)。"""
+    evs = _change_conflict_evidences(
+        "查询变更记录", "命中变更事件: 灰度发布", "h_infra", 3, "查询变更"
+    )
+    targets = {(e.target_hypothesis_id, e.relation) for e in evs}
+    assert (_CHANGE_HYPOTHESIS.id, "support") in targets
+    assert ("h_infra", "contradict") in targets
+
+
+def test_change_evidence_does_not_contradict_before_two_steps():
+    """首步(step_no<2)时不对领先假设判矛盾,避免任意先验导致的误触发。"""
+    evs = _change_conflict_evidences(
+        "查询变更记录", "命中变更事件: 部署", "h_infra", 1, "查询变更"
+    )
+    assert evs
+    assert all(e.target_hypothesis_id == _CHANGE_HYPOTHESIS.id for e in evs)
+    assert all(e.relation == "support" for e in evs)
+
+
+def test_non_change_step_produces_no_evidence():
+    """非变更步骤且结果无变更标记 → 不产出证据(避免污染假设空间)。"""
+    evs = _change_conflict_evidences(
+        "查询 CPU 指标", "cpu 使用率 96%", "h_infra", 3, "查询 CPU 指标"
+    )
+    assert evs == []
+
+
+# ── D. 证据不足时的诚实声明（_evidence_sufficiency_problem / _local_respond） ──
+# 纪律: 关键证据源(日志)缺失时,不得把并列猜测伪装成"已锁定根因"。
+
+
+def test_sufficiency_problem_detects_missing_log_source():
+    note = _evidence_sufficiency_problem([("查询日志", "工具 'search_log' 不存在,跳过")])
+    assert note and "日志证据缺失" in note
+
+
+def test_sufficiency_problem_detects_degraded_local_copy():
+    note = _evidence_sufficiency_problem([("查询日志", "已降级读取本地副本降级(local_cache)")])
+    assert note and ("降级" in note or "本地副本" in note)
+
+
+def test_sufficiency_problem_none_when_log_present():
+    assert _evidence_sufficiency_problem([("查询日志", "命中 3 条日志: OOM")]) is None
+
+
+def test_local_respond_flags_uncertain_when_evidence_missing():
+    """证据缺失 + 高概率 → 结论应标注为'推测',不伪装成确定结论。"""
+    note = "日志证据缺失(检索工具不可用), 2 步观测中日志步骤无法取证"
+    state = {"input": "服务异常", "plan": [], "past_steps": [("检查服务", "5xx 上升")], "response": ""}
+    space = [{"id": "h_app", "name": "应用层异常", "probability": 0.80}]
+    report = _local_respond(state, space, note)["response"]
+    assert "推测" in report
+    assert "日志证据缺失" in report
+
+
+def test_local_respond_marks_degraded_source_as_auditable():
+    """降级来源(本地副本)证据真实 → 输出结论但标注可审计。"""
+    note = "日志证据来自本地降级副本(日志服务不可达), 2 步观测中日志步骤已本地兜底"
+    state = {"input": "服务异常", "plan": [], "past_steps": [("查询日志", "OOM")], "response": ""}
+    space = [{"id": "h_app", "name": "应用层异常", "probability": 0.80}]
+    report = _local_respond(state, space, note)["response"]
+    assert "本地副本" in report
+    assert "复核" in report

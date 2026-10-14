@@ -84,8 +84,8 @@ services:
     image: rabbitmq:3-management
     container_name: rag_rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     # 安全最佳实践: 生产环境必须替换默认凭据 guest/guest
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
@@ -111,14 +111,16 @@ services:
 
   minio:
     container_name: milvus-minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    # 2026-10-13: minio/minio 镜像已从 Docker Hub/Quay 全量下架(社区版停止分发,匿名拉取 401)。
+    # 改用维护中的无缝替代分支 pgsty/silo(接口/环境变量/S3 数据格式兼容;控制台支持中文)。
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     # 安全最佳实践: 生产环境必须替换默认凭据 minioadmin/minioadmin
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
     ports:
-      - "9001:9001"
-      - "9000:9000"
+      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:9000:9000"
     volumes:
       - milvus_minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
@@ -137,8 +139,8 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     depends_on:
       - etcd
       - minio
@@ -149,7 +151,7 @@ services:
     container_name: rag_redis
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     networks:

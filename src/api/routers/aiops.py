@@ -52,6 +52,13 @@ async def diagnose_stream(
     AIOPS_ACTIVE_DIAGNOSES.inc()
     final_result = "failed"  # 默认值,出错时记录
 
+    # ── token 计量（2026-10-09 新增）──────────────────────────────
+    # 设计: 服务端持久启用（几乎零成本——只是在 LLM 调用上挂一个回调),
+    #      诊断结束后把本次消耗(含折算费用)推给前端/测试脚本;
+    #      前端据此展示"本次诊断消耗",测试脚本据此记录真实损耗。
+    from src.utils.token_meter import start_meter, stop_meter
+    meter = start_meter()
+
     async def event_generator():
         nonlocal final_result
         try:
@@ -84,5 +91,22 @@ async def diagnose_stream(
             AIOPS_DIAGNOSIS_DURATION.observe(duration)
             AIOPS_ACTIVE_DIAGNOSES.dec()
             logger.info(f"[aiops] 诊断结束 result={final_result} duration={duration:.2f}s")
+
+            # 推送本次 token 消耗（独立事件类型,前端可选择性展示）
+            try:
+                m = stop_meter() or meter
+                usage = m.as_dict()
+                usage["elapsed_s"] = round(duration, 2)
+                logger.info(
+                    "[aiops] 本次消耗: %s 次LLM调用, 入 %s / 出 %s tokens, 约 ¥%.4f, 耗时 %.1fs",
+                    usage.get("llm_calls"), usage.get("input_tokens"),
+                    usage.get("output_tokens"), usage.get("cost_cny_estimated", 0), duration,
+                )
+                yield {
+                    "event": "message",
+                    "data": json.dumps({"type": "usage", **usage}, ensure_ascii=False),
+                }
+            except Exception as ue:
+                logger.warning(f"[aiops] token 计量汇总失败(不影响诊断): {ue}")
 
     return EventSourceResponse(event_generator())

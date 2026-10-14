@@ -1,6 +1,7 @@
 # 项目理解清单：rag-aiops-thesis 架构与流程梳理
 
 > 本文档基于 `main` 分支代码，聚焦 AIOps 旁开式动态分类故障诊断机制。
+> 最后更新：2026-10-10（补齐：变更服务 8106 / 监控探测工具 / 证据源可见化；修正 LLM 与工具服务口径）。
 
 ---
 
@@ -39,14 +40,15 @@ graph TB
     subgraph 工具层 [工具层 MCP/检索]
         MCPClient[MCPClient]
         MockScenario[mock_scenario<br/>多根因剧本]
-        MonitorServer[monitor_server<br/>指标查询]
+        MonitorServer[monitor_server<br/>指标查询 + 站点/端口/接口探测]
         CLSServer[cls_server<br/>日志检索]
         RAGServer[rag_server<br/>知识库检索]
+        ChangeServer[change_server<br/>变更/发布事件]
         LocalRetrieval[local_retrieval<br/>本地检索]
     end
 
     subgraph 基础设施层
-        LLM[DashScope LLM<br/>qwen-plus/turbo]
+        LLM[LLM 服务(OpenAI 兼容)<br/>模型经 .env 配置]
         Embedding[DashScope Embedding]
         VectorDB[VectorDB<br/>Milvus/本地存储]
         SQLite[(SQLite)]
@@ -74,12 +76,15 @@ graph TB
     MCPClient --> MonitorServer
     MCPClient --> CLSServer
     MCPClient --> RAGServer
+    MCPClient --> ChangeServer
     MonitorServer --> MockScenario
     CLSServer --> MockScenario
     LocalRetrieval --> VectorDB
     VectorDB --> Embedding
     AIOpsService --> Settings
 ```
+
+> **工具服务口径（2026-10-10 核对）**：MCP 侧为 **4 个独立服务**（monitor 8104 / cls 8103 / rag 8105 / change 8106，共 14 个工具）；cls 与 change 支持 **Elasticsearch 真实后端**（Mock↔ES 双轨，真实栈见 `docker/docker-compose.observability.yml`），后端不可达时**不回退 Mock、如实声明**。
 
 ### 模块职责
 
@@ -91,7 +96,8 @@ graph TB
 | 策略层 | Replan 决策逻辑（可插拔）：`DefaultReplanStrategy`（基线）/ `DynamicClassificationStrategy`（旁开式动态分类 + 证据充分性门控） | `src/agent/aiops/strategies/*.py` |
 | 核心层 | 假设空间管理、信念更新、证据裁判、孵化与复活 | `src/agent/aiops/core/*.py` |
 | 工具层 · MCP | 按 server 逐个加载（**方案 A** 单点故障只丢该 server，其余保留） | `src/agent/mcp_client.py` |
-| 工具层 · 服务 | 指标（monitor）/ 日志（cls）/ 知识库（rag）；cls 每次成功 `search_log` 落盘日志副本供降级 | `mcp_servers/*.py` |
+| 工具层 · 服务 | 指标（monitor，含站点/端口/接口探测）/ 日志（cls）/ 知识库（rag）/ 变更（change，ES 后端、不设 Mock）；cls 每次成功 `search_log` 落盘日志副本供降级 | `mcp_servers/*.py` |
+| 工具层 · 证据源可见化 | MCP 工具加载结果 → 证据源"可用/缺席"快照（指标/日志/变更/知识库/探测 5 类），注入 executor 提示、报告"证据来源"小节与 complete 事件 | `src/agent/aiops/evidence_sources.py` |
 | 基础设施层 | LLM、嵌入、向量库、配置 | `src/llm/`, `src/embedding/`, `src/settings.py` |
 
 ---
@@ -178,7 +184,7 @@ sequenceDiagram
     participant DS as DynamicClassificationStrategy
     participant HM as HypothesisManager
     participant EJ as EvidenceJudge
-    participant LLM as DashScope LLM
+    participant LLM as LLM（OpenAI 兼容）
     participant MCP as MCPClient
 
     User->>API: POST /api/v1/aiops<br/>{input: "CPU过高"}
@@ -202,7 +208,7 @@ sequenceDiagram
         R->>DS: decide(state)
 
         alt 首步
-            DS->>HM: 初始化5条默认假设
+            DS->>HM: 初始化7条默认假设
         end
 
         DS->>EJ: judge_async(hypotheses, observation)
@@ -243,7 +249,7 @@ sequenceDiagram
 sequenceDiagram
     participant DS as DynamicClassificationStrategy
     participant EJ as EvidenceJudge
-    participant LLM as DashScope LLM
+    participant LLM as LLM（OpenAI 兼容）
     participant Rule as 规则关键词引擎
 
     DS->>EJ: judge_async(hypotheses, observation)
@@ -469,6 +475,9 @@ stateDiagram-v2
 | 2026-09-07 | 鲁棒性F组 | cls 停服下日志证据物理缺失，网络/OOM/混沌/依赖 4 类场景失鉴别力（5/8，3 个虚报确定） | 方案B：`_evidence_sufficiency_problem` 证据充分性门控，`_local_respond` 输出"结论(证据不足)"诚实标注不虚报；方案C：cls_server 每次 search_log 落盘 `runtime/log_cache/{topic}.json`（模拟"日志有本地副本"），executor 在 `search_log` 不可达时降级读本地缓存。停 cls 实测命中率 5/8→**7/8**（2026-09-08 复验；网络场景经方案 D 对齐修复判对，场景 1 残差为单源指标证据不足的诚实 uncertain） | `src/agent/aiops/strategies/dynamic_classification.py`, `mcp_servers/cls_server.py`, `src/agent/aiops/executor.py` |
 | 2026-09-08 | 鲁棒性F组 | 复验发现方案 C 降级路径 topic 漂移：重规划验证步骤（"验证 网络/连通性问题"）提取不到服务名，stub 回退默认 topic-001，实读 data-sync 日志 → 网络场景高置信误判外部依赖 71% | 方案D（topic 对齐）：executor `_run_single_tool` 对 search_log 用历史真实 topic_id 覆盖自动生成值（`_pick_real_identifier`）；llm_stub 日志摘要保留 `（topic_id=…）` 标记打通 `降级 payload→past_steps→real_ids→对齐` 链路。网络场景 6/8→**7/8**（修复前 6/8），场景 2 判对（网络 93%） | `src/agent/aiops/executor.py`, `scripts/llm_stub.py` |
 | 2026-09-07 | 报告双轨 | 降级机制仅靠人读标注，程序无法消费；缺失/降级/正常三类状态不可机器区分 | 报告头部嵌入 `<!-- diagnostic_meta: {...} -->` JSON 注释块：`evidence_sufficiency(ok/degraded/missing)` + `note` + `conclusion_state(conclusive/degraded_conclusive/insufficient…)` + `top_hypothesis` + `top_probability`；llm_stub 摘要保留 `（{source}）` 使降级标记穿透裁判。人类可读（⚠️ 降级标注）与机器可读（结构化字段）双轨并存 | `src/agent/aiops/strategies/dynamic_classification.py`, `scripts/llm_stub.py` |
+| 2026-10-10 | 工具层扩展 | 缺"变更/发布事件"独立证据源；指标/日志覆盖不到"刚发过版"这类触发层根因 | 新增 `change_server`（8106）：`search_changes` / `get_change_detail`，Elasticsearch 后端、**不设 Mock**（不可达时如实返回"数据不可用"）；动态策略配套新增懒加载假设 `h_change`（仅在观测到变更证据时注入，避免稀释竞争） | `mcp_servers/change_server.py`, `src/agent/aiops/strategies/dynamic_classification.py`, `src/settings.py` |
+| 2026-10-10 | 证据源可见化 | MCP 服务缺席时诊断链路静默少工具，报告看不出"缺了哪类证据源"（静默失效） | 新增 `evidence_sources`：工具清单 → 证据源可用性快照（指标/日志/变更/知识库/探测 5 类），三处消费——executor 提示"缺席警告"（禁止用通用经验顶替真实观测）、报告"## 证据来源"小节、complete 事件回传；state 增 `evidence_source_availability` 字段 | `src/agent/aiops/evidence_sources.py`, `executor.py`, `graph.py`, `state.py`, `strategies/dynamic_classification.py` |
+| 2026-10-10 | 监控服务扩展 | 网站检查只有可达性；端口/服务健康/接口无工具覆盖 | `monitor_server` 新增 `check_ports` / `check_service_health` / `check_api_endpoint`（共 6 工具）：端口级 TCP 探测区分"拒绝/超时"、健康端点探测、接口级业务探测（识别"页面能打开但功能坏"） | `mcp_servers/monitor_server.py` |
 
 > 完整决策背景与证据链见 `docs/superpowers/决策-端到端验收修复：llm_stub路由污染与策略会话隔离.md`（论文侧决策记录，未随本仓库交付）。修复后 `scripts/verify_scenarios.py`〔论文侧脚本，未随仓库交付〕8/8 场景通过（5 基础根因 + 多症状叠加 + 级联故障 + 混沌注入），全部 3~4 步收敛；F 组工具故障经 MCP 按 server 容错 + 本地日志兜底后（2026-09-08 复验实测）：停 monitor **8/8**、停 cls **7/8**（残差为单源指标证据不足的诚实 uncertain，不虚报），信息全缺时报告显式声明"证据不足"而非虚报确定。
 

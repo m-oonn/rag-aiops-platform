@@ -20,7 +20,7 @@ services:
     ports:
       # 宿主端口刻意用 19090:Windows 的 Hyper-V 保留段 9029-9128 占着 9090,
       # WSL 无法把它转发到 Windows,Agent(跑在 Windows 上)会连不上。
-      - "19090:9090"
+      - "127.0.0.1:19090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -50,7 +50,7 @@ services:
       # 单节点演示限制堆内存,避免吃掉整机内存
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
