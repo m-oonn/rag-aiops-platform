@@ -30,7 +30,7 @@ describe('extractToolText', () => {
   it('salvages readable text from a truncated tool array (legacy reports)', () => {
     const raw = '- **查日志**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs\\",\\"total\\":0,\\"lo'
     const out = extractToolText(raw)
-    expect(out).toContain('{\"topic_id\":\"order-logs\"')
+    expect(out).toContain('日志检索 order-logs：命中 0 条')
     expect(out).not.toContain('[{\"type\"')
   })
 
