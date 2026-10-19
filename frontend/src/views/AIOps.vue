@@ -358,7 +358,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import { CanvasRenderer, SVGRenderer } from 'echarts/renderers'
 import { streamSSE } from '../utils/sse'
 import { getAiopsStreamUrl, getAiopsRunUrl, renderMarkdown } from '../utils/chat'
-import { extractToolText } from '../utils/reportText'
+import { polishReportText } from '../utils/reportText'
 import { getAuthHeaders, handleAuthError } from '../utils/auth'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, SVGRenderer])
@@ -409,7 +409,7 @@ const doneCount = computed(() => steps.value.filter((s) => s.done).length)
 // 再把直出的工具原始返回（[{"type":"text",...}]）提取成可读文本。
 const renderedReport = computed(() => {
   const text = (report.value || '').replace(/<!--[\s\S]*?-->/g, '')
-  return renderMarkdown(extractToolText(text))
+  return renderMarkdown(polishReportText(text))
 })
 
 // ── 诊断元数据的展示派生量 ──
