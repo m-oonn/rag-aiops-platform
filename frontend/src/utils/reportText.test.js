@@ -23,8 +23,15 @@ describe('extractToolText', () => {
   })
 
   it('keeps original text when the marker never closes', () => {
-    const raw = '前缀 [{"type":"text","text":"未闭合'
+    const raw = '前缀 [{"type":"text","未闭合'
     expect(extractToolText(raw)).toBe(raw)
+  })
+
+  it('salvages readable text from a truncated tool array (legacy reports)', () => {
+    const raw = '- **查日志**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs\\",\\"total\\":0,\\"lo'
+    const out = extractToolText(raw)
+    expect(out).toContain('{\"topic_id\":\"order-logs\"')
+    expect(out).not.toContain('[{\"type\"')
   })
 
   it('is safe for empty and non-string input', () => {

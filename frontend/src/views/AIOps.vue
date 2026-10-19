@@ -217,7 +217,7 @@
           >{{ ref.evidence_id }}：{{ ref.quote }}</el-button>
         </div>
       </div>
-      <el-tag v-else type="info">历史格式：未记录结构化结论级别</el-tag>
+      <el-tag v-else-if="!liveRun" type="info">历史格式：未记录结构化结论级别</el-tag>
       <div class="report-body" v-html="renderedReport"></div>
     </el-card>
 
@@ -391,6 +391,9 @@ const currentThreadId = ref('')
 const targetStatuses = ref({})
 const canReadRaw = ref(false)
 const rawEvidence = ref({})
+// 本次会话内实时跑完的诊断：普通模式后端不产出结构化 diagnosis，
+// 此时不应显示"历史格式"兜底文案；仅恢复旧记录且无结构化结论时才显示。
+const liveRun = ref(false)
 let abortController = null
 
 const examples = [
@@ -555,6 +558,7 @@ const resetState = () => {
   canReadRaw.value = false
   rawEvidence.value = {}
   pendingApproval.value = null
+  liveRun.value = false
 }
 
 const clearAll = () => {
@@ -661,6 +665,7 @@ const runDiagnose = async () => {
   }
   abortController = new AbortController()
   resetState()
+  liveRun.value = true
   running.value = true
   statusText.value = '正在连接诊断服务...'
 
@@ -692,6 +697,7 @@ const continueDiagnose = async () => {
   const threadId = pendingApproval.value?.thread_id
   if (!threadId || running.value) return
   abortController = new AbortController()
+  liveRun.value = true
   running.value = true
   statusText.value = '正在核验 Termcp 审批状态...'
   errorMsg.value = ''
