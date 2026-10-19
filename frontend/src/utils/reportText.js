@@ -112,12 +112,12 @@ function summarizeFragment(frag) {
   const msgM = frag.match(RE_MESSAGE)
   const tail = msgM ? `；${msgM[1].replace(/\\"/g, '"').slice(0, 80)}` : ''
   const total = get(RE_TOTAL) ?? '?'
-  if (frag.includes('"logs"') && frag.includes('"topic_id"')) {
+  if (frag.includes('"topic_id"')) {
     let line = `日志检索 ${get(RE_TOPIC_ID) ?? '?'}${tag}：命中 ${total} 条`
     if (RE_LOGS_EMPTY.test(frag)) line += '，窗口内无日志记录'
     return line + tail
   }
-  if (frag.includes('"changes"') && frag.includes('"service_name"')) {
+  if (frag.includes('"service_name"') || frag.includes('"changes"')) {
     let line = `变更检索 service=${get(RE_SERVICE) ?? '?'}${tag}：命中 ${total} 条`
     if (RE_CHANGES_EMPTY.test(frag)) line += '，窗口内无变更记录'
     return line + tail

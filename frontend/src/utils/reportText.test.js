@@ -61,6 +61,11 @@ describe('extractToolText', () => {
     expect(out).not.toContain('[{"type"')
   })
 
+  it('salvages fragments truncated even before the logs key', () => {
+    const raw = '- **验证**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs-2026.10.13\\",\\"query\\":\\"level:ERROR\\",\\"total\\":0,\\"lo'
+    expect(extractToolText(raw)).toContain('日志检索 order-logs-2026.10.13：命中 0 条')
+  })
+
   it('polishReportText strips heading marks and cuts raw tables in bullets', () => {
     const raw = '- **先确认变更**: ## 诊断结果：变更时间对齐 ### 1. 变更查询结果| 查询窗口| 服务| 命中数| 最近 1 小时| order| 0\n\n| 保留列 | 正常列 |\n|---|---|\n| a | b |'
     const out = polishReportText(raw)
