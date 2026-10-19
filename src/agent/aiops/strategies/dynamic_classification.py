@@ -458,7 +458,7 @@ def _local_respond(
     report = (
         f"# 诊断结果\n\n"
         f"<!-- diagnostic_meta: {json.dumps(diag_meta, ensure_ascii=False)} -->\n\n"
-        f"## 原始任务\n{input_text}\n\n"
+        f"## 这次要查什么\n{input_text}\n\n"
     )
 
     # 结论：优先给出根因判定与置信度，避免只给步骤清单不给结论
@@ -468,42 +468,42 @@ def _local_respond(
             if is_degraded:
                 report += (
                     f"## 结论\n"
-                    f"最可能的根因是 **{top['name']}**，置信度 **{top['probability']:.0%}**。\n\n"
-                    f"> ⚠️ {sufficiency_note}。日志证据为本地副本,非实时采集,"
-                    f"结论基于该降级来源仍成立,建议日志服务恢复后复核。\n\n"
+                    f"查下来，最像是 **{top['name']}**（把握 {top['probability']:.0%}）。\n\n"
+                    f"> ⚠️ 说明：{sufficiency_note}。日志用的是本地副本而非实时采集，"
+                    f"这个结论在该来源下依然成立，建议日志服务恢复后再复核一遍。\n\n"
                 )
             else:
                 report += (
                     f"## 结论\n"
-                    f"最可能的根因是 **{top['name']}**，置信度 **{top['probability']:.0%}**。\n\n"
+                    f"查下来，最像是 **{top['name']}**（把握 {top['probability']:.0%}）。依据在下面。\n\n"
                 )
         elif top and top["probability"] >= _RESPOND_CONFIDENCE_FLOOR and has_sufficiency_issue:
             # 证据缺失但概率已达阈值:不伪装确定,如实标注为推测
             report += (
-                f"## 结论(推测)\n"
-                f"**{top['name']}** 概率 **{top['probability']:.0%}**，"
-                f"但 {sufficiency_note}，结论置信度有限，需补齐观测后复核。\n\n"
+                f"## 结论（推测）\n"
+                f"目前最像 **{top['name']}**（{top['probability']:.0%}），"
+                f"但 {sufficiency_note}——这个结论先当推测，补齐观测后需要再核对。\n\n"
             )
         elif top and not has_sufficiency_issue and top["probability"] < _RESPOND_CONFIDENCE_FLOOR:
             # 降级但 top 未达阈值:标注来源 + 未锁定根因
             degraded_note = f"（{sufficiency_note}）" if is_degraded else ""
             report += (
                 f"## 结论\n"
-                f"未锁定根因：**{top['name']}** 置信度仅 **{top['probability']:.0%}**{degraded_note}，"
-                f"证据不足以区分候选假设。\n\n"
+                f"这次没法把根因咬死：**{top['name']}** 的把握只有 {top['probability']:.0%}{degraded_note}，"
+                f"几条线索互相纠缠，证据还不够把它们区分开。\n\n"
             )
         elif top and has_sufficiency_issue:
             report += (
-                f"## 结论(证据不足)\n"
-                f"无法定位根因：{sufficiency_note}，假设空间无鉴别性观测，"
-                f"置信度最佳为 **{top['probability']:.0%}**（并列候选，非确定结论）。\n\n"
+                f"## 结论（证据不足）\n"
+                f"定位不了：{sufficiency_note}，各条假设都没有拿出有区分度的观测，"
+                f"把握最高也只有 {top['probability']:.0%}——先不硬下结论。\n\n"
             )
 
     # 关键证据：清洗后的步骤摘要（先解包工具原始返回并按已知形态生成人话摘要，
     # 再做可读化截断；剥离标题井号、在原始表格管道处截断）
     if past_steps:
         steps_md = "\n".join(
-            f"- **{s}**: {_clean_step_result(summarize_step_result(r))}" for s, r in past_steps
+            f"- **{s}**——{_clean_step_result(summarize_step_result(r))}" for s, r in past_steps
         )
         report += f"## 关键证据\n{steps_md}\n\n"
 
@@ -514,12 +514,12 @@ def _local_respond(
         top3 = sorted(hypothesis_space, key=lambda h: h["probability"], reverse=True)[:3]
         if top3:
             lines = "\n".join(
-                f"- **{h['name']}** ({h['probability']:.0%})" for h in top3
+                f"- **{h['name']}**（把握 {h['probability']:.0%}）" for h in top3
             )
-            report += f"## 候选根因\n{lines}\n\n"
+            report += f"## 其他可能（目前证据不支持）\n{lines}\n\n"
     # 证据来源标注: 明确本次可用/缺席的证据源,让结论的可信边界可见(静默失效可见化)
     report += format_availability_note(availability)
-    report += "_系统已收集足够信息，诊断完成。_"
+    report += "_——以上判断都基于本次真实采集的证据，可在证据时间线里逐条核对。_"
     return {"response": report}
 
 

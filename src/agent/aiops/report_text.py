@@ -39,40 +39,58 @@ def _fmt_ts(value: Any) -> str:
         return ""
 
 
-def _tail_message(obj: dict, line: str) -> str:
+_DS_LABELS = {"prometheus": "监控", "elasticsearch": "日志库"}
+
+
+def _ds_tag(obj: dict) -> str:
+    """数据源 → 短中文标注；未知数据源保留原值（诚实可见）。"""
+    ds = obj.get("data_source")
+    if not (isinstance(ds, str) and ds.strip()):
+        return ""
+    label = _DS_LABELS.get(ds.lower())
+    return f"（来自{label}）" if label else f"（数据源 {ds}）"
+
+
+def _tail_note(obj: dict, line: str) -> str:
+    """把 message 拼到句尾；与已有内容重复或为空时不拼。"""
     msg = obj.get("message")
-    if isinstance(msg, str) and msg.strip():
-        return f"{line}；{msg.strip()[:80]}"
-    return line
+    if not (isinstance(msg, str) and msg.strip()):
+        return line
+    core = msg.strip()[:6]
+    if core and core in line:
+        return line
+    return f"{line}（日志库备注：{msg.strip()[:60]}）"
 
 
 def _format_json_object(obj: dict) -> str | None:
-    """对已知 MCP 输出形态生成一句确定性摘要；未知形态返回 None。"""
-    ds = obj.get("data_source")
-    tag = f"（数据源 {ds}）" if isinstance(ds, str) and ds else ""
+    """对已知 MCP 输出形态生成一句人话摘要；未知形态返回 None。"""
+    ds_tag = _ds_tag(obj)
 
     if "topic_id" in obj and "logs" in obj:
-        total = obj.get("total")
-        line = f"日志检索 {obj.get('topic_id')}{tag}：命中 {total if total is not None else '?'} 条"
         st, et = _fmt_ts(obj.get("start_time")), _fmt_ts(obj.get("end_time"))
-        if st and et:
-            line += f"（窗口 {st}–{et}）"
+        window = f"（窗口 {st}–{et}）" if st and et else ""
+        total = obj.get("total")
         query = obj.get("query")
+        cond = ""
         if isinstance(query, str) and query.strip() and query != "*":
-            line += f"，条件「{query[:60]}」"
-        if not (obj.get("logs") or []):
-            line += "，窗口内无日志记录"
-        return _tail_message(obj, line)
+            cond = f"，搜索词「{query[:60]}」"
+        if total == 0 or not (obj.get("logs") or []):
+            line = f"翻了服务日志{window}：没有查到匹配的记录{cond}。"
+        else:
+            line = f"翻了服务日志{window}：找到 {total} 条相关记录{cond}。"
+        return _tail_note(obj, line)
 
     if "changes" in obj and "service_name" in obj:
-        total = obj.get("total")
-        line = f"变更检索 service={obj.get('service_name')}{tag}：命中 {total if total is not None else '?'} 条"
         st, et = _fmt_ts(obj.get("start_time")), _fmt_ts(obj.get("end_time"))
-        if st and et:
-            line += f"（窗口 {st}–{et}）"
-        if not (obj.get("changes") or []):
-            line += "，窗口内无变更记录"
-        return _tail_message(obj, line)
+        window = f"（窗口 {st}–{et}）" if st and et else ""
+        total = obj.get("total")
+        if total == 0 or not (obj.get("changes") or []):
+            line = f"查了变更记录{ds_tag}{window}：这段时间没有发布、改配置或扩缩容的动作——先排除\"改出来\"的问题。"
+            msg = obj.get("message")
+            if isinstance(msg, str) and ("无" in msg or "未" in msg):
+                return line  # 备注与"没有变更"同义，不重复
+            return _tail_note(obj, line)
+        return _tail_note(obj, f"查了变更记录{ds_tag}{window}：找到 {total} 条变更。")
 
     if "topics" in obj:
         topics = obj.get("topics") or []
@@ -82,10 +100,10 @@ def _format_json_object(obj: dict) -> str | None:
                 name = str(item.get("topic_name") or item.get("topic_id") or "")
                 if name:
                     names.append(name)
-        line = f"日志主题检索{tag}：命中 {len(topics)} 个"
+        line = f"日志库里找到 {len(topics)} 个相关日志主题"
         if names:
             line += "：" + "、".join(names)
-        return _tail_message(obj, line)
+        return _tail_note(obj, line + "。")
 
     return None
 

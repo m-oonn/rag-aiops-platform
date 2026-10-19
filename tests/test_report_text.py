@@ -42,24 +42,25 @@ def test_summarize_search_log_shape():
     raw = ('[{"type": "text", "text": "{\\"topic_id\\":\\"order-service-logs-2026.10.13\\",'
            '\\"start_time\\":1792391024522,\\"end_time\\":1792398224522,\\"query\\":\\"*\\",'
            '\\"limit\\":50,\\"total\\":0,\\"logs\\":[],\\"took_ms\\":2,'
-           '\\"data_source\\":\\"elasticsearch\\",\\"message\\":\\"ok\\"}"}]')
+           '\\"data_source\\":\\"elasticsearch\\",\\"message\\":\\"未找到服务 api 的日志主题\\"}"}]')
     out = summarize_step_result(raw)
-    assert out.startswith("日志检索 order-service-logs-2026.10.13（数据源 elasticsearch）：命中 0 条")
-    assert "窗口内无日志记录" in out
+    assert out.startswith("翻了服务日志（窗口 ")
+    assert "没有查到匹配的记录" in out
+    assert "未找到服务 api 的日志主题" in out
     assert "{" not in out
 
 
 def test_summarize_search_changes_shape():
     raw = '{"service_name": "order-service", "changes": [], "total": 0, "data_source": "elasticsearch"}'
     out = summarize_step_result(raw)
-    assert out.startswith("变更检索 service=order-service（数据源 elasticsearch）：命中 0 条")
-    assert "窗口内无变更记录" in out
+    assert out.startswith("查了变更记录（来自日志库）")
+    assert "排除" in out
 
 
 def test_summarize_topics_shape():
     raw = '{"total": 2, "topics": [{"topic_name": "a-logs"}, {"topic_name": "b-logs"}]}'
     out = summarize_step_result(raw)
-    assert out == "日志主题检索：命中 2 个：a-logs、b-logs"
+    assert out == "日志库里找到 2 个相关日志主题：a-logs、b-logs。"
 
 
 def test_summarize_unknown_json_untouched():
