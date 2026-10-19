@@ -355,13 +355,13 @@ import {
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+import { CanvasRenderer, SVGRenderer } from 'echarts/renderers'
 import { streamSSE } from '../utils/sse'
 import { getAiopsStreamUrl, getAiopsRunUrl, renderMarkdown } from '../utils/chat'
 import { extractToolText } from '../utils/reportText'
 import { getAuthHeaders, handleAuthError } from '../utils/auth'
 
-echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, SVGRenderer])
 
 const query = ref('')
 const sessionId = ref('web-' + Math.random().toString(36).slice(2, 10))
