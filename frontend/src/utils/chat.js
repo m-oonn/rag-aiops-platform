@@ -17,6 +17,10 @@ export function getAiopsStreamUrl() {
   return '/api/v1/aiops'
 }
 
+export function getAiopsRunUrl(threadId) {
+  return `/api/v1/aiops/runs/${encodeURIComponent(threadId)}`
+}
+
 // 配置 marked：GFM 支持、不换行模式（保留原始换行）
 marked.setOptions({
   gfm: true,
