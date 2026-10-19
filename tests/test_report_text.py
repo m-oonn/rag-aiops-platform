@@ -1,6 +1,7 @@
 import pytest
 
-from src.agent.aiops.report_text import readable_tool_text
+from src.agent.aiops.report_text import readable_tool_text, summarize_step_result
+from src.agent.aiops.strategies.dynamic_classification import _clean_step_result
 
 
 def test_unwraps_single_tool_message_array():
@@ -35,6 +36,53 @@ def test_returns_empty_text_array_as_original():
 
 def test_non_string_input_is_stringified():
     assert readable_tool_text(12345) == "12345"
+
+
+def test_summarize_search_log_shape():
+    raw = ('[{"type": "text", "text": "{\\"topic_id\\":\\"order-service-logs-2026.10.13\\",'
+           '\\"start_time\\":1792391024522,\\"end_time\\":1792398224522,\\"query\\":\\"*\\",'
+           '\\"limit\\":50,\\"total\\":0,\\"logs\\":[],\\"took_ms\\":2,'
+           '\\"data_source\\":\\"elasticsearch\\",\\"message\\":\\"ok\\"}"}]')
+    out = summarize_step_result(raw)
+    assert out.startswith("日志检索 order-service-logs-2026.10.13（数据源 elasticsearch）：命中 0 条")
+    assert "窗口内无日志记录" in out
+    assert "{" not in out
+
+
+def test_summarize_search_changes_shape():
+    raw = '{"service_name": "order-service", "changes": [], "total": 0, "data_source": "elasticsearch"}'
+    out = summarize_step_result(raw)
+    assert out.startswith("变更检索 service=order-service（数据源 elasticsearch）：命中 0 条")
+    assert "窗口内无变更记录" in out
+
+
+def test_summarize_topics_shape():
+    raw = '{"total": 2, "topics": [{"topic_name": "a-logs"}, {"topic_name": "b-logs"}]}'
+    out = summarize_step_result(raw)
+    assert out == "日志主题检索：命中 2 个：a-logs、b-logs"
+
+
+def test_summarize_unknown_json_untouched():
+    raw = '{"foo": {"bar": 1}}'
+    assert summarize_step_result(raw) is raw
+
+
+def test_summarize_plain_text_untouched():
+    text = "网站首页检查结果（真实探测）HTTP 200"
+    assert summarize_step_result(text) is text
+
+
+def test_clean_step_result_strips_headings_and_cuts_table():
+    raw = "## 诊断结果：变更时间对齐 ### 1. 变更查询结果| 查询窗口| 服务| 命中数||---|---|---| 最近 1 小时| order| 0"
+    out = _clean_step_result(raw)
+    assert "#" not in out
+    assert out.endswith("…")
+    assert "|" not in out
+
+
+def test_clean_step_result_keeps_plain_prose():
+    out = _clean_step_result("网站首页可以正常打开，状态码 200。")
+    assert out == "网站首页可以正常打开，状态码 200。"
 
 
 def test_unwraps_nested_escaped_inner_json():

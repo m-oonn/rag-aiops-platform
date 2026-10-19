@@ -14,7 +14,7 @@ from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.structured import ainvoke_structured
 from src.agent.aiops_llm import create_agent_llm
 from src.agent.aiops.evidence_sources import format_knowledge_references
-from src.agent.aiops.report_text import readable_tool_text
+from src.agent.aiops.report_text import summarize_step_result
 from src.utils.logger import logger
 
 MAX_STEPS = 8
@@ -121,7 +121,7 @@ def _battlefield_summary(
         lines.append(f"- ⚠️ 已执行 {done} 步 >= {no_replan_after}, 禁止 replan, 只能 continue 或 respond")
 
     for i, (step, result) in enumerate(past_steps, 1):
-        summary = readable_tool_text(str(result))[:200].replace("\n", " ")
+        summary = summarize_step_result(str(result))[:200].replace("\n", " ")
         lines.append(f"- [已完成 {i}] {step[:120]}")
         lines.append(f"  结果摘要: {summary}")
 
@@ -139,7 +139,7 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
     input_text = state.get("input", "")
     past_steps = state.get("past_steps", [])
     history = "\n\n".join(
-        f"### 步骤: {step}\n**结果:**\n{readable_tool_text(result)}" for step, result in past_steps
+        f"### 步骤: {step}\n**结果:**\n{summarize_step_result(result)}" for step, result in past_steps
     )
 
     llm = create_agent_llm(temperature=0)
@@ -160,7 +160,7 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
         return {"response": final}
     except Exception:
         logger.exception("[replanner] 生成报告失败,用兜底")
-        steps_md = "\n".join(f"- {s}: {readable_tool_text(r)[:200]}" for s, r in past_steps) or "无"
+        steps_md = "\n".join(f"- {s}: {summarize_step_result(r)[:200]}" for s, r in past_steps) or "无"
         return {
             "response": dedent(
                 f"""

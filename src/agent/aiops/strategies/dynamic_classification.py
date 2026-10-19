@@ -27,7 +27,7 @@ from src.agent.aiops.core.hypothesis import Evidence, Hypothesis, HypothesisMana
 from src.agent.aiops.core.hypothesis_generator import HypothesisGenerator
 from src.agent.aiops.core.hypothesis_reinterpreter import HypothesisReinterpreter
 from src.agent.aiops.evidence_sources import format_availability_note, format_knowledge_references
-from src.agent.aiops.report_text import readable_tool_text
+from src.agent.aiops.report_text import summarize_step_result
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.strategies.sidebar import SidebarBranch, SidebarEngine
@@ -288,10 +288,20 @@ def _clean_step_result(text: str, max_len: int = 240) -> str:
     cleaned = _CTRL_RE.sub(" ", str(text))
     cleaned = _XML_TAG_RE.sub("", cleaned)
     cleaned = cleaned.replace("\\n", "\n").replace("\\t", " ")
+    # 剥离 Markdown 标题井号（步骤摘要里不需要标题层级）
+    cleaned = __import__("re").sub(r"#{1,6}\s*", "", cleaned)
     # 折叠多行/空白
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     collapsed = " ".join(lines)
     collapsed = __import__("re").sub(r"\s{2,}", " ", collapsed)
+    # 原始表格管道属于明细内容，塞进一行摘要必然不可读：
+    # 有正文则在管道处截断；整行就是表格时压成分号列举并丢弃分隔行
+    pipe = collapsed.find("|")
+    if pipe > 0:
+        collapsed = collapsed[:pipe].rstrip("；;，, ") + "…"
+    elif pipe == 0:
+        segs = [s.strip() for s in collapsed.split("|")]
+        collapsed = "；".join(s for s in segs if s and set(s) != {"-"})
     if len(collapsed) <= max_len:
         return collapsed
     # 在最近一个句号边界截断，避免从半句话中间切开
@@ -489,10 +499,11 @@ def _local_respond(
                 f"置信度最佳为 **{top['probability']:.0%}**（并列候选，非确定结论）。\n\n"
             )
 
-    # 关键证据：清洗后的步骤摘要（先解包工具原始返回数组，再做可读化截断）
+    # 关键证据：清洗后的步骤摘要（先解包工具原始返回并按已知形态生成人话摘要，
+    # 再做可读化截断；剥离标题井号、在原始表格管道处截断）
     if past_steps:
         steps_md = "\n".join(
-            f"- **{s}**: {_clean_step_result(readable_tool_text(r))}" for s, r in past_steps
+            f"- **{s}**: {_clean_step_result(summarize_step_result(r))}" for s, r in past_steps
         )
         report += f"## 关键证据\n{steps_md}\n\n"
 
