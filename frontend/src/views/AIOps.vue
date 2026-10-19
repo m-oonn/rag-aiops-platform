@@ -452,7 +452,7 @@ const renderBeliefChart = () => {
   nextTick(() => {
     try {
       if (!beliefChartRef.value) return
-      if (!beliefChart) beliefChart = echarts.init(beliefChartRef.value)
+      if (!beliefChart) beliefChart = echarts.init(beliefChartRef.value, null, { renderer: 'svg' })
       const first = beliefHistory.value[0]?.probabilities || {}
       const ids = hypotheses.value.length
         ? hypotheses.value.map((h) => h.id)
