@@ -13,6 +13,8 @@ from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.structured import ainvoke_structured
 from src.agent.aiops_llm import create_agent_llm
+from src.agent.aiops.evidence_sources import format_knowledge_references
+from src.agent.aiops.report_text import readable_tool_text
 from src.utils.logger import logger
 
 MAX_STEPS = 8
@@ -42,8 +44,8 @@ replanner_prompt = ChatPromptTemplate.from_messages(
                 """
                 你是重新规划专家,根据已执行步骤决定下一步。三选一(按优先级):
 
-                1. 'respond'【最高】信息已足够回答 → 立即出报告。已执行>=3且拿到关键信息、
-                   或已执行>=5(无论结果)、或信息已满足任务,都应 respond。不要追求完美。
+                1. 'respond'【最高】信息已足够回答 → 立即出报告。自主调查时必须有现场证据
+                   支持结论，并检查关键替代解释；不能仅因执行了若干步就结束。
                 2. 'continue'【次】剩余步骤确实必要才继续。
                 3. 'replan'【最低,谨慎】原计划明显错误或漏关键步骤才用。新步骤数必须<=剩余步骤数。
 
@@ -119,7 +121,7 @@ def _battlefield_summary(
         lines.append(f"- ⚠️ 已执行 {done} 步 >= {no_replan_after}, 禁止 replan, 只能 continue 或 respond")
 
     for i, (step, result) in enumerate(past_steps, 1):
-        summary = str(result)[:200].replace("\n", " ")
+        summary = readable_tool_text(str(result))[:200].replace("\n", " ")
         lines.append(f"- [已完成 {i}] {step[:120]}")
         lines.append(f"  结果摘要: {summary}")
 
@@ -137,7 +139,7 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
     input_text = state.get("input", "")
     past_steps = state.get("past_steps", [])
     history = "\n\n".join(
-        f"### 步骤: {step}\n**结果:**\n{result}" for step, result in past_steps
+        f"### 步骤: {step}\n**结果:**\n{readable_tool_text(result)}" for step, result in past_steps
     )
 
     llm = create_agent_llm(temperature=0)
@@ -153,11 +155,12 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
             }
         )
         final = result.response
+        final += format_knowledge_references(state.get("raw_evidence"))
         logger.info(f"[replanner] 报告生成完成,长度 {len(final)}")
         return {"response": final}
     except Exception:
         logger.exception("[replanner] 生成报告失败,用兜底")
-        steps_md = "\n".join(f"- {s}: {str(r)[:200]}" for s, r in past_steps) or "无"
+        steps_md = "\n".join(f"- {s}: {readable_tool_text(r)[:200]}" for s, r in past_steps) or "无"
         return {
             "response": dedent(
                 f"""
@@ -172,7 +175,7 @@ async def _generate_response(state: PlanExecuteState) -> Dict[str, Any]:
                 ## 说明
                 抱歉,自动整理完整报告时出了点问题,以上是目前已收集到的信息。
                 """
-            ).strip()
+            ).strip() + format_knowledge_references(state.get("raw_evidence"))
         }
 
 
@@ -190,7 +193,8 @@ class DefaultReplanStrategy(BaseReplanStrategy):
         past_steps = state.get("past_steps", [])
         logger.info(f"[replanner] 剩余 {len(plan)} 步,已执行 {len(past_steps)} 步")
 
-        if len(past_steps) >= MAX_STEPS:
+        autonomous = bool(state.get("autonomous_investigation"))
+        if len(past_steps) >= MAX_STEPS and not autonomous:
             logger.warning(f"[replanner] 已执行 {len(past_steps)} 步,超上限,强制 respond")
             return await _generate_response(state)
 
@@ -218,7 +222,7 @@ class DefaultReplanStrategy(BaseReplanStrategy):
                 return await _generate_response(state)
 
             if action == "replan":
-                if len(past_steps) >= NO_REPLAN_AFTER:
+                if len(past_steps) >= NO_REPLAN_AFTER and not autonomous:
                     logger.warning(f"[replanner] 已执行 {len(past_steps)} 步,禁止 replan,强制 respond")
                     return await _generate_response(state)
                 if len(new_steps) > len(plan):

@@ -26,7 +26,8 @@ from src.agent.aiops.core.evidence_judge import EvidenceJudge
 from src.agent.aiops.core.hypothesis import Evidence, Hypothesis, HypothesisManager
 from src.agent.aiops.core.hypothesis_generator import HypothesisGenerator
 from src.agent.aiops.core.hypothesis_reinterpreter import HypothesisReinterpreter
-from src.agent.aiops.evidence_sources import format_availability_note
+from src.agent.aiops.evidence_sources import format_availability_note, format_knowledge_references
+from src.agent.aiops.report_text import readable_tool_text
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.strategies.sidebar import SidebarBranch, SidebarEngine
@@ -488,12 +489,14 @@ def _local_respond(
                 f"置信度最佳为 **{top['probability']:.0%}**（并列候选，非确定结论）。\n\n"
             )
 
-    # 关键证据：清洗后的步骤摘要
+    # 关键证据：清洗后的步骤摘要（先解包工具原始返回数组，再做可读化截断）
     if past_steps:
         steps_md = "\n".join(
-            f"- **{s}**: {_clean_step_result(r)}" for s, r in past_steps
+            f"- **{s}**: {_clean_step_result(readable_tool_text(r))}" for s, r in past_steps
         )
         report += f"## 关键证据\n{steps_md}\n\n"
+
+    report += format_knowledge_references(state.get("raw_evidence"))
 
     # 候选根因及置信度
     if hypothesis_space:
@@ -578,6 +581,23 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
         self._sidebar_branches = []
         self._belief_history = []
         self._evidence_seen = False
+
+    def checkpoint(self) -> dict:
+        return {
+            "hypotheses": [h.model_dump() for h in self.manager.get_all_hypotheses()],
+            "last_top_prob": self._last_top_prob,
+            "sidebar_branches": [b.model_dump() for b in self._sidebar_branches],
+            "belief_history": self._belief_history,
+            "evidence_seen": self._evidence_seen,
+        }
+
+    def restore_checkpoint(self, data: dict) -> None:
+        self.reset()
+        self.manager.add_hypotheses([Hypothesis.model_validate(h) for h in data.get("hypotheses", [])])
+        self._last_top_prob = data.get("last_top_prob")
+        self._sidebar_branches = [SidebarBranch.model_validate(b) for b in data.get("sidebar_branches", [])]
+        self._belief_history = list(data.get("belief_history", []))
+        self._evidence_seen = bool(data.get("evidence_seen"))
 
     async def decide(self, state: PlanExecuteState) -> Dict[str, Any]:
         logger.info("=== [role=replanner] DynamicClassificationStrategy:评估 ===")
@@ -673,8 +693,8 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
         degradation_label = not settings.ABLATION_DISABLE_DEGRADATION_LABEL
 
         # 4. 决策
-        # 4.0 步数上限 → respond
-        if self._step_count >= _MAX_STEPS:
+        # 4.0 兼容旧常规诊断的安全兜底。自主终端调查不以固定步数认定完成。
+        if self._step_count >= _MAX_STEPS and not state.get("autonomous_investigation"):
             logger.warning("[dynamic_class] 已达步数上限, 强制 respond")
             return {
                 **_local_respond(state, snapshot, sufficiency_note, degradation_label=degradation_label),
@@ -729,7 +749,7 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
                 runner_gap >= _MIN_GAP_FOR_RESPOND
                 and runner_up_excluded
                 and plan_almost_done
-            ) or self._step_count >= 4:
+            ) or (self._step_count >= 4 and not state.get("autonomous_investigation")):
                 logger.info(
                     "[dynamic_class] 高置信度(%.3f), gap=%.3f, runner_up_excluded=%s, plan_remain=%d → respond",
                     current_top_prob, runner_gap, runner_up_excluded, len(plan),
@@ -741,7 +761,9 @@ class DynamicClassificationStrategy(BaseReplanStrategy):
                 }
 
         # 4.3 对领先假设的强矛盾 → replan（旁开）
-        if latest_contradiction and self._step_count < _NO_REPLAN_AFTER:
+        if latest_contradiction and (
+            state.get("autonomous_investigation") or self._step_count < _NO_REPLAN_AFTER
+        ):
             logger.info("[dynamic_class] 矛盾触发 → replan")
             # 记录当前 top，供下一轮概率跃迁检测使用（否则矛盾 replan 后
             # _last_top_prob 保持 None，跃迁检测永久失效）
