@@ -30,7 +30,7 @@ describe('extractToolText', () => {
   it('salvages readable text from a truncated tool array (legacy reports)', () => {
     const raw = '- **查日志**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs\\",\\"total\\":0,\\"lo'
     const out = extractToolText(raw)
-    expect(out).toContain('日志检索 order-logs：命中 0 条')
+    expect(out).toContain('翻了服务日志：命中 0 条')
     expect(out).not.toContain('[{\"type\"')
   })
 
@@ -43,11 +43,12 @@ describe('extractToolText', () => {
   it('summarizes known search_log objects into one readable line', () => {
     const line = summarizeJsonObject({
       topic_id: 'order-service-logs-2026.10.13', start_time: 1792391024522, end_time: 1792398224522,
-      query: '*', limit: 50, total: 0, logs: [], data_source: 'elasticsearch', message: 'ok',
+      query: '*', limit: 50, total: 0, logs: [], data_source: 'elasticsearch', message: '未找到服务 api 的日志主题',
     })
-    expect(line).toContain('日志检索 order-service-logs-2026.10.13（数据源 elasticsearch）：命中 0 条')
-    expect(line).toContain('窗口内无日志记录')
-    expect(line).toContain('；ok')
+    expect(line).toContain('翻了服务日志（窗口')
+    expect(line).toContain('没有查到匹配的记录')
+    expect(line).toContain('未找到服务 api 的日志主题')
+    expect(line).not.toContain('{')
   })
 
   it('returns null for unknown JSON shapes', () => {
@@ -57,13 +58,13 @@ describe('extractToolText', () => {
   it('salvages truncated tool arrays into a readable summary (legacy backend)', () => {
     const raw = '- **验证 外部依赖故障**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs\\",\\"start_time\\":1792391024522,\\"total\\":0,\\"logs\\":[],\\"data_source\\":\\"elasticsearch\\"'
     const out = extractToolText(raw)
-    expect(out).toContain('日志检索 order-logs（数据源 elasticsearch）：命中 0 条')
+    expect(out).toContain('翻了服务日志（来自日志库）：命中 0 条')
     expect(out).not.toContain('[{"type"')
   })
 
   it('salvages fragments truncated even before the logs key', () => {
     const raw = '- **验证**: [{"type": "text", "text": "{\\"topic_id\\":\\"order-logs-2026.10.13\\",\\"query\\":\\"level:ERROR\\",\\"total\\":0,\\"lo'
-    expect(extractToolText(raw)).toContain('日志检索 order-logs-2026.10.13：命中 0 条')
+    expect(extractToolText(raw)).toContain('翻了服务日志：命中 0 条')
   })
 
   it('polishReportText strips heading marks and cuts raw tables in bullets', () => {

@@ -37,6 +37,15 @@ function fallbackFromTruncated(out, idx) {
 }
 
 // ── 已知 MCP 输出形态 → 一句人话摘要（与后端 report_text.py 对齐） ──
+const DS_LABELS = { prometheus: '监控', elasticsearch: '日志库' }
+
+function dsTag(obj) {
+  const ds = typeof obj.data_source === 'string' ? obj.data_source.trim() : ''
+  if (!ds) return ''
+  const label = DS_LABELS[ds.toLowerCase()]
+  return label ? `（来自${label}）` : `（数据源 ${ds}）`
+}
+
 function fmtTs(ms) {
   const n = Number(ms)
   if (!Number.isFinite(n) || n <= 0) return ''
@@ -49,35 +58,53 @@ function fmtTs(ms) {
   }
 }
 
+function tailNote(line, msg) {
+  if (typeof msg !== 'string' || !msg.trim()) return line
+  const core = msg.trim().slice(0, 6)
+  if (core && line.includes(core)) return line
+  return `${line}（日志库备注：${msg.trim().slice(0, 60)}）`
+}
+
 export function summarizeJsonObject(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
-  const ds = typeof obj.data_source === 'string' && obj.data_source ? `（数据源 ${obj.data_source}）` : ''
-  const tail = () => (typeof obj.message === 'string' && obj.message.trim() ? `；${obj.message.trim().slice(0, 80)}` : '')
+  const tag = dsTag(obj)
   if ('topic_id' in obj && 'logs' in obj) {
-    let line = `日志检索 ${obj.topic_id}${ds}：命中 ${obj.total ?? '?'} 条`
     const st = fmtTs(obj.start_time)
     const et = fmtTs(obj.end_time)
-    if (st && et) line += `（窗口 ${st}–${et}）`
-    if (typeof obj.query === 'string' && obj.query.trim() && obj.query !== '*') line += `，条件「${obj.query.slice(0, 60)}」`
-    if (!Array.isArray(obj.logs) || !obj.logs.length) line += '，窗口内无日志记录'
-    return line + tail()
+    const window = st && et ? `（窗口 ${st}–${et}）` : ''
+    let cond = ''
+    if (typeof obj.query === 'string' && obj.query.trim() && obj.query !== '*') {
+      cond = `，搜索词「${obj.query.slice(0, 60)}」`
+    }
+    let line
+    if (obj.total === 0 || !Array.isArray(obj.logs) || !obj.logs.length) {
+      line = `翻了服务日志${window}：没有查到匹配的记录${cond}。`
+    } else {
+      line = `翻了服务日志${window}：找到 ${obj.total} 条相关记录${cond}。`
+    }
+    return tailNote(line, obj.message)
   }
   if ('changes' in obj && 'service_name' in obj) {
-    let line = `变更检索 service=${obj.service_name}${ds}：命中 ${obj.total ?? '?'} 条`
     const st = fmtTs(obj.start_time)
     const et = fmtTs(obj.end_time)
-    if (st && et) line += `（窗口 ${st}–${et}）`
-    if (!Array.isArray(obj.changes) || !obj.changes.length) line += '，窗口内无变更记录'
-    return line + tail()
+    const window = st && et ? `（窗口 ${st}–${et}）` : ''
+    if (obj.total === 0 || !Array.isArray(obj.changes) || !obj.changes.length) {
+      const line = `查了变更记录${window}：这段时间没有发布、改配置或扩缩容的动作——先排除"改出来"的问题。`
+      if (typeof obj.message === 'string' && (obj.message.includes('无') || obj.message.includes('未'))) {
+        return line
+      }
+      return tailNote(line, obj.message)
+    }
+    return tailNote(`查了变更记录${window}：找到 ${obj.total} 条变更。`, obj.message)
   }
   if ('topics' in obj) {
     const topics = Array.isArray(obj.topics) ? obj.topics : []
     const names = topics.slice(0, 5)
       .map((t) => (t && typeof t === 'object' ? String(t.topic_name || t.topic_id || '') : ''))
       .filter(Boolean)
-    let line = `日志主题检索${ds}：命中 ${topics.length} 个`
+    let line = `日志库里找到 ${topics.length} 个相关日志主题`
     if (names.length) line += '：' + names.join('、')
-    return line + tail()
+    return tailNote(line + '。', obj.message)
   }
   return null
 }
@@ -108,18 +135,18 @@ function summarizeFragment(frag) {
     return m ? m[1] : undefined
   }
   const ds = get(RE_DS)
-  const tag = ds ? `（数据源 ${ds}）` : ''
+  const tag = ds ? `（来自${DS_LABELS[ds.toLowerCase()] || ds}）` : ''
   const msgM = frag.match(RE_MESSAGE)
-  const tail = msgM ? `；${msgM[1].replace(/\\"/g, '"').slice(0, 80)}` : ''
+  const tail = msgM ? `（日志库备注：${msgM[1].replace(/\\"/g, '"').slice(0, 60)}）` : ''
   const total = get(RE_TOTAL) ?? '?'
   if (frag.includes('"topic_id"')) {
-    let line = `日志检索 ${get(RE_TOPIC_ID) ?? '?'}${tag}：命中 ${total} 条`
-    if (RE_LOGS_EMPTY.test(frag)) line += '，窗口内无日志记录'
+    let line = `翻了服务日志${tag}：命中 ${total} 条`
+    if (RE_LOGS_EMPTY.test(frag)) line += '，没查到记录'
     return line + tail
   }
   if (frag.includes('"service_name"') || frag.includes('"changes"')) {
-    let line = `变更检索 service=${get(RE_SERVICE) ?? '?'}${tag}：命中 ${total} 条`
-    if (RE_CHANGES_EMPTY.test(frag)) line += '，窗口内无变更记录'
+    let line = `查了变更记录${tag}：命中 ${total} 条`
+    if (RE_CHANGES_EMPTY.test(frag)) line += '，没有变更动作'
     return line + tail
   }
   return null
