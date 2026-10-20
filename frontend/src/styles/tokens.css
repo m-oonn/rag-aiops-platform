@@ -1,0 +1,33 @@
+/* 全局设计令牌：间距 / 圆角 / 阴影 / 颜色 / 布局尺寸
+   页面与组件统一从这里取值，避免各视图散落魔法数字。 */
+:root {
+  /* 间距节奏 */
+  --app-gap-page: 20px;
+  --app-gap-section: 16px;
+  --app-gap-inline: 12px;
+
+  /* 圆角与阴影 */
+  --app-radius-card: 10px;
+  --app-radius-control: 8px;
+  --app-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --app-shadow-card-hover: 0 4px 12px rgba(16, 24, 40, 0.1);
+
+  /* 颜色 */
+  --app-text-primary: #253148;
+  --app-text-secondary: #8a94a6;
+  --app-text-tertiary: #c3cbd8;
+  --app-bg-page: #f7f9fc;
+  --app-bg-subtle: #f8fafc;
+  --app-border-subtle: #e8edf4;
+
+  /* 布局 */
+  --app-content-max: 1120px;
+  --app-sidebar-width: 200px;
+  --app-sidebar-collapsed: 64px;
+}
+
+/* Element Plus 卡片统一圆角与描边 */
+.el-card {
+  border-radius: var(--app-radius-card);
+  border-color: var(--app-border-subtle);
+}

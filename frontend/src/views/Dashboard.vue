@@ -1,22 +1,18 @@
 <template>
   <div class="dashboard">
     <!-- 顶部欢迎 + 快捷操作 -->
-    <div class="welcome-row">
-      <div class="welcome-text">
-        <h2>工作台</h2>
-        <p class="sub">AIOps 智能体平台 · 故障诊断 / 知识问答 / 效果评测</p>
-      </div>
-      <div class="welcome-actions">
+    <PageHeader title="工作台" subtitle="AIOps 智能体平台 · 故障诊断 / 知识问答 / 效果评测">
+      <template #actions>
         <el-button type="primary" @click="$router.push('/aiops')">
           <el-icon><Monitor /></el-icon>&nbsp;开始故障诊断
         </el-button>
         <el-button @click="$router.push('/chat')">新建会话</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- 统计卡片 -->
     <el-row :gutter="16" class="stat-row">
-      <el-col :span="6" v-for="s in stats" :key="s.label">
+      <el-col :xs="24" :sm="12" :md="6" v-for="s in stats" :key="s.label">
         <el-card shadow="hover" class="stat-card" @click="$router.push(s.route)">
           <div class="stat-inner">
             <div class="stat-icon" :style="{ background: s.bg, color: s.color }">
@@ -35,7 +31,7 @@
 
     <el-row :gutter="16">
       <!-- 服务状态 -->
-      <el-col :span="14">
+      <el-col :xs="24" :md="14">
         <el-card shadow="never" class="panel">
           <template #header>
             <div class="panel-header">
@@ -52,12 +48,15 @@
               <span class="dep-status" :class="d.status">{{ d.statusText }}</span>
             </div>
           </div>
-          <el-empty v-else description="正在检测服务状态..." :image-size="60" />
+          <div v-else class="dep-placeholder">
+            <el-skeleton v-if="!depLoaded" :rows="3" animated />
+            <el-empty v-else description="暂时无法获取服务状态" :image-size="60" />
+          </div>
         </el-card>
       </el-col>
 
       <!-- 快捷入口 -->
-      <el-col :span="10">
+      <el-col :xs="24" :md="10">
         <el-card shadow="never" class="panel">
           <template #header><span>快捷入口</span></template>
           <div class="quick-list">
@@ -83,6 +82,7 @@ import {
   ChatDotRound, Odometer, DataAnalysis, ArrowRight
 } from '@element-plus/icons-vue'
 import api from '../api'
+import PageHeader from '../components/PageHeader.vue'
 
 const stats = ref([
   { key: 'kb', label: '知识库', value: '-', unit: '个', icon: markRaw(Collection), bg: '#e8f3ff', color: '#2b7de9', route: '/knowledge-bases' },
@@ -99,6 +99,7 @@ const quicks = [
 ]
 
 const deps = ref([])
+const depLoaded = ref(false)
 const depOverall = ref('')
 const depOverallText = ref('检测中')
 
@@ -167,6 +168,8 @@ async function loadDeps() {
     depOverallText.value = data.overall === 'ok' ? '全部正常' : '部分降级'
   } catch (e) {
     depOverallText.value = '检测失败'
+  } finally {
+    depLoaded.value = true
   }
 }
 
@@ -177,39 +180,149 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.dashboard { padding: 4px; }
-.welcome-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.welcome-text h2 { margin: 0 0 4px 0; }
-.sub { margin: 0; color: #8a94a6; font-size: 13px; }
+.dashboard {
+  padding: 4px;
+}
+.stat-row {
+  margin-bottom: 4px;
+}
+.stat-card {
+  cursor: pointer;
+  transition: box-shadow 0.2s ease;
+}
+.stat-card:hover {
+  box-shadow: var(--app-shadow-card-hover);
+}
+.stat-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.stat-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: var(--app-radius-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--app-text-primary);
+  line-height: 1.2;
+}
+.stat-unit {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--app-text-secondary);
+  margin-left: 2px;
+}
+.stat-label {
+  font-size: 13px;
+  color: var(--app-text-secondary);
+  margin-top: 2px;
+}
 
-.stat-row { margin-bottom: 4px; }
-.stat-card { cursor: pointer; }
-.stat-inner { display: flex; align-items: center; gap: 14px; }
-.stat-icon { width: 46px; height: 46px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
-.stat-value { font-size: 24px; font-weight: 600; color: #253148; line-height: 1.2; }
-.stat-unit { font-size: 13px; font-weight: 400; color: #8a94a6; margin-left: 2px; }
-.stat-label { font-size: 13px; color: #8a94a6; margin-top: 2px; }
+.panel {
+  margin-top: var(--app-gap-section);
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 
-.panel { margin-top: 16px; }
-.panel-header { display: flex; align-items: center; justify-content: space-between; }
+.dep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 24px;
+}
+.dep-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--app-radius-control);
+  background: var(--app-bg-subtle);
+}
+.dep-placeholder {
+  padding: 4px 0;
+}
+.dep-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.dep-dot.ok {
+  background: #27a35d;
+}
+.dep-dot.degraded {
+  background: #e08a1e;
+}
+.dep-dot.unavailable,
+.dep-dot.unknown {
+  background: #c9ced6;
+}
+.dep-name {
+  flex: 1;
+  font-size: 13px;
+  color: #33405a;
+}
+.dep-status {
+  font-size: 12px;
+}
+.dep-status.ok {
+  color: #27a35d;
+}
+.dep-status.degraded {
+  color: #e08a1e;
+}
+.dep-status.unavailable,
+.dep-status.unknown {
+  color: var(--app-text-secondary);
+}
 
-.dep-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 24px; }
-.dep-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: #f8fafc; }
-.dep-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.dep-dot.ok { background: #27a35d; }
-.dep-dot.degraded { background: #e08a1e; }
-.dep-dot.unavailable, .dep-dot.unknown { background: #c9ced6; }
-.dep-name { flex: 1; font-size: 13px; color: #33405a; }
-.dep-status { font-size: 12px; }
-.dep-status.ok { color: #27a35d; }
-.dep-status.degraded { color: #e08a1e; }
-.dep-status.unavailable, .dep-status.unknown { color: #8a94a6; }
+.quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quick-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: var(--app-radius-control);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.quick-item:hover {
+  background: #f4f7fb;
+}
+.quick-text {
+  flex: 1;
+  min-width: 0;
+}
+.quick-label {
+  font-size: 14px;
+  color: var(--app-text-primary);
+}
+.quick-desc {
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  margin-top: 2px;
+}
+.quick-arrow {
+  color: var(--app-text-tertiary);
+}
 
-.quick-list { display: flex; flex-direction: column; gap: 4px; }
-.quick-item { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
-.quick-item:hover { background: #f4f7fb; }
-.quick-text { flex: 1; }
-.quick-label { font-size: 14px; color: #253148; }
-.quick-desc { font-size: 12px; color: #8a94a6; margin-top: 2px; }
-.quick-arrow { color: #c3cbd8; }
+/* 窄屏：统计卡与面板纵向堆叠时去掉多余的顶部间距 */
+@media (max-width: 991px) {
+  .panel {
+    margin-top: var(--app-gap-section);
+  }
+}
 </style>

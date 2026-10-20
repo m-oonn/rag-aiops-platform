@@ -1,0 +1,32 @@
+/* 全局基础样式：页面底色、滚动条、盒模型 */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--app-bg-page);
+  color: var(--app-text-primary);
+}
+
+#app {
+  height: 100%;
+}
+
+/* 轻量滚动条（Chromium/Edge） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d3dbe6;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b9c4d4;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

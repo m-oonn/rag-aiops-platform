@@ -4,6 +4,22 @@ import vue from '@vitejs/plugin-vue'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    // 拆出稳定的第三方依赖块：首屏并行加载 + 业务代码更新时缓存不失效
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('echarts') || id.includes('zrender')) return 'vendor-echarts'
+          if (id.includes('element-plus')) return 'vendor-element'
+          if (id.includes('marked') || id.includes('dompurify')) return 'vendor-markdown'
+          if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) return 'vendor-vue'
+          return 'vendor'
+        },
+      },
+    },
+  },
   server: {
     // 端口 5273 避开 Windows 保留段(5145-5244 等,否则 EACCES 起不来)
     host: '127.0.0.1',

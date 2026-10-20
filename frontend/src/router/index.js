@@ -1,29 +1,19 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Login from '../views/Login.vue'
-import Dashboard from '../views/Dashboard.vue'
-import Chat from '../views/Chat.vue'
-import KnowledgeBase from '../views/KnowledgeBase.vue'
-import KnowledgeBaseDetail from '../views/KnowledgeBaseDetail.vue'
-import Evaluation from '../views/Evaluation.vue'
-import Assistant from '../views/Assistant.vue'
-import Agent from '../views/Agent.vue'
-import AIOps from '../views/AIOps.vue'
-import Monitor from '../views/Monitor.vue'
-import QueueMonitor from '../views/QueueMonitor.vue'
 
+// 路由级懒加载：首屏只加载登录/工作台，其余页面（含 echarts 依赖）按访问时加载
 const routes = [
   { path: '/', redirect: '/dashboard' },
-  { path: '/login', component: Login },
-  { path: '/dashboard', component: Dashboard, meta: { requiresAuth: true } },
-  { path: '/chat', component: Chat, meta: { requiresAuth: true } },
-  { path: '/knowledge-bases', component: KnowledgeBase, meta: { requiresAuth: true } },
-  { path: '/knowledge-bases/:id', component: KnowledgeBaseDetail, meta: { requiresAuth: true } },
-  { path: '/evaluation', component: Evaluation, meta: { requiresAuth: true } },
-  { path: '/assistants', component: Assistant, meta: { requiresAuth: true } },
-  { path: '/agents', component: Agent, meta: { requiresAuth: true } },
-  { path: '/aiops', component: AIOps, meta: { requiresAuth: true } },
-  { path: '/monitor', component: Monitor, meta: { requiresAuth: true } },
-  { path: '/queue-monitor', component: QueueMonitor, meta: { requiresAuth: true } },
+  { path: '/login', component: () => import('../views/Login.vue') },
+  { path: '/dashboard', component: () => import('../views/Dashboard.vue'), meta: { requiresAuth: true } },
+  { path: '/chat', component: () => import('../views/Chat.vue'), meta: { requiresAuth: true } },
+  { path: '/knowledge-bases', component: () => import('../views/KnowledgeBase.vue'), meta: { requiresAuth: true } },
+  { path: '/knowledge-bases/:id', component: () => import('../views/KnowledgeBaseDetail.vue'), meta: { requiresAuth: true } },
+  { path: '/evaluation', component: () => import('../views/Evaluation.vue'), meta: { requiresAuth: true } },
+  { path: '/assistants', component: () => import('../views/Assistant.vue'), meta: { requiresAuth: true } },
+  { path: '/agents', component: () => import('../views/Agent.vue'), meta: { requiresAuth: true } },
+  { path: '/aiops', component: () => import('../views/AIOps.vue'), meta: { requiresAuth: true } },
+  { path: '/monitor', component: () => import('../views/Monitor.vue'), meta: { requiresAuth: true } },
+  { path: '/queue-monitor', component: () => import('../views/QueueMonitor.vue'), meta: { requiresAuth: true } },
 ]
 
 const router = createRouter({

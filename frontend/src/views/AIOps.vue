@@ -1,11 +1,6 @@
 <template>
   <div class="aiops-container">
-    <div class="header-row">
-      <div class="header-title">
-        <h2>智能诊断</h2>
-        <p class="header-sub">描述故障现象，Agent 自动制定计划、采集证据并定位原因</p>
-      </div>
-    </div>
+    <PageHeader title="智能诊断" subtitle="描述故障现象，Agent 自动制定计划、采集证据并定位原因" />
 
     <!-- 输入区 -->
     <div class="input-area">
@@ -33,6 +28,7 @@
         <el-switch
           v-model="terminalEnabled"
           inline-prompt
+          :width="86"
           active-text="终端诊断"
           inactive-text="常规诊断"
           :disabled="running || Boolean(pendingApproval)"
@@ -325,9 +321,7 @@
     </el-card>
 
     <!-- 空状态 -->
-    <div v-if="!steps.length && !running && !report" class="empty-state">
-      <el-icon :size="42" class="empty-icon"><Search /></el-icon>
-      <p class="empty-title">输入故障现象，开始诊断</p>
+    <EmptyState v-if="!steps.length && !running && !report" title="输入故障现象，开始诊断">
       <div class="empty-examples">
         <button
           type="button"
@@ -341,7 +335,7 @@
           <span>{{ ex }}</span>
         </button>
       </div>
-    </div>
+    </EmptyState>
   </div>
 </template>
 
@@ -360,6 +354,8 @@ import { streamSSE } from '../utils/sse'
 import { getAiopsStreamUrl, getAiopsRunUrl, renderMarkdown } from '../utils/chat'
 import { polishReportText } from '../utils/reportText'
 import { getAuthHeaders, handleAuthError } from '../utils/auth'
+import PageHeader from '../components/PageHeader.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, SVGRenderer])
 
@@ -772,17 +768,6 @@ onUnmounted(() => {
   max-width: 900px;
   margin: 0 auto;
 }
-.header-row {
-  margin-bottom: 16px;
-}
-.header-title h2 {
-  margin: 0 0 4px;
-}
-.header-sub {
-  margin: 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
 .input-area {
   margin-bottom: 16px;
 }
@@ -1121,19 +1106,7 @@ onUnmounted(() => {
   width: 100%;
   height: 280px;
 }
-/* ── 空状态 ── */
-.empty-state {
-  padding: 48px 0 32px;
-  text-align: center;
-}
-.empty-icon {
-  color: var(--el-text-color-placeholder);
-}
-.empty-title {
-  margin: 12px 0 20px;
-  color: var(--el-text-color-secondary);
-  font-size: 14px;
-}
+/* ── 空状态示例卡（容器由 EmptyState 提供） ── */
 .empty-examples {
   display: flex;
   flex-wrap: wrap;
