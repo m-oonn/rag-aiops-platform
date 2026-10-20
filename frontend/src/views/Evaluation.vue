@@ -1,6 +1,6 @@
 <template>
   <div class="evaluation-container">
-    <h2>评测</h2>
+    <PageHeader title="评测" subtitle="量化问答与检索效果" />
     
     <el-tabs v-model="activeTab" type="border-card">
       <!-- Configuration Tab -->
@@ -209,6 +209,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getNumericStatusType, getEvalStatusText } from '../utils/status'
 import { formatDate } from '../utils/format'

@@ -1,29 +1,29 @@
 <template>
   <div>
-    <h2>系统监控</h2>
+    <PageHeader title="系统监控" subtitle="任务队列与 MinIO 存储的实时状态" />
     
     <el-tabs v-model="activeTab">
       <el-tab-pane label="队列监控" name="queue">
         <el-row :gutter="20" style="margin-bottom: 20px;">
-          <el-col :span="6">
+          <el-col :xs="12" :sm="12" :md="6">
             <el-card shadow="hover">
               <template #header>待处理</template>
               <div class="stat-value">{{ stats.total_pending }}</div>
             </el-card>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="12" :md="6">
             <el-card shadow="hover">
               <template #header>处理中</template>
               <div class="stat-value processing">{{ stats.total_processing }}</div>
             </el-card>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="12" :md="6">
             <el-card shadow="hover">
               <template #header>失败</template>
               <div class="stat-value failed">{{ stats.total_failed }}</div>
             </el-card>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="12" :md="6">
             <el-card shadow="hover">
               <template #header>已完成</template>
               <div class="stat-value success">{{ stats.total_completed }}</div>
@@ -144,6 +144,7 @@
 import { ref, onMounted, watch } from 'vue'
 import api from '../api'
 import { formatDate } from '../utils/format'
+import PageHeader from '../components/PageHeader.vue'
 import { usePolling, POLL_FAST } from '../composables/usePolling'
 import { confirmAction } from '../utils/confirm'
 import { API_PREFIX } from '../utils/constants'

@@ -1,9 +1,10 @@
 <template>
   <div class="queue-monitor">
-    <div class="header">
-      <h2>队列管理</h2>
-      <el-button @click="fetchStats" :loading="loading">刷新</el-button>
-    </div>
+    <PageHeader title="队列管理" subtitle="Celery 队列与 MinIO 存储监控">
+      <template #actions>
+        <el-button @click="fetchStats" :loading="loading">刷新</el-button>
+      </template>
+    </PageHeader>
 
     <div v-if="error" class="error-msg">
       <el-alert :title="error" type="error" show-icon />
@@ -11,7 +12,7 @@
 
     <div v-if="stats" class="stats-container">
       <el-row :gutter="20">
-        <el-col :span="8">
+        <el-col :xs="24" :sm="8">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -22,7 +23,7 @@
             <div class="stat-desc">当前正在执行</div>
           </el-card>
         </el-col>
-        <el-col :span="8">
+        <el-col :xs="24" :sm="8">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -33,7 +34,7 @@
             <div class="stat-desc">已被 Worker 预取</div>
           </el-card>
         </el-col>
-        <el-col :span="8">
+        <el-col :xs="24" :sm="8">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -77,6 +78,7 @@
 import { ref, onMounted } from 'vue'
 import api from '../api'
 import { usePolling, POLL_SLOW } from '../composables/usePolling'
+import PageHeader from '../components/PageHeader.vue'
 
 const stats = ref(null)
 const loading = ref(false)

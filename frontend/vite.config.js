@@ -1,9 +1,17 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import AutoImport from 'unplugin-auto-import/vite'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    // Element Plus 按需：模板里的 el-* 自动引入组件与样式；dts 关闭避免生成类型声明
+    AutoImport({ resolvers: [ElementPlusResolver()], dts: false }),
+    Components({ resolvers: [ElementPlusResolver()], dts: false }),
+  ],
   build: {
     // 拆出稳定的第三方依赖块：首屏并行加载 + 业务代码更新时缓存不失效
     chunkSizeWarningLimit: 1000,

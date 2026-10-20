@@ -28,7 +28,7 @@
         <el-switch
           v-model="terminalEnabled"
           inline-prompt
-          :width="86"
+          :width="96"
           active-text="终端诊断"
           inactive-text="常规诊断"
           :disabled="running || Boolean(pendingApproval)"

@@ -1,9 +1,10 @@
 <template>
   <div>
-    <h2>知识库</h2>
-    <div class="header-actions">
+    <PageHeader title="知识库" subtitle="管理文档集合与向量索引">
+      <template #actions>
         <el-button type="primary" @click="dialogVisible = true">创建知识库</el-button>
-    </div>
+      </template>
+    </PageHeader>
     
     <div class="kb-grid">
       <el-card 
@@ -129,6 +130,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import PageHeader from '../components/PageHeader.vue'
 import { Folder, Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { formatDateOnly as formatDate } from '../utils/format'
