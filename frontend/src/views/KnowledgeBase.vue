@@ -6,7 +6,14 @@
       </template>
     </PageHeader>
     
-    <div class="kb-grid">
+    <EmptyState
+      v-if="loaded && !kbs.length"
+      title="还没有知识库"
+      description="创建一个知识库并上传文档，即可开始检索问答"
+    >
+      <el-button type="primary" @click="dialogVisible = true">创建知识库</el-button>
+    </EmptyState>
+    <div v-else class="kb-grid">
       <el-card 
         v-for="kb in kbs" 
         :key="kb.id" 
@@ -131,6 +138,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import PageHeader from '../components/PageHeader.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { Folder, Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { formatDateOnly as formatDate } from '../utils/format'
@@ -138,6 +146,7 @@ import { confirmAction } from '../utils/confirm'
 
 const router = useRouter()
 const kbs = ref([])
+const loaded = ref(false)
 const dialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const currentKbId = ref(null)
@@ -165,8 +174,12 @@ const editForm = reactive({
 })
 
 const fetchKBs = async () => {
-  const res = await api.get('/knowledge-bases/')
-  kbs.value = res.data
+  try {
+    const res = await api.get('/knowledge-bases/')
+    kbs.value = res.data
+  } finally {
+    loaded.value = true
+  }
 }
 
 const createKB = async () => {

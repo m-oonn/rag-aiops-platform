@@ -10,6 +10,12 @@
       <el-alert :title="error" type="error" show-icon />
     </div>
 
+    <EmptyState
+      v-if="loaded && !stats && !error"
+      title="暂无队列数据"
+      description="队列统计暂不可用，或当前队列为空"
+    />
+
     <div v-if="stats" class="stats-container">
       <el-row :gutter="20">
         <el-col :xs="24" :sm="8">
@@ -79,9 +85,11 @@ import { ref, onMounted } from 'vue'
 import api from '../api'
 import { usePolling, POLL_SLOW } from '../composables/usePolling'
 import PageHeader from '../components/PageHeader.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 const stats = ref(null)
 const loading = ref(false)
+const loaded = ref(false)
 const error = ref(null)
 
 const fetchStats = async () => {
@@ -98,6 +106,7 @@ const fetchStats = async () => {
     error.value = '获取队列统计失败'
   } finally {
     loading.value = false
+    loaded.value = true
   }
 }
 

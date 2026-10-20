@@ -83,7 +83,20 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Expand, Fold } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  Cpu,
+  DataAnalysis,
+  Document,
+  Expand,
+  Fold,
+  Menu,
+  Monitor,
+  Odometer,
+  SwitchButton,
+  TrendCharts,
+  User,
+} from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()

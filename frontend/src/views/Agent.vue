@@ -1,9 +1,10 @@
 <template>
   <div class="agent-container">
-    <div class="header">
-      <h2>智能体管理 (Agent Management)</h2>
-      <el-button type="primary" @click="openDialog()">创建智能体</el-button>
-    </div>
+    <PageHeader title="智能体管理" subtitle="Agent Management · 工具与提示词配置">
+      <template #actions>
+        <el-button type="primary" @click="openDialog()">创建智能体</el-button>
+      </template>
+    </PageHeader>
     
     <el-table :data="agents" style="width: 100%; margin-top: 20px;" border stripe>
       <el-table-column prop="id" label="ID" width="60" />
@@ -215,6 +216,7 @@
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
 import api from '../api'
+import PageHeader from '../components/PageHeader.vue'
 import { ElMessage } from 'element-plus'
 import { formatDate } from '../utils/format'
 import { confirmAction } from '../utils/confirm'

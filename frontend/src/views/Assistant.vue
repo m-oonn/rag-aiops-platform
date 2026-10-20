@@ -1,8 +1,11 @@
 <template>
   <div>
-    <h2>助手管理</h2>
-    <el-button type="primary" @click="openDialog()">创建助手</el-button>
-    
+    <PageHeader title="助手管理" subtitle="配置可复用的会话助手">
+      <template #actions>
+        <el-button type="primary" @click="openDialog()">创建助手</el-button>
+      </template>
+    </PageHeader>
+
     <el-table :data="assistants" style="width: 100%; margin-top: 20px;">
       <el-table-column prop="name" label="名称" width="180" />
       <el-table-column prop="description" label="描述" />
@@ -259,6 +262,7 @@
 import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import PageHeader from '../components/PageHeader.vue'
 import { ElMessage } from 'element-plus'
 import { Back, Position } from '@element-plus/icons-vue'
 import { confirmAction } from '../utils/confirm'
