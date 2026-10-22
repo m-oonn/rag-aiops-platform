@@ -161,12 +161,25 @@ def _iter_runbook_files() -> list[Path]:
 
 
 def _score_file(filepath: Path, query_lower: str) -> float:
-    """关键词命中分,手写 runbook 加权 ×3。"""
+    """关键词命中分,手写 runbook 加权 ×3。
+
+    文件名和标题是主要信号；正文增加轻量命中分，避免中文
+    症状只能命中泛化数据集或 MITRE 文档。正文只读取前 4096 字符，
+    选中结果再由 ``_content_preview`` 返回摘要。
+    """
     stem = filepath.stem.lower().replace("-", " ").replace("_", " ")
     path_s = str(filepath).replace("\\", "/")
     search_pool = f"{stem} {filepath.parent.name.lower()}"
     terms = split_search_terms(query_lower)
     score = sum(0.5 for t in terms if t in search_pool)
+    try:
+        with filepath.open(encoding="utf-8", errors="ignore") as stream:
+            content = stream.read(4096).lower()
+        title = content.splitlines()[0] if content else ""
+        score += sum(0.5 for t in terms if t in title)
+        score += sum(0.15 for t in terms if len(t) >= 2 and t in content)
+    except OSError:
+        pass
     is_handwritten = "/Incident-Playbook/" not in path_s and "/TRAC-RCA/" not in path_s
     if is_handwritten:
         score *= 3.0
@@ -385,8 +398,11 @@ def retrieve_local(query: str) -> str:
                 md_scored.append((s, fp))
         md_scored.sort(key=lambda x: x[0], reverse=True)
 
-        handwritten = [(s, fp) for s, fp in md_scored if "/Incident-Playbook/" not in str(fp)]
-        imported = [(s, fp) for s, fp in md_scored if "/Incident-Playbook/" in str(fp)]
+        # Windows separators must not turn imported playbooks into handwritten guides.
+        handwritten = [(s, fp) for s, fp in md_scored
+                       if "/Incident-Playbook/" not in str(fp).replace("\\", "/")]
+        imported = [(s, fp) for s, fp in md_scored
+                    if "/Incident-Playbook/" in str(fp).replace("\\", "/")]
         for _, fp in (handwritten + imported)[:_EXPERIENCE_TOP_K]:
             content = _content_preview(fp, max_chars=500)
             if content and content not in seen:

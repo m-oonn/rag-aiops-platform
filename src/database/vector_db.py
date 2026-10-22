@@ -99,7 +99,7 @@ class MilvusClient:
         else:
             self.collection = Collection(self.collection_name)
 
-        self.collection.load()
+        self.collection.load(timeout=15)
         self.has_kb_id = any(
             field.name == "kb_id" for field in self.collection.schema.fields
         )

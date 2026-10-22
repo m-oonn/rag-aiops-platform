@@ -14,6 +14,9 @@
 import asyncio
 import json
 import logging
+import hashlib
+from functools import partial
+import httpx
 from typing import Any, Optional
 
 from langchain_core.tools import BaseTool
@@ -43,7 +46,26 @@ async def _with_timeout(coro, timeout: float, description: str):
 
 def _tools_config_key(tools_config: dict) -> str:
     """把 tools_config 转成可哈希的字符串 key，用于 client 缓存。"""
-    return json.dumps(tools_config, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(json.dumps(tools_config, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _http_client(*, verify: bool, headers=None, timeout=None, auth=None):
+    return httpx.AsyncClient(verify=verify, headers=headers,
+                             timeout=timeout or httpx.Timeout(30, read=300),
+                             auth=auth, follow_redirects=True)
+
+
+def _client_connections(config: dict) -> dict:
+    connections = {}
+    for name, original in config.items():
+        connection = dict(original)
+        if 'tls_verify' in connection:
+            verify = connection.pop('tls_verify')
+            if not isinstance(verify, bool):
+                raise ValueError('tls_verify must be a boolean')
+            connection['httpx_client_factory'] = partial(_http_client, verify=verify)
+        connections[name] = connection
+    return connections
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -55,8 +77,8 @@ def get_mcp_client() -> MultiServerMCPClient:
     """获取全局唯一的 MCP 客户端（单例）。读 settings.MCP_SERVERS。"""
     global _mcp_client
     if _mcp_client is None:
-        logger.info("创建新的 MultiServerMCPClient 连接 MCP 服务: %s", settings.MCP_SERVERS)
-        _mcp_client = MultiServerMCPClient(settings.MCP_SERVERS)
+        logger.info("创建新的 MultiServerMCPClient 连接 MCP 服务: %s", list(settings.MCP_SERVERS))
+        _mcp_client = MultiServerMCPClient(_client_connections(settings.MCP_SERVERS))
     return _mcp_client
 
 
@@ -90,7 +112,7 @@ async def load_mcp_tools_safe() -> tuple[list[BaseTool], Optional[str]]:
     failed_servers: list[str] = []
     for name, cfg in settings.MCP_SERVERS.items():
         try:
-            sub_client = MultiServerMCPClient({name: cfg})
+            sub_client = MultiServerMCPClient(_client_connections({name: cfg}))
             sub_tools = await _with_timeout(
                 sub_client.get_tools(),
                 timeout=_DEFAULT_MCP_LOAD_TIMEOUT,
@@ -135,8 +157,8 @@ def get_mcp_client_for_config(tools_config: dict) -> MultiServerMCPClient:
     cache_key = _tools_config_key(tools_config)
     client = _config_clients.get(cache_key)
     if client is None:
-        logger.info("创建 per-config MultiServerMCPClient: %s", cache_key[:60])
-        client = MultiServerMCPClient(tools_config)
+        logger.info("创建 per-config MultiServerMCPClient: %s", list(tools_config))
+        client = MultiServerMCPClient(_client_connections(tools_config))
         _config_clients[cache_key] = client
     return client
 

@@ -1,0 +1,11 @@
+kind = "remote"
+host = "test.example.invalid"
+user = "readonly-operator"
+port = 22
+private_key = "<mount-or-provision-at-runtime>"
+known_hosts = "<pinned-known-hosts-line>"
+trust_unknown_host = false
+default_shell = "bash"
+default_mode = "pty"
+default_approval = true
+description = "AIOps isolated test or staging target"

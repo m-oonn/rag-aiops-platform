@@ -1,0 +1,22 @@
+# 复制到 C:\ProgramData\RagAIOpsProbe\config.toml 后按本机服务修改。
+# Windows 路径使用 TOML 单引号，避免反斜杠被当作转义。
+target_id = 'windows-local-01'
+gateway_url = 'wss://aiops-gateway.example/probe/ws'
+token_file = 'C:\ProgramData\RagAIOpsProbe\token'
+tls_ca_file = 'C:\ProgramData\RagAIOpsProbe\ca.pem'
+baseline_interval_seconds = 60
+
+[services.orders]
+# 默认 kind='windows_service'；进程应用设 kind='process'，省略 service_name。
+# process 类型的服务状态为 not_applicable；须查询进程、端口和入口核实。
+service_name = 'OrdersService'
+process_names = ['orders.exe']
+log_channels = ['Application']
+log_providers = ['Orders']
+text_logs = ['C:\ProgramData\Orders\logs\*.log']
+
+[dependencies.database]
+host = '127.0.0.1'
+port = 1433
+health_scheme = 'http'
+health_path = '/health'

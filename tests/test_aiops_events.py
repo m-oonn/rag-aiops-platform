@@ -117,6 +117,7 @@ class TestConstructors:
             "pending_review",
             "complete",
             "error",
+            'evidence',
         }
 
 

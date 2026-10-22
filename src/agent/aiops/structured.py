@@ -10,16 +10,29 @@ user prompt 中出现 "json" 关键词,否则 400 报错(InternalError.Algo.Inva
 """
 
 import json as _json
-import re as _re
 from typing import Any, TypeVar
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from langchain_core.exceptions import OutputParserException
 
 from src.agent.aiops_llm import ainvoke_with_retry
 
 _T = TypeVar("_T", bound=BaseModel)
+
+
+class StructuredOutputError(ValueError):
+    """Both structured and JSON output failed validation; contains no model text."""
+
+
+def _format_failure(error: Exception) -> bool:
+    if isinstance(error, (ValidationError, OutputParserException, _json.JSONDecodeError, NotImplementedError)):
+        return True
+    # Some compatible APIs reject the function-call format but support plain JSON.
+    return (getattr(error, 'status_code', None) == 400
+            and any(term in str(error).lower() for term in
+                    ('tool_choice', 'function_call', 'response_format', 'structured_output')))
 
 _JSON_SYSTEM_HINT = (
     "你必须只输出一个合法的 JSON 对象。"
@@ -62,8 +75,10 @@ async def ainvoke_structured(
             return result
         return schema.model_validate(result)
     except Exception as e:
+        if not _format_failure(e):
+            raise
         logger.warning(
-            f"[structured] function_calling 失败,降级: {type(e).__name__}: {e}"
+            f"[structured] function_calling 格式失败,降级: {type(e).__name__}"
         )
 
     # ── 策略2: 降级——纯 LLM + regex 抠 JSON ──
@@ -78,19 +93,16 @@ async def ainvoke_structured(
     content = getattr(raw, "content", "") or str(raw)
     content = content.strip()
 
-    obj = _extract_json_object(content)
-    return schema.model_validate(obj)
+    try:
+        obj = _extract_json_object(content)
+        return schema.model_validate(obj)
+    except (ValueError, ValidationError) as exc:
+        raise StructuredOutputError('Model output did not match the required schema') from exc
 
 
 def _format_fields_for_prompt(schema: type[BaseModel]) -> str:
-    lines = ["{"]
-    for name, field in schema.model_fields.items():
-        ann = str(field.annotation)
-        desc = field.description or ""
-        lines.append(f'  "{name}": {ann},  // {desc}')
-    lines.append("}")
     # 对 LangChain PromptTemplate 转义花括号，避免 JSON 示例被当成变量
-    return "\n".join(lines).replace("{", "{{").replace("}", "}}")
+    return _json.dumps(schema.model_json_schema(), ensure_ascii=False).replace("{", "{{").replace("}", "}}")
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

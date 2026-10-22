@@ -124,6 +124,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     TOP_K: int = 20
+    # MCP 知识库结果低于该分数时视为无可靠匹配，避免把无关资料硬套进诊断。
+    RAG_MIN_SCORE: float = 0.10
     
     # Rerank Config
     ENABLE_RERANK: bool = True
@@ -219,6 +221,25 @@ class Settings(BaseSettings):
     MCP_CLS_URL: str = "http://127.0.0.1:8103/mcp"      # 日志服务: search_topic_by_service_name / search_log
     MCP_RAG_URL: str = "http://127.0.0.1:8105/mcp"  # 知识库检索: search_knowledge_base / list_knowledge_bases
     MCP_CHANGE_URL: str = "http://127.0.0.1:8106/mcp"  # 变更/发布事件: search_changes / get_change_detail
+    # 受限现场诊断 MCP。服务必须部署在目标诊断环境内，并由容器/账户提供真实隔离。
+    MCP_DIAGNOSTIC_URL: str = "http://127.0.0.1:8107/mcp"
+    DIAGNOSTIC_ENABLED: bool = False
+    DIAGNOSTIC_TOKEN: str = ""
+    DIAGNOSTIC_TARGET_CATALOG: str = "{}"  # 服务入口/依赖关系 JSON，仅作定位上下文
+    MCP_TERMCP_URL: str = "http://127.0.0.1:18766/mcp"  # 受控终端 MCP 代理
+    TERMCP_ENABLED: bool = False
+    TERMCP_APPROVAL_API_URL: str = "http://127.0.0.1:18766"
+    TERMCP_UI_URL: str = "http://127.0.0.1:18765"
+    TERMCP_SSH_PROFILE: str = "test-target"
+    AIOPS_CHECKPOINT_DB_PATH: str = "data/aiops_checkpoints.sqlite"
+
+    # —— Windows Probe（只读现场证据；默认关闭，启用前需配置独立网关 token）——
+    PROBE_ENABLED: bool = False
+    PROBE_TARGET_ID: str = "windows-local-01"
+    PROBE_TOKEN: str = ""
+    PROBE_TLS_VERIFY: bool = True
+    MCP_PROBE_URL: str = "http://127.0.0.1:18767/mcp"
+    PROBE_EVIDENCE_DIR: str = "data/aiops-evidence"
 
     # —— Monitor MCP 生产化后端(Mock→Prometheus 双轨,见 docs/MCP生产化改造方案.md)——
     # MONITOR_BACKEND: "mock"(默认,演示剧本) 或 "prometheus"(真实监控查询)
@@ -300,11 +321,29 @@ class Settings(BaseSettings):
     @property
     def MCP_SERVERS(self) -> dict:
         """聚合给 MultiServerMCPClient 的配置字典。改地址只动上面几行,这里自动跟随。"""
-        return {
+        servers = {
             "monitor": {"transport": "streamable_http", "url": self.MCP_MONITOR_URL},
             "cls": {"transport": "streamable_http", "url": self.MCP_CLS_URL},
             "knowledge_base": {"transport": "streamable_http", "url": self.MCP_RAG_URL},
             "change": {"transport": "streamable_http", "url": self.MCP_CHANGE_URL},
+        }
+        if self.PROBE_ENABLED:
+            probe = {"transport": "streamable_http", "url": self.MCP_PROBE_URL}
+            if self.PROBE_TOKEN:
+                probe["headers"] = {"Authorization": f"Bearer {self.PROBE_TOKEN}"}
+            # httpx.AsyncClient consumes this through langchain-mcp-adapters.
+            # Keep verification enabled by default; disabling it is an explicit
+            # local-test choice and should never be inferred from the URL.
+            if self.MCP_PROBE_URL.lower().startswith("https://"):
+                probe["tls_verify"] = self.PROBE_TLS_VERIFY
+            servers["probe"] = probe
+        return servers
+
+    @property
+    def MCP_TERMCP_SERVER(self) -> dict:
+        return {
+            "transport": "streamable_http",
+            "url": self.MCP_TERMCP_URL,
         }
 
     @property

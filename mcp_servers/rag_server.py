@@ -21,6 +21,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from fastmcp import FastMCP
+from src.settings import settings
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -96,6 +97,13 @@ def search_knowledge_base(
     else:
         search_results = search_results[:top_k]
 
+    # 重排分数才是 MCP 对外的相关度口径；低于门槛时返回空结果，
+    # 让 Agent 明确知道知识库没有可靠答案，而不是把最低分候选当作依据。
+    search_results = [
+        r for r in search_results
+        if r.score is not None and r.score >= settings.RAG_MIN_SCORE
+    ][:top_k]
+
     # 格式化输出
     results = []
     for r in search_results:
@@ -109,6 +117,7 @@ def search_knowledge_base(
         })
 
     return {
+        "data_source": "knowledge_base",
         "query": query,
         "kb_id": kb_id,
         "results": results,
@@ -147,7 +156,11 @@ def list_knowledge_bases() -> Dict[str, Any]:
                 "document_count": row[3],
             })
 
-        return {"knowledge_bases": bases, "total": len(bases)}
+        return {
+            "data_source": "knowledge_base",
+            "knowledge_bases": bases,
+            "total": len(bases),
+        }
     finally:
         db.close()
 
@@ -195,6 +208,7 @@ def get_document_info(doc_id: int) -> Dict[str, Any]:
             })
 
         return {
+            "data_source": "knowledge_base",
             "doc_id": doc[0],
             "uid": doc[1],
             "filename": doc[2],

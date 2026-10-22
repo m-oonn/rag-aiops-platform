@@ -6,7 +6,8 @@
 """
 
 import operator
-from typing import Annotated, List, NotRequired, Tuple, TypedDict
+from typing import Annotated, List, Tuple, TypedDict
+from typing_extensions import NotRequired
 
 
 class PlanExecuteState(TypedDict):
@@ -38,6 +39,21 @@ class PlanExecuteState(TypedDict):
     # 最终诊断报告;非空即触发图结束。
     response: str
 
+    # Terminal diagnostics are opt-in per run; pending approval data is checkpointed.
+    terminal_enabled: NotRequired[bool]
+    autonomous_investigation: NotRequired[bool]
+    investigation_memory: NotRequired[dict]
+    diagnosis: NotRequired[dict]
+    target_resolution: NotRequired[dict]
+    investigation_tools: NotRequired[List[dict]]
+    # Configured targets and retrieved guidance, never current host evidence.
+    investigation_reference_context: NotRequired[str]
+    terminal_approval: NotRequired[dict]
+    terminal_session_id: NotRequired[str]
+    terminal_shell_id: NotRequired[str]
+    terminal_rejected: NotRequired[bool]
+    strategy_checkpoint: NotRequired[dict]
+
     # SSE 进度展示用: {"done": 累计已完成步数, "total": 计划总步数}
     # 仅 executor 节点增量输出携带,不参与业务决策(checkpointer 照常序列化)。
     _step_progress: NotRequired[dict]
@@ -54,3 +70,6 @@ class PlanExecuteState(TypedDict):
     # 证据源可用性快照（可选）：本次诊断实际可用的 MCP 证据源(指标/日志/变更/知识库/探测)。
     # 部分服务缺席时如实记录，供报告与 complete 事件标注"结论的可信边界"，避免静默失效。
     evidence_source_availability: NotRequired[List[dict]]
+    evidence_events: NotRequired[Annotated[List[dict], operator.add]]
+    thread_id: NotRequired[str]
+    user_id: NotRequired[int]

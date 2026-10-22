@@ -33,6 +33,22 @@ def create_replanner(strategy: Any = None):
 
     async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
         """重新规划节点：委托给当前生效的策略。"""
-        return await _strategy.decide(state)
+        if state.get('response') and state.get('diagnosis'):
+            return {'plan': [], 'response': state['response'], 'diagnosis': state['diagnosis']}
+        from src.agent.aiops.strategies.default import DefaultReplanStrategy
+        from src.agent.aiops.strategies.dynamic_classification import DynamicClassificationStrategy
+        if state.get("autonomous_investigation") and isinstance(
+            _strategy, (DefaultReplanStrategy, DynamicClassificationStrategy)
+        ):
+            from src.agent.aiops.strategies.investigation import InvestigationStrategy
+            return await InvestigationStrategy().decide(state)
+        restore = getattr(_strategy, "restore_checkpoint", None)
+        if callable(restore) and state.get("strategy_checkpoint"):
+            restore(state["strategy_checkpoint"])
+        update = await _strategy.decide(state)
+        snapshot = getattr(_strategy, "checkpoint", None)
+        if callable(snapshot):
+            update["strategy_checkpoint"] = snapshot()
+        return update
 
     return replanner

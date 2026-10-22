@@ -1,0 +1,74 @@
+--- a/internal/approval/queue.go
++++ b/internal/approval/queue.go
+@@ -239,6 +239,15 @@
+ 		q.mu.Unlock()
+ 		return snap, ErrNotPending
+ 	}
++	// Shell requests have no Wait caller; enforce expiry under the decision lock.
++	if r.ExpiresAt > 0 && clock.Now() >= r.ExpiresAt {
++		q.resolveLocked(r, Expired, "", "")
++		snap := r.clone()
++		q.mu.Unlock()
++		q.notify(snap)
++		return snap, ErrTimeout
++	}
++
+ 	r.Approvals = append(r.Approvals, LocalReviewer)
+ 	if r.NeedsMore() == 0 {
+ 		q.resolveLocked(r, Approved, "", "")
+--- /dev/null
++++ b/internal/approval/aiops_expiry_test.go
+@@ -0,0 +1,53 @@
++package approval
++
++import (
++    "errors"
++    "sync"
++    "testing"
++    "time"
++    "github.com/open-mcp-ai/termcp/internal/clock"
++)
++
++func TestAIOpsExpiredApprovalWithoutWaitIsRefused(t *testing.T) {
++    var changes []State
++    var q *Queue
++    q = NewQueue("isolated", Options{Timeout: time.Minute, OnChange: func(r Request) {
++        // The callback may read the queue: notifications must happen outside its lock.
++        if _, err := q.Get(r.ID); err != nil { t.Fatal(err) }
++        changes = append(changes, r.State)
++    }})
++    id, err := q.SubmitShellInput("shell", "mcp", "touch sentinel", []string{"enter"})
++    if err != nil { t.Fatal(err) }
++    q.mu.Lock()
++    q.byID[id].ExpiresAt = clock.Now()
++    q.mu.Unlock()
++    got, err := q.Approve(id)
++    if !errors.Is(err, ErrTimeout) || got.State != Expired || len(got.Approvals) != 0 {
++        t.Fatalf("late approval = %+v, %v", got, err)
++    }
++    if got.ResolvedAt < got.ExpiresAt { t.Fatal("invalid resolution time") }
++    if len(changes) != 2 || changes[1] != Expired { t.Fatal(changes) }
++    if _, err := q.Approve(id); !errors.Is(err, ErrNotPending) { t.Fatal(err) }
++    if _, err := q.Reject(id, "late"); !errors.Is(err, ErrNotPending) { t.Fatal(err) }
++}
++
++
++func TestAIOpsConcurrentLateApprovalsNeverSucceed(t *testing.T) {
++    q := NewQueue("isolated", Options{Timeout: time.Minute})
++    id, _ := q.SubmitShellInput("shell", "mcp", "touch sentinel", []string{"enter"})
++    q.mu.Lock()
++    q.byID[id].ExpiresAt = clock.Now() - 1
++    q.mu.Unlock()
++    var workers sync.WaitGroup
++    for i := 0; i < 12; i++ {
++        workers.Add(1)
++        go func() {
++            defer workers.Done()
++            result, err := q.Approve(id)
++            if err == nil || result.State == Approved { t.Error("expired command approved") }
++        }()
++    }
++    workers.Wait()
++    got, _ := q.Get(id)
++    if got.State != Expired || len(got.Approvals) != 0 { t.Fatal(got) }
++}

@@ -29,7 +29,7 @@ def _noop_check_request_limit(self, request, func, *args, **kwargs):
 Limiter._check_request_limit = _noop_check_request_limit
 
 
-async def _fake_aiops_execute(user_input: str, session_id: str = "default"):
+async def _fake_aiops_execute(user_input: str, session_id: str = "default", **kwargs):
     """AIOps 诊断服务的快速假实现，避免测试中调用真实 LLM。"""
     yield {"type": "plan", "stage": "plan_created", "message": "test plan", "plan": []}
     yield {"type": "step_complete", "stage": "step_executed", "message": "step done"}

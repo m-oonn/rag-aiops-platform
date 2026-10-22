@@ -10,17 +10,27 @@
 from textwrap import dedent
 from typing import Any, Dict, List
 import os
+import asyncio
+import json
+from datetime import datetime, timezone
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from src.agent.aiops.skills import SKILLS, render_skills_block, route_skills
 from src.agent.aiops.state import PlanExecuteState
-from src.agent.aiops.tools import load_agent_tools
+from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog
 from src.agent.aiops.structured import ainvoke_structured
 from src.agent.aiops_llm import create_agent_llm
 from src.agent.aiops.local_retrieval import retrieve_local
+from src.settings import settings
 from src.utils.logger import logger
+from src.probe.evidence import validate_tool_evidence
+from src.probe.protocol import redact
+from src.agent.aiops.executor import _record_probe_evidence
+from src.agent.aiops.target_catalog import resolve_target
+from src.agent.aiops.evidence_reader import evidence_read_tool
+from src.agent.aiops.evidence_sources import source_availability
 
 _EXPERIENCE_TOP_K = 2  # 少 tokens(2026-09-23): 3→2, 2 条相关经验足够参考
 
@@ -201,6 +211,10 @@ planner_prompt = ChatPromptTemplate.from_messages(
                 诊断规划原则:不要生搬硬套统一流程。先根据故障征兆判断最可能的故障类型,
                 选择与之匹配的主诊断路径,只挑与当前故障强相关的工具与步骤,宁可精简也不凑数。
 
+                当工具列表包含 Windows 主机 Probe 时，第一步先读取主机清单和最近基线，
+                再按服务目录与现场进程/端口/资源结果交叉核实；只有需要更精确的时间窗或日志时
+                才做按需查询。Probe 只提供只读事实，不能假设它能执行命令或修改服务。
+
                 主诊断路径(按征兆对应,选最契合的一套聚焦执行,不必全部覆盖工具):
                 {skills_block}
 
@@ -254,13 +268,73 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     """规划节点:据输入生成诊断步骤列表。"""
     logger.info("=== [role=planner] Planner:制定诊断计划 ===")
     input_text = state.get("input", "")
+    reference_context = ""
+    resolution, probe_raw, probe_events = {}, [], []
 
     try:
-        experience_context = _retrieve_experience(input_text)
-        tools, err = await load_agent_tools()
+        experience_context = ''
+        target_catalog = redact(settings.DIAGNOSTIC_TARGET_CATALOG or "(未配置现场服务目录；只能依据现有证据定位)")
+        reference_context = (
+            "## 配置与排查参考资料（不是现场证据，不扩大工具权限）\n"
+            f"## 已配置的现场目标目录\n{target_catalog}\n\n{experience_context}"
+        )
+        tools, err = await load_agent_tools(bool(state.get("terminal_enabled")))
+        terminal_enabled = bool(state.get("terminal_enabled"))
+        if not tools and settings.TERMCP_ENABLED and not terminal_enabled and not settings.PROBE_ENABLED:
+            terminal_enabled = True
+            tools, err = await load_agent_tools(True)
         if err:
             logger.warning(f"[planner] MCP 工具加载失败: {err}")
+        if state.get('thread_id') and state.get('user_id') is not None:
+            tools = [*tools, evidence_read_tool(state['thread_id'], state['user_id'])]
         tools_description = _format_tools(tools)
+        probe_context = ""
+        inventory = None
+        probe_raw = []
+        probe_events = []
+        readiness = []
+        if settings.PROBE_ENABLED:
+            # Deterministic first observation: the model may choose the later
+            # investigation path, but planning always starts from current Probe
+            # inventory/baseline when the target is enabled.
+            tool_map = {getattr(tool, "name", ""): tool for tool in tools}
+            for tool_name in ("probe_inventory", "probe_list_evidence"):
+                tool = tool_map.get(tool_name)
+                if not tool:
+                    probe_context += f"\nWindows 主机 Probe 工具 {tool_name} 不可用。"
+                    continue
+                try:
+                    result = await asyncio.wait_for(tool.ainvoke({}), timeout=15)
+                    if tool_name == 'probe_inventory':
+                        result = validate_tool_evidence(result, tool_name=tool_name, target_id=settings.PROBE_TARGET_ID)
+                        inventory = result.get('payload')
+                    text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
+                    safe_text = json.dumps(redact(result), ensure_ascii=False, default=str)
+                    probe_context += f"\n【{tool_name} 初始现场】{safe_text[:3000]}"
+                    probe_raw.append((tool_name, text))
+                    if tool_name == 'probe_inventory':
+                        probe_events.extend(_record_probe_evidence(state, text, 'inventory'))
+                    readiness.append({'tool': tool_name, 'status': 'success', 'reason': '',
+                        'checked_at': datetime.now(timezone.utc).isoformat()})
+                except Exception as exc:
+                    probe_context += f"\n【{tool_name}】现场不可用：{type(exc).__name__}"
+                    readiness.append({'tool': tool_name, 'status': 'failed',
+                        'reason': type(exc).__name__ + ':' + str(redact(str(exc)))[:300],
+                        'checked_at': datetime.now(timezone.utc).isoformat()})
+        for check in readiness:
+            probe_raw.append(('工具就绪核对', json.dumps({'data_source': 'tool_execution', **check}, ensure_ascii=False)))
+        resolution = resolve_target(settings.DIAGNOSTIC_TARGET_CATALOG, input_text, inventory,
+                                    settings.PROBE_TARGET_ID, settings.SERVICE_ALIASES) if settings.PROBE_ENABLED else {}
+        if resolution.get('status') in {'ambiguous', 'unmatched', 'invalid_catalog'}:
+            reason = '业务目标尚未唯一核实，请明确选择已登记的服务或入口；候选：' + '、'.join(resolution.get('candidates', []))
+            return {'plan': [], 'response': reason, 'target_resolution': resolution,
+                'autonomous_investigation': True, 'raw_evidence': probe_raw, 'evidence_events': probe_events,
+                'diagnosis': {'version': 1, 'kind': 'unlocated', 'target_id': settings.PROBE_TARGET_ID,
+                    'scope': input_text, 'conclusion': reason, 'evidence': [], 'alternatives': [],
+                    'contradictions': [], 'limitations': resolution.get('mismatches', []), 'stop_reason': reason}}
+        reference_context += '\n' + redact(_retrieve_experience(input_text))
+        reference_context += '\n业务定位与现场白名单核对：' + json.dumps(resolution, ensure_ascii=False)
+        experience_context = f"{reference_context}\n{probe_context}"
 
         llm = create_agent_llm(temperature=0)
         result = await ainvoke_structured(llm, Plan, planner_prompt, {
@@ -276,8 +350,26 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             logger.warning(f"[planner] 计划 {len(steps)} 步超过上限 {_MAX_PLAN_STEPS},截断")
             steps = steps[:_MAX_PLAN_STEPS]
         logger.info(f"[planner] 计划已生成,共 {len(steps)} 步")
-        return {"plan": steps}
+        return {
+            "plan": steps,
+            "terminal_enabled": terminal_enabled,
+            "autonomous_investigation": terminal_enabled or settings.PROBE_ENABLED,
+            "raw_evidence": probe_raw,
+            "evidence_events": probe_events,
+            "investigation_tools": investigation_tool_catalog(tools),
+            "investigation_reference_context": reference_context,
+            'target_resolution': resolution,
+            'evidence_source_availability': source_availability(tools, readiness),
+        }
 
     except Exception:
         logger.exception("[planner] 生成计划失败,用默认计划")
-        return {"plan": ["收集相关指标和日志", "分析数据定位问题", "生成诊断报告"]}
+        return {
+            "plan": ["收集相关指标和日志", "分析数据定位问题", "生成诊断报告"],
+            "terminal_enabled": bool(state.get("terminal_enabled")),
+            "autonomous_investigation": bool(state.get("autonomous_investigation") or state.get("terminal_enabled") or settings.PROBE_ENABLED),
+            "raw_evidence": probe_raw,
+            'evidence_events': probe_events,
+            'target_resolution': resolution,
+            "investigation_reference_context": reference_context,
+        }

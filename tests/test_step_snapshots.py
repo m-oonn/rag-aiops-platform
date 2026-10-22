@@ -110,13 +110,17 @@ class TestSnapshotPayload:
 
 
 class _FakeGraph:
-    """只实现 astream，按 updates 流吐出节点事件。"""
+    """按 updates 流吐出节点事件，并提供分段终态。"""
 
-    async def astream(self, input, config, stream_mode):
+    async def astream(self, input, config, stream_mode, interrupt_after=None):
         yield {"planner": {"plan": ["s1", "s2"]}}
         yield {"executor": {"past_steps": [("s1", "r1")], "plan": ["s2"]}}
         yield {"__interrupt__": ()}
         yield {"replanner": {"plan": [], "response": "done"}}
+
+    async def aget_state(self, config):
+        from types import SimpleNamespace
+        return SimpleNamespace(next=())
 
 
 class TestStreamEventsHook:

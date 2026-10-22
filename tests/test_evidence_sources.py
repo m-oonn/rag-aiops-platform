@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from src.agent.aiops.evidence_sources import (
     availability_warning,
     format_availability_note,
+    format_knowledge_references,
     missing_source_labels,
     source_availability,
+    knowledge_context,
 )
 from src.agent.aiops.strategies.dynamic_classification import _local_respond
 
@@ -29,6 +31,28 @@ def test_all_sources_available():
     assert all(it["available"] for it in snap)
     assert missing_source_labels(_tools(*ALL_TOOLS)) == []
     assert availability_warning(_tools(*ALL_TOOLS)) == ""
+
+
+def test_readiness_distinguishes_registration_failure_and_recovery():
+    tools = _tools('probe_inventory', 'probe_text_log')
+    def status(checks):
+        return next(s for s in source_availability(tools, checks) if s['source'] == 'host_probe')
+    assert status([])['status'] == 'registered'
+    denied = {'tool': 'probe_text_log', 'status': 'failed', 'reason': 'PermissionError', 'checked_at': 'time1'}
+    good = {'tool': 'probe_inventory', 'status': 'success', 'checked_at': 'time2'}
+    assert status([denied, good])['status'] == 'permission_denied'
+    recovered = {**denied, 'status': 'success', 'reason': '', 'checked_at': 'time3'}
+    assert status([denied, good, recovered])['status'] == 'callable'
+    assert status([denied, good, recovered])['available'] is True
+
+
+def test_diagnostic_source_only_appears_when_tool_loaded():
+    absent = source_availability(_tools("query_cpu_metrics"))
+    assert all(item["source"] != "diagnostic" for item in absent)
+    present = source_availability(_tools("diagnostic_exec"))
+    diagnostic = next(item for item in present if item["source"] == "diagnostic")
+    assert diagnostic["available"] is True
+    assert diagnostic["tools"] == ["diagnostic_exec"]
 
 
 def test_missing_sources_detected():
@@ -54,7 +78,7 @@ def test_format_note_marks_available_and_absent():
     snap = source_availability(_tools("query_cpu_metrics"))
     note = format_availability_note(snap)
     assert note.startswith("## 证据来源")
-    assert "指标(Prometheus)：可用" in note
+    assert "指标(Prometheus)：已注册（未核验）" in note
     assert "日志(Elasticsearch)：缺席" in note
     assert format_availability_note(None) == ""
 
@@ -83,3 +107,31 @@ def test_local_respond_without_availability_has_no_section():
     state = {"input": "CPU 高", "plan": [], "past_steps": [], "response": ""}
     report = _local_respond(state, [])["response"]
     assert "## 证据来源" not in report
+
+
+def test_knowledge_references_are_rendered_from_raw_tool_output():
+    raw = [("检索经验", json.dumps({
+        "results": [{
+            "source": "cpu-spike.md", "page": 1,
+            "chunk_id": "doc_cpu_chunk_0", "content": "...",
+        }]
+    }, ensure_ascii=False))]
+    report = format_knowledge_references(raw)
+    assert "## 参考知识库" in report
+    assert "cpu-spike.md" in report
+    assert "doc_cpu_chunk_0" in report
+    assert "现场指标、日志和变更证据优先" in report
+
+
+def test_knowledge_context_only_accepts_marked_results_and_bounds_content():
+    payload = {'data_source': 'knowledge_base', 'results': [
+        {'source': 'runbook.md', 'chunk_id': str(i), 'page': 1,
+         'content': 'password=private-value\n' + 'X' * 1400} for i in range(9)]}
+    wrapped = json.dumps([{'type': 'text', 'text': json.dumps(payload)}])
+    rows = knowledge_context([('search', wrapped + '\n' + json.dumps(payload))])
+    assert len(rows) == 6 and rows[0]['chunk_id'] == '3'
+    assert all(len(row['content']) == 1200 and row['truncated'] for row in rows)
+    assert 'private-value' not in str(rows)
+    assert knowledge_context([('host', json.dumps({'data_source': 'probe_target', 'payload': payload}))]) == []
+    assert knowledge_context([('unmarked', json.dumps({'results': payload['results']}))]) == []
+    assert knowledge_context([('empty', json.dumps({'data_source': 'knowledge_base', 'results': []}))]) == []

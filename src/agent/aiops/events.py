@@ -11,7 +11,7 @@
 不改变任何字段的名/值/默认语义。
 """
 
-from typing import Any, Dict, List, Literal, TypedDict, Union
+from typing import Any, Dict, List, Literal, TypedDict, Union, NotRequired
 
 from src.agent.aiops.roles import ROLE_EXECUTOR, ROLE_PLANNER, ROLE_REPLANNER
 
@@ -24,6 +24,7 @@ EVENT_REPORT = "report"
 EVENT_PENDING_REVIEW = "pending_review"
 EVENT_COMPLETE = "complete"
 EVENT_ERROR = "error"
+EVENT_EVIDENCE = "evidence"
 
 EVENT_TYPES = (
     EVENT_PLAN,
@@ -34,6 +35,7 @@ EVENT_TYPES = (
     EVENT_PENDING_REVIEW,
     EVENT_COMPLETE,
     EVENT_ERROR,
+    EVENT_EVIDENCE,
 )
 
 
@@ -91,6 +93,7 @@ class ReportEvent(TypedDict):
     role: str
     message: str
     report: str
+    diagnosis: NotRequired[dict]
 
 
 class PendingReviewEvent(TypedDict):
@@ -103,7 +106,7 @@ class PendingReviewEvent(TypedDict):
     draft: str
 
 
-class CompleteEvent(TypedDict):
+class CompleteEvent(TypedDict, total=False):
     """诊断终态：报告 + 诊断元数据（假设空间/旁开支线/信念历史/证据源可用性）。"""
 
     type: Literal["complete"]
@@ -114,6 +117,8 @@ class CompleteEvent(TypedDict):
     sidebar_branches: List[Dict[str, Any]]
     belief_history: List[Dict[str, Any]]
     evidence_source_availability: List[Dict[str, Any]]
+    thread_id: str
+    diagnosis: dict
 
 
 class ErrorEvent(TypedDict):
@@ -122,6 +127,18 @@ class ErrorEvent(TypedDict):
     type: Literal["error"]
     stage: str
     message: str
+
+
+class EvidenceEvent(TypedDict, total=False):
+    type: Literal["evidence"]
+    stage: Literal["evidence_collected"]
+    evidence_id: str
+    target_id: str
+    kind: str
+    source: str
+    collected_at: str
+    summary: str
+    fresh: bool
 
 
 DiagnosisEvent = Union[
@@ -133,6 +150,7 @@ DiagnosisEvent = Union[
     PendingReviewEvent,
     CompleteEvent,
     ErrorEvent,
+    EvidenceEvent,
 ]
 
 
@@ -181,14 +199,17 @@ def make_draft_event(report: str) -> Dict[str, Any]:
     }
 
 
-def make_report_event(report: str) -> Dict[str, Any]:
-    return {
+def make_report_event(report: str, diagnosis: dict | None = None) -> Dict[str, Any]:
+    event = {
         "type": EVENT_REPORT,
         "stage": "final_report",
         "role": ROLE_REPLANNER,
         "message": "诊断报告已生成",
         "report": report,
     }
+    if diagnosis is not None:
+        event['diagnosis'] = diagnosis
+    return event
 
 
 def make_pending_review_event(thread_id: str, draft: str) -> Dict[str, Any]:
@@ -204,12 +225,14 @@ def make_pending_review_event(thread_id: str, draft: str) -> Dict[str, Any]:
 def make_complete_event(
     response: str,
     *,
+    thread_id: str | None = None,
     hypothesis_space: List | None = None,
     sidebar_branches: List | None = None,
     belief_history: List | None = None,
     evidence_source_availability: List | None = None,
+    diagnosis: dict | None = None,
 ) -> Dict[str, Any]:
-    return {
+    event = {
         "type": EVENT_COMPLETE,
         "stage": "complete",
         "message": "诊断完成",
@@ -219,7 +242,19 @@ def make_complete_event(
         "belief_history": belief_history or [],
         "evidence_source_availability": evidence_source_availability or [],
     }
+    if thread_id:
+        event["thread_id"] = thread_id
+    if diagnosis is not None:
+        event['diagnosis'] = diagnosis
+    return event
 
 
 def make_error_event(message: str, stage: str = "error") -> Dict[str, Any]:
     return {"type": EVENT_ERROR, "stage": stage, "message": message}
+
+
+def make_evidence_event(*, evidence_id: str, target_id: str, kind: str, source: str,
+                        collected_at: str, summary: str, fresh: bool = True, raw_hash: str | None = None) -> Dict[str, Any]:
+    return {"type": EVENT_EVIDENCE, "stage": "evidence_collected", "evidence_id": evidence_id,
+            "target_id": target_id, "kind": kind, "source": source,
+            "collected_at": collected_at, "summary": summary, "fresh": fresh}

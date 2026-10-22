@@ -8,6 +8,7 @@
 
 import json
 import re
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -16,13 +17,14 @@ from sse_starlette.sse import EventSourceResponse
 from src.agent.aiops import aiops_service, run_store
 from src.api.dependencies import get_current_user
 from src.database.models import User
+from src.agent.aiops.termcp_tools import TerminalApprovalStatusError, verify_terminal_approval
+from src.settings import settings
 from src.utils.logger import logger
 from src.utils.metrics import (
     AIOPS_DIAGNOSIS_TOTAL,
     AIOPS_DIAGNOSIS_DURATION,
     AIOPS_ACTIVE_DIAGNOSES,
 )
-import time
 
 router = APIRouter()
 
@@ -32,6 +34,7 @@ class AIOpsRequest(BaseModel):
 
     query: str                      # 故障现象 / 诊断任务描述
     session_id: str | None = None   # 会话 ID(用于 checkpointer 隔离)
+    terminal_enabled: bool = False
 
 
 @router.post("")
@@ -49,6 +52,8 @@ async def diagnose_stream(
       {type: error}         出错
     """
     session_id = request.session_id or "default"
+    if request.terminal_enabled and not settings.TERMCP_ENABLED:
+        raise HTTPException(status_code=503, detail="受控终端诊断尚未启用")
     start_time = time.time()
     AIOPS_ACTIVE_DIAGNOSES.inc()
     final_result = "failed"  # 默认值,出错时记录
@@ -64,7 +69,9 @@ async def diagnose_stream(
         nonlocal final_result
         try:
             async for event in aiops_service.execute(
-                user_input=request.query, session_id=session_id
+                user_input=request.query, session_id=session_id,
+                user_id=current_user.id,
+                terminal_enabled=request.terminal_enabled,
             ):
                 yield {
                     "event": "message",
@@ -113,6 +120,52 @@ async def diagnose_stream(
     return EventSourceResponse(event_generator())
 
 
+def _owned_run(thread_id: str, user: User):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", thread_id):
+        raise HTTPException(status_code=400, detail="thread_id 非法")
+    run = run_store.get_run(thread_id)
+    if not run or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="诊断不存在")
+    return run
+
+
+@router.get("/runs/{thread_id}")
+async def get_run_status(thread_id: str, current_user: User = Depends(get_current_user)):
+    run = _owned_run(thread_id, current_user)
+    approval = run.terminal_approval if isinstance(run.terminal_approval, dict) else None
+    return {
+        "thread_id": run.thread_id,
+        "status": run.status,
+        "report": run.report,
+        "terminal_approval": approval,
+        "termcp_ui_url": settings.TERMCP_UI_URL if approval else None,
+        'diagnosis': await aiops_service.run_diagnosis(thread_id),
+    }
+
+
+@router.post("/runs/{thread_id}/continue")
+async def continue_run(thread_id: str, current_user: User = Depends(get_current_user)):
+    run = _owned_run(thread_id, current_user)
+    if run.status == run_store.STATUS_PENDING_TERMINAL:
+        try:
+            await verify_terminal_approval(run.terminal_approval or {})
+        except TerminalApprovalStatusError as exc:
+            if exc.terminal:
+                run_store.mark_failed(thread_id, str(exc))
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        decision = {"action": "approve"}
+    elif run.status == run_store.STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="此诊断等待的不是 Termcp 命令审批")
+    else:
+        raise HTTPException(status_code=409, detail="诊断当前不处于可续跑状态")
+
+    async def event_generator():
+        async for event in aiops_service.resume(thread_id, decision):
+            yield {"event": "message", "data": json.dumps(event, ensure_ascii=False)}
+
+    return EventSourceResponse(event_generator())
+
+
 @router.get("/runs/{thread_id}/steps")
 async def get_run_steps(
     thread_id: str,
@@ -123,8 +176,43 @@ async def get_run_steps(
     快照由 AIOpsService 在图执行时落库（ENABLE_STEP_SNAPSHOTS 开启时）；
     未开启或无记录时返回空列表。
     """
-    # thread_id 形如 "{session_id}-{毫秒时间戳}"；白名单校验防注入/异常输入
-    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", thread_id):
-        raise HTTPException(status_code=400, detail="thread_id 非法")
+    _owned_run(thread_id, current_user)
     steps = run_store.list_step_snapshots(thread_id)
     return {"thread_id": thread_id, "total": len(steps), "steps": steps}
+
+
+@router.get("/runs/{thread_id}/evidence")
+async def get_run_evidence(thread_id: str, current_user: User = Depends(get_current_user)):
+    """Return the redacted evidence ledger for an owned run."""
+    _owned_run(thread_id, current_user)
+    rows = run_store.list_evidence(thread_id, current_user.id)
+    return {"thread_id": thread_id, "total": len(rows), "evidence": rows,
+            "can_read_raw": getattr(current_user, "role", "user") in {"admin", "auditor"}}
+
+
+@router.get("/runs/{thread_id}/evidence/{evidence_id}")
+async def get_run_evidence_item(thread_id: str, evidence_id: str, current_user: User = Depends(get_current_user)):
+    _owned_run(thread_id, current_user)
+    if not re.fullmatch(r"ev-[A-Za-z0-9]{16,80}", evidence_id):
+        raise HTTPException(status_code=400, detail="evidence_id 非法")
+    is_auditor = getattr(current_user, "role", "user") in {"admin", "auditor"}
+    row = run_store.get_evidence(thread_id, evidence_id, current_user.id, include_raw=is_auditor)
+    if not row:
+        raise HTTPException(status_code=404, detail="证据不存在")
+    # Raw file paths remain hidden from normal operators.  Audit/admin users
+    # can use the protected reference through the separately secured store.
+    if not is_auditor:
+        row.pop("raw_ref", None)
+    return row
+
+
+@router.get("/targets/{target_id}/status")
+async def get_probe_target_status(target_id: str, current_user: User = Depends(get_current_user)):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", target_id):
+        raise HTTPException(status_code=400, detail="target_id 非法")
+    if target_id != settings.PROBE_TARGET_ID:
+        raise HTTPException(status_code=404, detail="目标不存在")
+    status = run_store.get_probe_target(target_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="目标尚未注册")
+    return status

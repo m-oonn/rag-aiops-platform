@@ -21,6 +21,8 @@ def _make_fake_tool(name: str, result: str):
     """构造支持 ainvoke 的假 MCP 工具。"""
     tool = MagicMock()
     tool.name = name
+    tool.description = name
+    tool.args = {}
     tool.ainvoke = AsyncMock(return_value=result)
     return tool
 
@@ -158,6 +160,22 @@ async def test_aiops_service_empty_input_yields_error_event():
 
 
 @pytest.mark.asyncio
+async def test_json_error_does_not_break_failure_event(monkeypatch):
+    from src.settings import settings
+    monkeypatch.setattr(settings, 'PROBE_ENABLED', False)
+    monkeypatch.setattr(settings, 'TERMCP_ENABLED', False)
+    monkeypatch.setattr(settings, 'ENABLE_HITL', False)
+    service = AIOpsService()
+    async def fail(*args, **kwargs):
+        raise RuntimeError("Error code: 402 - {'error': {'code': 'evaluation_budget_exceeded'}}")
+        yield
+    monkeypatch.setattr(service, '_stream_events', fail)
+    events = await _collect_events(service.execute('read only overview'))
+    assert len(events) == 1 and events[0]['type'] == 'error'
+    assert 'evaluation_budget_exceeded' in str(events[0])
+
+
+@pytest.mark.asyncio
 async def test_aiops_service_session_isolation():
     """不同 session_id 之间的执行状态应互相隔离。
 
@@ -209,3 +227,29 @@ async def test_aiops_service_session_isolation():
     report_b = next(e for e in events_b if e["type"] == "report")["report"]
     assert plan_b == ["check memory"], f"Session B plan contaminated: {plan_b}"
     assert report_b == "Memory Report", f"Session B report contaminated: {report_b}"
+
+
+@pytest.mark.asyncio
+async def test_segmented_investigation_runs_beyond_graph_default_recursion_without_replay(monkeypatch):
+    from langgraph.graph import StateGraph, END
+    from src.agent.aiops.state import PlanExecuteState
+
+    calls = []
+    def execute(state):
+        calls.append(len(state.get("past_steps", [])))
+        return {"past_steps": [(f"check-{len(calls)}", "actual result")]}
+    def replan(state):
+        return {"response": "done" if len(state["past_steps"]) == 35 else "", "plan": ["next"]}
+    service = AIOpsService()
+    workflow = StateGraph(PlanExecuteState)
+    workflow.add_node("executor", execute)
+    workflow.add_node("replanner", replan)
+    workflow.set_entry_point("executor")
+    workflow.add_edge("executor", "replanner")
+    workflow.add_conditional_edges("replanner", lambda s: END if s.get("response") else "executor")
+    graph = workflow.compile(checkpointer=service.checkpointer)
+    events = [event async for event in service._stream_events(graph,
+        {"configurable": {"thread_id": "segmented"}}, {"input": "symptom", "plan": ["next"],
+        "past_steps": [], "response": "", "autonomous_investigation": True})]
+    assert calls == list(range(35))
+    assert events[-1]["type"] == "report"

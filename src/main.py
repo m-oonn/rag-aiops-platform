@@ -1,4 +1,5 @@
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
@@ -178,6 +179,13 @@ def create_app() -> FastAPI:
     _migrate_schema()
     # 安全最佳实践: 生产环境禁用 /docs、/redoc、/openapi.json
     is_prod = settings.APP_ENV == "production"
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            await aiops.aiops_service.close()
+
     app = FastAPI(
         title=settings.APP_NAME,
         version="1.0.0",
@@ -185,6 +193,7 @@ def create_app() -> FastAPI:
         docs_url=None if is_prod else "/docs",
         redoc_url=None if is_prod else "/redoc",
         openapi_url=None if is_prod else "/openapi.json",
+        lifespan=lifespan,
     )
 
     # 安全最佳实践: 注册速率限制器，防止暴力破解

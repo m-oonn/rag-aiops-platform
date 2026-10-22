@@ -329,6 +329,19 @@ async def test_max_steps_forces_respond():
 
 
 @pytest.mark.asyncio
+async def test_autonomous_investigation_does_not_end_at_legacy_step_cap():
+    """自主终端调查不能把旧固定步数上限当成根因结论。"""
+    strategy = DynamicClassificationStrategy(judge=ScriptedJudge())
+    past_steps = [(f"步骤{i}", "未取得可鉴别证据") for i in range(_MAX_STEPS)]
+    state = _state(plan=["继续检查现场"], past_steps=past_steps)
+    state["autonomous_investigation"] = True
+
+    result = await strategy.decide(state)
+
+    assert "response" not in result
+
+
+@pytest.mark.asyncio
 async def test_high_confidence_responds():
     """领先假设越过阈值且次选已被充分排除、计划收尾 → respond。"""
     strategy = DynamicClassificationStrategy(judge=ScriptedJudge())

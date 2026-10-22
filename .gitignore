@@ -19,7 +19,18 @@ env/
 node_modules/
 
 # ─── Data & generated artifacts ───
-data/
+data/*
+!data/runbooks/
+data/runbooks/*
+!data/runbooks/windows-probe/
+data/runbooks/windows-probe/*
+!data/runbooks/windows-probe/windows-service-stopped.md
+!data/runbooks/windows-probe/windows-port-conflict.md
+!data/runbooks/windows-probe/windows-dependency-unreachable.md
+!data/runbooks/windows-probe/windows-http-5xx.md
+!data/runbooks/windows-probe/windows-resource-anomaly.md
+!data/runbooks/windows-probe/windows-event-log.md
+!data/runbooks/windows-probe/windows-text-log.md
 logs/
 *.db
 *.sqlite

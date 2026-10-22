@@ -275,6 +275,7 @@ class AiopsRun(Base):
     # running / pending_review / approved / rejected / completed / failed
     status = Column(String(32), default="running", nullable=False)
     report = Column(Text, nullable=True)
+    terminal_approval = Column(JSON, nullable=True)
     degraded = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -306,4 +307,56 @@ class AiopsStepSnapshot(Base):
     node = Column(String(32), nullable=False)
     # JSON: 本步节点输出摘要（计划 / 观测 digest / 决策）
     payload = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProbeTarget(Base):
+    """Registered probe summary.  Secrets are deliberately not persisted."""
+
+    __tablename__ = "probe_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    target_id = Column(String(128), unique=True, index=True, nullable=False)
+    platform = Column(String(32), nullable=False, default="windows")
+    hostname = Column(String(255), nullable=True)
+    agent_version = Column(String(64), nullable=True)
+    capabilities = Column(JSON, nullable=True)
+    status = Column(String(32), nullable=False, default="offline")
+    last_seen = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProbeSnapshot(Base):
+    """Bounded baseline payload retained for 24 hours."""
+
+    __tablename__ = "probe_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    target_id = Column(String(128), index=True, nullable=False)
+    kind = Column(String(64), nullable=False)
+    collected_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    payload = Column(JSON, nullable=True)
+    raw_hash = Column(String(80), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiopsEvidence(Base):
+    """Evidence ledger row; raw data stays in a protected file directory."""
+
+    __tablename__ = "aiops_evidence"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evidence_id = Column(String(80), unique=True, index=True, nullable=False)
+    thread_id = Column(String(64), index=True, nullable=False)
+    user_id = Column(Integer, nullable=True, index=True)
+    target_id = Column(String(128), index=True, nullable=False)
+    source = Column(String(64), nullable=False)
+    kind = Column(String(64), nullable=False)
+    collected_at = Column(DateTime(timezone=True), nullable=True)
+    summary_redacted = Column(Text, nullable=True)
+    raw_ref = Column(String(512), nullable=True)
+    raw_hash = Column(String(80), nullable=False)
+    fresh_until = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

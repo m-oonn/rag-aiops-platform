@@ -12,19 +12,43 @@ services:
       - ../:/app
       - ../data:/app/data
       - ../logs:/app/logs
+      - compose_db:/compose-db
     environment:
       - APP_ENV=development
+      # SQLite WAL is unreliable on Windows bind mounts; keep runtime DBs on a Docker volume.
+      - DATABASE_URL=sqlite:////compose-db/rag_system.db
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
       - REDIS_URL=redis://redis:6379/0
       - RABBITMQ_HOST=rabbitmq
       - MINIO_ENDPOINT=minio:9000
+      - TERMCP_ENABLED=${TERMCP_ENABLED:-false}
+      - DIAGNOSTIC_ENABLED=${DIAGNOSTIC_ENABLED:-false}
+      - DIAGNOSTIC_TOKEN=${DIAGNOSTIC_TOKEN:-}
+      # MCP evidence services still run on the host during this single-node phase.
+      # Docker Desktop exposes them through host.docker.internal from the app container.
+      - MCP_MONITOR_URL=${MCP_MONITOR_URL:-http://host.docker.internal:8104/mcp}
+      - MCP_CLS_URL=${MCP_CLS_URL:-http://host.docker.internal:8103/mcp}
+      - MCP_RAG_URL=${MCP_RAG_URL:-http://host.docker.internal:8105/mcp}
+      - MCP_CHANGE_URL=${MCP_CHANGE_URL:-http://host.docker.internal:8106/mcp}
+      - MCP_TERMCP_URL=http://termcp-gateway:18766/mcp
+      - MCP_DIAGNOSTIC_URL=http://diagnostic-target:8107/mcp
+      - PROBE_ENABLED=${PROBE_ENABLED:-false}
+      - PROBE_TARGET_ID=${PROBE_TARGET_ID:-windows-local-01}
+      - PROBE_TOKEN=${PROBE_TOKEN:-}
+      - MCP_PROBE_URL=http://probe-gateway:18767/mcp
+      - DIAGNOSTIC_TARGET_CATALOG=${DIAGNOSTIC_TARGET_CATALOG:-}
+      - TERMCP_APPROVAL_API_URL=http://termcp-gateway:18766
+      - TERMCP_UI_URL=http://127.0.0.1:18765
+      - TERMCP_SSH_PROFILE=test-target
+      - AIOPS_CHECKPOINT_DB_PATH=/compose-db/aiops_checkpoints.sqlite
     depends_on:
       - milvus-standalone
       - redis
       - rabbitmq
     networks:
       - rag_net
+      - termcp_app_net
 
   worker:
     build:
@@ -36,8 +60,10 @@ services:
       - ../:/app
       - ../data:/app/data
       - ../logs:/app/logs
+      - compose_db:/compose-db
     environment:
       - APP_ENV=development
+      - DATABASE_URL=sqlite:////compose-db/rag_system.db
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
       - REDIS_URL=redis://redis:6379/0
@@ -157,13 +183,98 @@ services:
     networks:
       - rag_net
 
+  termcp:
+    profiles: ["termcp"]
+    image: aiops-termcp:0.2.7-expiry.1
+    build:
+      context: ../
+      dockerfile: docker/termcp/patched.Dockerfile
+    command: ["termcp", "--host", "0.0.0.0", "--port", "18765", "--data-dir", "/home/termcp", "--no-internal"]
+    environment:
+      TERMCP_AUTH_TOKEN: ${TERMCP_TOKEN:-}
+    volumes:
+      - termcp_data:/home/termcp
+      - ../data/termcp/ssh_configs:/home/termcp/ssh_configs:ro
+    ports:
+      - "127.0.0.1:18765:18765"
+    networks:
+      - termcp_backend_net
+
+  termcp-gateway:
+    profiles: ["termcp"]
+    build:
+      context: ../
+      dockerfile: docker/termcp/gateway.Dockerfile
+    environment:
+      TERMCP_INTERNAL_URL: http://termcp:18765
+      TERMCP_TOKEN: ${TERMCP_TOKEN:-}
+      TERMCP_SSH_PROFILE: test-target
+    networks:
+      - termcp_app_net
+      - termcp_backend_net
+    depends_on:
+      - termcp
+
+  diagnostic-target:
+    profiles: ["termcp"]
+    build:
+      context: ../
+      dockerfile: docker/diagnostic/Dockerfile
+    environment:
+      DIAGNOSTIC_EXEC_ENABLED: ${DIAGNOSTIC_EXEC_ENABLED:-false}
+      DIAGNOSTIC_TOKEN: ${DIAGNOSTIC_TOKEN:-}
+      DIAGNOSTIC_SSH_CONFIG: /connection/target.json
+      DIAGNOSTIC_ALLOWED_DEPENDENCIES: ${DIAGNOSTIC_ALLOWED_DEPENDENCIES:-}
+      DIAGNOSTIC_EVIDENCE_DIR: /evidence
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./diagnostic/seccomp.json
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - ../data/aiops-evidence:/evidence:rw
+      - ../data/diagnostic-connection:/connection:ro
+    networks:
+      - termcp_app_net
+
+  probe-gateway:
+    profiles: ["termcp"]
+    build:
+      context: ../
+      dockerfile: docker/probe/gateway.Dockerfile
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=sqlite:////compose-db/rag_system.db
+      - PROBE_TARGET_ID=${PROBE_TARGET_ID:-windows-local-01}
+      - PROBE_TOKEN=${PROBE_TOKEN:-}
+      - PROBE_STALE_SECONDS=${PROBE_STALE_SECONDS:-180}
+    volumes:
+      - compose_db:/compose-db
+      - ../data/aiops-evidence:/app/data/aiops-evidence
+    expose:
+      - "18767"
+    networks:
+      - termcp_app_net
+
 networks:
   rag_net:
     driver: bridge
+  termcp_app_net:
+    driver: bridge
+    internal: true
+  termcp_backend_net:
+    driver: bridge
 
 volumes:
+  compose_db:
   milvus_etcd_data:
   milvus_minio_data:
   milvus_data:
   redis_data:
   rabbitmq_data:
+  termcp_data:

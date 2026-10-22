@@ -1,6 +1,6 @@
 """轻量 BM25 关键词检索器，内存倒排索引。
 
-基于 rank_bm25 库（纯 Python，无外部依赖）。中文按字符 unigram 分词，
+基于 rank_bm25 库。中文按相邻双字分词，
 英文按空格/split 分词。作为向量检索的补充，在关键词精确匹配场景下兜底。
 
 用法：
@@ -18,13 +18,17 @@ from src.models.vector import SearchResult
 
 
 def _tokenize(text: str) -> list[str]:
-    """中英混合分词：中文按字切，英文按空格/标点切。
+    """中英混合分词：中文按双字切，英文按空格/标点切。
 
     这是简化版 BM25 分词，不依赖 jieba/pkuseg 等分词库。
     """
     text = text.lower()
     # 分离中文和非中文
-    chinese = re.findall(r"[一-鿿]", text)
+    chinese = []
+    for word in re.findall(r"[一-鿿]+", text):
+        chinese.extend(word[i:i + 2] for i in range(len(word) - 1))
+        if len(word) == 1:
+            chinese.append(word)
     # 非中文部分按非字母数字切分
     non_chinese = re.sub(r"[^a-z0-9]", " ", text).split()
     non_chinese = [w for w in non_chinese if len(w) > 1]
@@ -88,7 +92,7 @@ class BM25Retriever(BaseRetriever):
 
             if kb_ids is not None:
                 chunk_kb_id = metadata.get("kb_id")
-                if chunk_kb_id is not None and chunk_kb_id not in kb_ids:
+                if chunk_kb_id not in kb_ids:
                     continue
 
             results.append((chunk_id, score, text, metadata))

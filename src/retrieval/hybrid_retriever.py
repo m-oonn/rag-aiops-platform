@@ -95,14 +95,15 @@ class HybridRetriever(BaseRetriever):
                 db = SessionLocal()
                 try:
                     rows = db.execute(sql_text(
-                        "SELECT dc.chunk_uid, dc.content, kd.kb_id "
+                        "SELECT dc.chunk_uid, dc.content, kd.kb_id, kd.filename, dc.page_num, kd.id "
                         "FROM document_chunks dc "
-                        "JOIN knowledge_documents kd ON dc.doc_id = kd.id"
+                        "JOIN knowledge_documents kd ON dc.doc_id = kd.id WHERE kd.status = 2"
                     )).fetchall()
                     for row in rows:
                         chunk_uid, content, kb_id = row[0], row[1], row[2]
                         if content:
-                            indexed.append((str(chunk_uid), str(content), {"kb_id": kb_id}))
+                            indexed.append((str(chunk_uid), str(content), {"kb_id": kb_id,
+                                "filename": row[3], "source": row[3], "page": row[4], "doc_id": row[5]}))
                     if indexed:
                         logger.info("[hybrid_retriever] 从 SQLite 加载 %d chunks 建 BM25 索引", len(indexed))
                 finally:
@@ -110,16 +111,20 @@ class HybridRetriever(BaseRetriever):
             except Exception as e:
                 logger.warning("[hybrid_retriever] SQLite 加载 chunks 失败: %s, 尝试 LocalVectorStore", e)
 
-            # SQLite 无数据时降级到 LocalVectorStore
-            if not indexed:
+            # 合并外部 runbook；SQL 管理的文档以 SQL 状态和元数据为准。
+            try:
                 from src.database.local_vector_store import LocalVectorStore
                 local = LocalVectorStore()
                 chunks = local.get_all_chunks()
                 if chunks:
+                    known_ids = {item[0] for item in indexed}
                     for cid, text, metadata in chunks:
-                        if text:
+                        if text and str(cid) not in known_ids and (not indexed or not metadata.get("doc_id")):
                             indexed.append((str(cid), str(text), metadata))
+                            known_ids.add(str(cid))
                     logger.info("[hybrid_retriever] 从 LocalVectorStore 加载 %d chunks", len(indexed))
+            except Exception as error:
+                logger.warning("[hybrid_retriever] 本地语料加载失败: %s", type(error).__name__)
 
             if not indexed:
                 logger.info("[hybrid_retriever] 无 chunks 可建 BM25 索引")
@@ -166,8 +171,12 @@ class HybridRetriever(BaseRetriever):
         # 懒加载 BM25 索引
         self._ensure_bm25_indexed(kb_ids)
 
-        # 并行执行向量和 BM25 检索
-        vector_results = self.vector.retrieve(query, top_k=top_k * 2, kb_ids=kb_ids, **kwargs)
+        # embedding 不可用时仍允许关键词检索返回可追溯的资料。
+        try:
+            vector_results = self.vector.retrieve(query, top_k=top_k * 2, kb_ids=kb_ids, **kwargs)
+        except Exception as error:
+            logger.warning("[hybrid_retriever] 向量检索失败，使用 BM25: %s", type(error).__name__)
+            vector_results = []
         bm25_results = self.bm25.retrieve(query, top_k=top_k * 2, kb_ids=kb_ids)
 
         if not bm25_results:

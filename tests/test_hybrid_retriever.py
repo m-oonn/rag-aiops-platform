@@ -81,6 +81,18 @@ class TestHybridRetriever:
         assert len(results) == 1
         assert results[0].id == "a"
 
+    def test_vector_failure_falls_back_to_bm25(self):
+        """向量服务异常时仍应返回可追溯的关键词结果。"""
+        vec_mock = MagicMock()
+        vec_mock.retrieve.side_effect = RuntimeError("embedding unavailable")
+        bm25_mock = MagicMock()
+        bm25_mock.retrieve.return_value = [_make_result("kb-doc", 1.0, "CPU 排查")]
+        hr = HybridRetriever(vector_retriever=vec_mock, bm25_retriever=bm25_mock)
+        hr._bm25_populated = True
+        results = hr.retrieve("CPU", top_k=5, kb_ids=[14])
+        assert [r.id for r in results] == ["kb-doc"]
+        bm25_mock.retrieve.assert_called_once_with("CPU", top_k=10, kb_ids=[14])
+
     def test_index_bm25_chunks(self):
         """index_bm25_chunks 应转发给 BM25 子检索器。"""
         bm25_mock = MagicMock()

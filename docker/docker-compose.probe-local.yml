@@ -1,0 +1,17 @@
+services:
+  probe-gateway:
+    # Local-only validation entry point for the native Windows Probe. The
+    # loopback bind keeps the gateway unreachable from the LAN; production
+    # should use a TLS reverse proxy instead of this override.
+    ports:
+      - "127.0.0.1:18767:18767"
+    networks:
+      - termcp_app_net
+      - probe_local_host
+
+networks:
+  # Docker Desktop does not publish ports from an `internal: true` network.
+  # This second network exists only in the local override and is still
+  # reachable from the host through the loopback-only port binding above.
+  probe_local_host:
+    driver: bridge
