@@ -1,5 +1,7 @@
 # ─── Secrets (NEVER commit) ───
 .env
+.env.*
+!.env.example
 *.key
 *.pem
 
@@ -42,6 +44,18 @@ logs/
 # 探测/评测产物(wav/txt 等),无版本价值
 reports/
 
+# 本机工具、运行状态与检查产物：保留本地，不进入提交
+/.local/
+/runtime/
+/.demo_pids.json
+/.playwright-cli/
+/.pytest-tmp*/
+/.codex-finalizer-opening-defense/
+.coverage
+.coverage.*
+htmlcov/
+*.bak*
+
 # ─── IDE / OS ───
 .vscode/
 .idea/
@@ -57,6 +71,17 @@ build/
 
 # ─── 私人材料(不公开到公共仓) ───
 learning/
+/毕业设计/
+/trae修改/
+/.slidep/
+/output/
+/*.lnk
+/_tmp*
+/_cover*
+/_tpl*
+/_bh_cover_check.pdf
+/create_opening_ppt.py
+/termcp-ui-*.yml
 rag-agent-curried-acorn.md
 fix_documents_db.py
 docker_error*.png
