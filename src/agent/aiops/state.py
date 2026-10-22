@@ -43,6 +43,7 @@ class PlanExecuteState(TypedDict):
     terminal_enabled: NotRequired[bool]
     autonomous_investigation: NotRequired[bool]
     investigation_memory: NotRequired[dict]
+    investigation_config: NotRequired[dict]
     diagnosis: NotRequired[dict]
     target_resolution: NotRequired[dict]
     investigation_tools: NotRequired[List[dict]]

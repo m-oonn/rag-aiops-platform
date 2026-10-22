@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -196,6 +197,11 @@ class Settings(BaseSettings):
     ABLATION_DISABLE_HYPOTHESIS_PROTECTION: bool = False
     ABLATION_DISABLE_EVIDENCE_GATE: bool = False
     ABLATION_DISABLE_DEGRADATION_LABEL: bool = False
+
+    # 自主调查的独立机制；不复用同时控制弱信号和复活的旧消融开关。
+    INVESTIGATION_HYPOTHESIS_PROTECTION: bool = True
+    INVESTIGATION_CONTRADICTION_TRIGGER: bool = True
+    INVESTIGATION_PROTECTION_STEPS: int = Field(default=2, ge=0, le=8)
 
     # —— 多智能体协同（Supervisor / HITL / 并行观测）——
     # Supervisor 统一入口：注册 /supervisor/chat 端点，前端显示"统一入口"开关

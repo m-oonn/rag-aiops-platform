@@ -3,6 +3,7 @@
 import json
 import ast
 import hashlib
+from copy import deepcopy
 from datetime import datetime
 from typing import Literal
 
@@ -26,6 +27,13 @@ class Citation(BaseModel):
     quote: str = Field(min_length=1)
 
 
+class CandidateCheck(BaseModel):
+    next_check: str
+    next_tools: list[str] = Field(default_factory=list)
+    discriminating_question: str = ''
+    expected_observation: str = ''
+
+
 class Alternative(BaseModel):
     explanation: str
     status: Literal["supported", "excluded", "unavailable", "unresolved"]
@@ -38,6 +46,7 @@ class Alternative(BaseModel):
     original_status: str = ''
     verification: str = 'unverified'
     claim_type: Literal['observed_condition', 'causal_explanation'] = 'causal_explanation'
+    check: CandidateCheck | None = None
 
 
 class ObservationCondition(BaseModel):
@@ -49,6 +58,7 @@ class ObservationCondition(BaseModel):
 
 class InvestigationDecision(BaseModel):
     hypothesis: str
+    hypothesis_condition: ObservationCondition | None = None
     next_check: str = ""
     next_tools: list[str] = Field(default_factory=list)
     discriminating_question: str = ""
@@ -82,6 +92,9 @@ localized_fault 只填写已被证据直接确认的故障现象。healthy_withi
 不能用 inventory、截断快照或两次资源采样宣称全局健康。每项因果结论仍需直接支持证据，不能只因引用存在就认定成立。
 事实线索（确定性观察，不是因果结论）：{observations}
 根据症状、现场原始证据和调查记忆选择下一项有鉴别力的检查，可以推翻原假设。
+为当前 hypothesis 填写 hypothesis_condition，描述其必要的可核查预期；无法表达时留空，不编造条件。
+对有工具可核查的替代解释填写 check（next_check、next_tools、discriminating_question、expected_observation）。
+候选与检查方案只是假设，不是现场事实；此前记忆中的 hypothesis_tracking 保留候选与核查记录，不得当作已证实原因。
 原计划耗尽或高置信度不表示找到根因。不要重复无新证据的检查，不要自动修复。
 正常场景也要核查症状入口和相关服务；outcome=healthy 需引用正常现场证据和替代解释核验。
 根因必须引用原始证据中的原文与 evidence_id；检查关键替代解释，排除也必须有引用。
@@ -185,11 +198,12 @@ def evidence_index(state, *, now=None):
     return records
 
 
-def diagnosis_result(state, decision, kind, records, reason=''):
+def diagnosis_result(state, decision, kind, records, reason='', *, tracking=None):
     citations = [c.model_dump() for c in decision.supporting_evidence
                  if _valid_citations([c], records)]
     findings = _localized_findings(records, state)
-    return {'version': 1, 'kind': kind, 'target_id': settings.PROBE_TARGET_ID,
+    result = {'version': 1, 'kind': kind, 'target_id': settings.PROBE_TARGET_ID,
+            'mechanism_config': mechanism_config(state),
             'scope': decision.scope or (state.get('target_resolution') or {}).get('service') or state.get('input', ''),
             'conclusion': (decision.root_cause if kind == 'confirmed_cause' else
                            decision.localized_fault if kind == 'localized_fault' else
@@ -201,6 +215,9 @@ def diagnosis_result(state, decision, kind, records, reason=''):
             'contradictions': decision.contradictions,
             'limitations': [a.limitation for a in decision.alternatives if a.status != 'excluded' and a.limitation],
             'stop_reason': reason}
+    if tracking is not None:
+        result['mechanisms'] = tracking
+    return result
 
 
 def unresolved_questions(decision):
@@ -221,8 +238,9 @@ def unresolved_questions(decision):
     return questions
 
 
-def _decision_memory(decision, model_suggestion, records, state):
+def _decision_memory(decision, model_suggestion, records, state, tracking):
     return {**decision.model_dump(), 'model_suggestion': model_suggestion,
+            'hypothesis_tracking': tracking,
             'observed_findings': _localized_findings(records, state),
             'unresolved_questions': unresolved_questions(decision)}
 
@@ -338,6 +356,177 @@ def _validate_alternatives(decision, records):
         else:
             alternative.verification = 'predicate_verified'
     return issues
+
+
+def mechanism_config(state=None):
+    """Freeze independent switches in each run, including old checkpoint resumes."""
+    state = state or {}
+    saved = state.get('investigation_config')
+    if saved is None:
+        saved = ((state.get('investigation_memory') or {}).get('hypothesis_tracking') or {}).get('config')
+    return deepcopy(saved) if saved is not None else {
+        'hypothesis_protection': settings.INVESTIGATION_HYPOTHESIS_PROTECTION,
+        'contradiction_trigger': settings.INVESTIGATION_CONTRADICTION_TRIGGER,
+        'protection_steps': settings.INVESTIGATION_PROTECTION_STEPS,
+    }
+
+
+def _candidate_observations(candidate, records):
+    condition = candidate.get('condition')
+    if not condition or not condition.get('object_name', '').strip():
+        return []
+    condition = ObservationCondition.model_validate(condition)
+    observations = []
+    for key, record in records.items():
+        raw = json.loads(record['payload'])
+        actual = _condition_value(raw, condition)
+        if (actual is False and condition.field == 'process_present'
+                and not any(c['evidence_id'] == key and c['code'] == 'configured_process_not_observed'
+                            for c in observation_clues(records))):
+            actual = None
+        if actual is not None:
+            token = hashlib.sha256(json.dumps([_observation_scope(raw), diagnostic_fingerprint(raw),
+                condition.model_dump()], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            observations.append((key, actual, token))
+    # Different query scopes can disagree. Do not turn that ambiguity into a refutation.
+    if observations and any(type(actual) is not type(observations[0][1]) or actual != observations[0][1]
+                            for _, actual, _ in observations):
+        return []
+    return observations
+
+
+def _candidate_check(candidate, state, records):
+    check = candidate.get('check') or {}
+    completed = {step.strip() for step, _ in state.get('past_steps', [])}
+    if ('investigation_tools' not in state or not check.get('next_check', '').strip()
+            or check['next_check'].strip() in completed
+            or not check.get('next_tools') or not check.get('discriminating_question', '').strip()
+            or not check.get('expected_observation', '').strip()):
+        return None
+    if followup_check_error(check, state):
+        return None
+    proposed = InvestigationDecision(hypothesis=candidate['explanation'], **check)
+    if _repeated_probe_check_error(proposed, records, state if state.get('target_resolution') else None):
+        return None
+    return check
+
+
+def _apply_investigation_mechanisms(state, decision, records):
+    """Track predictions in every group; switches only change retention/scheduling.
+
+    A matched predicate supports an observation, never a free-text causal claim.
+    Protection lasts a bounded number of completed executor steps, not wall time.
+    """
+    previous = (state.get('investigation_memory') or {}).get('hypothesis_tracking') or {}
+    config = mechanism_config(state)
+    step = len(state.get('past_steps', []))
+    candidates = {c['id']: deepcopy(c) for c in previous.get('candidates', [])}
+    events = deepcopy(previous.get('events', []))
+    emitted = set()
+    primary_id = ''
+    # Evaluate the saved prediction before the model can rename or rewrite it.
+    old_leader = candidates.get(previous.get('leading_id'))
+    contradicted_leader = None
+    if old_leader:
+        observations = _candidate_observations(old_leader, records)
+        fresh = {token for _, _, token in observations} - set(old_leader['seen_observations'])
+        expected = (old_leader.get('condition') or {}).get('expected')
+        if fresh and observations and (type(observations[0][1]) is not type(expected)
+                                       or observations[0][1] != expected):
+            contradicted_leader = {**deepcopy(old_leader), 'evidence_ids': [key for key, _, _ in observations]}
+    primary = Alternative(explanation=decision.hypothesis, status='unresolved',
+        condition=decision.hypothesis_condition, check=CandidateCheck(
+            next_check=decision.next_check, next_tools=decision.next_tools,
+            discriminating_question=decision.discriminating_question,
+            expected_observation=decision.expected_observation) if decision.next_check else None)
+    for index, alternative in enumerate([primary, *decision.alternatives]):
+        text = ' '.join(alternative.explanation.split())
+        if not text:
+            continue
+        # shortcut: identity tolerates whitespace/case, not semantic paraphrases.
+        ident = 'h-' + hashlib.sha256(text.casefold().encode()).hexdigest()[:16]
+        if index == 0:
+            primary_id = ident
+        if ident in emitted:
+            continue
+        emitted.add(ident)
+        candidate = candidates.setdefault(ident, {'id': ident, 'birth_step': step,
+            'seen_observations': [], 'supporting_observations': 0, 'contradicting_observations': 0})
+        candidate.update(explanation=text, condition=alternative.condition.model_dump() if alternative.condition else None,
+            check=alternative.check.model_dump() if alternative.check else None, proposal=alternative.model_dump(),
+            status='excluded' if alternative.status == 'excluded' and alternative.verification == 'predicate_verified'
+                   else 'unavailable' if alternative.status == 'unavailable' else 'active')
+
+    def record_event(kind, candidate, **details):
+        event = {'kind': kind, 'step': step, 'hypothesis_id': candidate['id'], **details}
+        if event not in events:
+            events.append(event)
+
+    for ident, candidate in candidates.items():
+        observations = _candidate_observations(candidate, records)
+        fresh = {token for _, _, token in observations} - set(candidate['seen_observations'])
+        expected = (candidate.get('condition') or {}).get('expected')
+        candidate['relation'] = ('support' if type(observations[0][1]) is type(expected)
+                                 and observations[0][1] == expected else 'contradict') if observations else 'neutral'
+        candidate['evidence_ids'] = [key for key, _, _ in observations]
+        if fresh:
+            counter = 'supporting_observations' if candidate['relation'] == 'support' else 'contradicting_observations'
+            candidate[counter] += len(fresh)
+            candidate['seen_observations'] = sorted(set(candidate['seen_observations']) | fresh)
+        if ident in emitted:
+            continue
+        age = max(0, step - candidate['birth_step'])
+        protected = (config['hypothesis_protection'] and age < config['protection_steps']
+            and candidate['relation'] != 'contradict' and candidate['status'] not in {'excluded', 'unavailable', 'dropped'}
+            and _candidate_check(candidate, state, records))
+        if protected:
+            candidate['status'] = 'protected'
+            record_event('hypothesis_protected', candidate,
+                reason='候选被本轮模型遗漏，仍在有限保护期内且存在可执行鉴别检查')
+        else:
+            if config['hypothesis_protection'] and age >= config['protection_steps'] and candidate['status'] == 'protected':
+                record_event('protection_expired', candidate, reason='已完成步骤达到保护期限')
+            candidate['status'] = 'dropped'
+
+    selected, selection_kind = None, ''
+    if config['contradiction_trigger'] and contradicted_leader:
+        selected = next((c for c in candidates.values()
+            if c['id'] != contradicted_leader['id'] and c['status'] in {'active', 'protected'}
+            and c['relation'] != 'contradict' and _candidate_check(c, state, records)), None)
+        selection_kind = 'contradiction_triggered'
+        if selected is None:
+            decision.next_check, decision.next_tools, decision.next_question_id = '', [], ''
+            decision.root_cause, decision.outcome = '', 'investigating'
+            decision.blocked_reason = '原领先候选的现场预期被反驳，但没有可执行的替代鉴别检查；保留证据并停止。'
+            record_event('contradiction_blocked', contradicted_leader,
+                evidence_ids=contradicted_leader['evidence_ids'],
+                condition=contradicted_leader['condition'], reason=decision.blocked_reason)
+    if selected is None and not (config['contradiction_trigger'] and contradicted_leader):
+        selected = next((c for c in candidates.values() if c['status'] == 'protected'
+            and _candidate_check(c, state, records)), None)
+        selection_kind = 'protection_check_selected'
+    if selected:
+        record_event(selection_kind, selected, from_check=decision.next_check,
+            next_check=selected['check']['next_check'],
+            previous_leader_id=previous.get('leading_id', ''),
+            evidence_ids=contradicted_leader['evidence_ids'] if contradicted_leader else [],
+            condition=contradicted_leader['condition'] if contradicted_leader else None,
+            reason='新现场证据反驳此前领先候选的可核查预期' if contradicted_leader else '优先核查保护期内被遗漏的候选')
+        if selected['id'] not in emitted:
+            retained = Alternative.model_validate(selected['proposal'])
+            retained.status, retained.verification = 'unresolved', 'unverified'
+            decision.alternatives.append(retained)
+        for name, value in selected['check'].items():
+            setattr(decision, name, value)
+        decision.next_question_id = ''
+        decision.hypothesis = selected['explanation']
+        decision.hypothesis_condition = ObservationCondition.model_validate(selected['condition']) if selected['condition'] else None
+        decision.root_cause, decision.outcome = '', 'investigating'
+        primary_id = selected['id']
+    current = candidates.get(primary_id, {})
+    return {'version': 1, 'config': config, 'leading_id': primary_id,
+        'current_prediction_contradicted': current.get('relation') == 'contradict',
+        'candidates': list(candidates.values()), 'events': events}
 
 
 def _localized_findings(records, state):
@@ -618,7 +807,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
     scoped_records = {key: value for key, value in current_probe_records(records).items()
                       if in_business_scope(json.loads(value['payload']), state.get('target_resolution'))}
     decision.validation_issues.extend(_validate_alternatives(decision, scoped_records))
-    update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state)}
+    tracking = _apply_investigation_mechanisms(state, decision, scoped_records)
+    update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state, tracking)}
     sufficient = (
         (bool(decision.root_cause) or decision.outcome == "healthy")
         and _valid_citations(decision.supporting_evidence, scoped_records)
@@ -629,6 +819,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
                 for a in decision.alternatives)
         and bool(decision.scope.strip())
         and decision.conclusion_level in {'confirmed_cause', 'healthy_within_scope'}
+        and not tracking['current_prediction_contradicted']
     )
     # Legacy citations remain displayable; incomplete provenance cannot
     # support a new deterministic conclusion.
@@ -702,7 +893,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
             else:
                 lines.append(f"未能排除：{alternative.explanation}；{alternative.limitation}")
         kind = 'healthy_within_scope' if decision.outcome == 'healthy' else 'confirmed_cause'
-        return {**update, 'diagnosis': diagnosis_result(state, decision, kind, records), "response": "\n".join(lines) + format_knowledge_references(
+        return {**update, 'diagnosis': diagnosis_result(state, decision, kind, records, tracking=tracking), "response": "\n".join(lines) + format_knowledge_references(
             state.get("raw_evidence")), "plan": []}
     next_check = decision.next_check.strip()
     prior_questions = (state.get('investigation_memory') or {}).get('unresolved_questions') or []
@@ -715,7 +906,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
             text = decision.discriminating_question.strip() or next_check
             decision.next_question_id = next((q['id'] for q in prior_questions
                 if q.get('question') == text), 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12])
-        update['investigation_memory'] = _decision_memory(decision, model_suggestion, records, state)
+        update['investigation_memory'] = _decision_memory(decision, model_suggestion, records, state, tracking)
     decision_data = decision.model_dump()
     check_error = question_error or followup_check_error(decision_data, state)
     if not check_error:
@@ -726,7 +917,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         # audit export explain why the loop stopped without another model
         # decision.
         decision.blocked_reason = check_error
-        update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state)}
+        update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state, tracking)}
     completed = {step.strip() for step, _ in state.get("past_steps", [])}
     if next_check and next_check not in completed and not check_error:
         return {**update, "plan": [next_check]}
@@ -743,7 +934,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         references.extend(c for c in decision.supporting_evidence
                           if _valid_citations([c], records) and (c.evidence_id, c.quote) not in seen)
         decision.supporting_evidence = references
-        update['investigation_memory'] = _decision_memory(decision, model_suggestion, records, state)
+        update['investigation_memory'] = _decision_memory(decision, model_suggestion, records, state, tracking)
         reason = check_error or decision.blocked_reason or '故障层已定位，更深原因尚未核实；当前没有新的可执行检查'
         lines = [f'已定位故障层：{decision.localized_fault}',
                  f'检查范围：{decision.scope or state.get("input", "")}',
@@ -752,7 +943,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         lines.extend(citation_line(c, records) for c in references)
         lines.extend(f'未决解释：{a.explanation}；{a.limitation}' for a in decision.alternatives if a.status != 'excluded')
         lines.extend('判断校验：' + issue for issue in decision.validation_issues)
-        return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'localized_fault', records, reason),
+        return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'localized_fault', records, reason, tracking=tracking),
                 'response': '\n'.join(lines) + format_knowledge_references(state.get('raw_evidence'))}
     # Reject unsupported conclusions. A repeated check without a new check target
     # is lack of progress, not success or a hidden overall execution budget.
@@ -777,5 +968,5 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         lines.append(incomplete_report(state, records, reason))
     lines.extend('待核实矛盾：' + item for item in decision.contradictions)
     lines.extend('判断校验：' + item for item in decision.validation_issues)
-    return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'unlocated', records, reason), 'response': '\n'.join(lines)
+    return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'unlocated', records, reason, tracking=tracking), 'response': '\n'.join(lines)
             + format_knowledge_references(state.get('raw_evidence'))}

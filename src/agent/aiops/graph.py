@@ -345,6 +345,7 @@ class AIOpsService:
                 )
                 return
 
+            from src.agent.aiops.strategies.investigation import mechanism_config
             initial: PlanExecuteState = {
                 "input": user_input,
                 "plan": [],
@@ -352,6 +353,7 @@ class AIOpsService:
                 "response": "",
                 "terminal_enabled": terminal_enabled,
                 "autonomous_investigation": terminal_enabled or settings.PROBE_ENABLED,
+                "investigation_config": mechanism_config(),
                 "thread_id": unique_session,
                 "user_id": user_id,
                 "evidence_events": [],
