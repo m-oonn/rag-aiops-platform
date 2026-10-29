@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, T
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from src.database.sql_session import Base
+from src.settings import settings
 
 class User(Base):
     __tablename__ = "users"
@@ -174,7 +175,7 @@ class Assistant(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Configuration
-    llm_model = Column(String, default="qwen3.8-max")
+    llm_model = Column(String, default=lambda: settings.LLM_MODEL)
     temperature = Column(Float, default=0.7)
     system_prompt = Column(Text, nullable=True)
     greeting_message = Column(Text, nullable=True) # New: Opening remarks

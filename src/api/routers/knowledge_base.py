@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fastapi.responses import StreamingResponse, FileResponse
 import io
 
@@ -48,11 +48,20 @@ class KBCreate(BaseModel):
     is_public: bool = False
     chunking_config: Optional[Dict[str, Any]] = None # e.g. {"method": "recursive", "chunk_size": 300, "chunk_overlap": 50}
 
+    @field_validator("chunking_config")
+    @classmethod
+    def validate_retrieval_mode(cls, config):
+        if config and config.get("retrieval_mode", "hybrid") not in ("hybrid", "bm25"):
+            raise ValueError("retrieval_mode must be hybrid or bm25")
+        return config
+
 class KBUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_public: Optional[bool] = None
     chunking_config: Optional[Dict[str, Any]] = None
+
+    validate_retrieval_mode = field_validator("chunking_config")(KBCreate.validate_retrieval_mode.__func__)
 
 class KBOut(BaseModel):
     id: int
@@ -74,6 +83,8 @@ class DocumentOut(BaseModel):
     chunk_count: int
     file_size: int
     created_at: datetime
+    source_url: Optional[str] = None
+    chunking_config: Optional[Dict[str, Any]] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,10 +110,35 @@ class QAPairUpdate(BaseModel):
 
 class ChunkOut(BaseModel):
     id: int
+    chunk_uid: str
     content: str
     page_num: Optional[int]
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class KeywordSearch(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+def _is_local_document(doc, db):
+    kb = db.get(KnowledgeBase, doc.kb_id)
+    config = doc.chunking_config or (kb.chunking_config if kb else {}) or {}
+    return config.get("retrieval_mode", "hybrid") == "bm25"
+
+
+def _dispatch_document(doc, db, background_tasks):
+    if _is_local_document(doc, db):
+        # 不派给可能尚未加载本地模式代码的在线 worker。
+        doc.celery_task_id = None
+        db.commit()
+        background_tasks.add_task(process_document, doc.id)
+        return None
+    task = _try_celery_delay(doc.id)
+    doc.celery_task_id = task.id
+    db.commit()
+    return task.id
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -277,6 +313,7 @@ def upload_document(
     kb_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    source_url: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -353,7 +390,9 @@ def upload_document(
         file_type=safe_filename.split('.')[-1],
         file_size=os.path.getsize(abs_file_path),
         chunk_count=0, # Initialize chunk count
-        status=0 # Uploading
+        status=0, # Uploading
+        source_url=source_url,
+        chunking_config=dict(kb.chunking_config or {}),
     )
     db.add(doc)
     db.commit()
@@ -361,10 +400,8 @@ def upload_document(
     
     # Trigger Celery task
     try:
-        task = _try_celery_delay(doc.id)
-        doc.celery_task_id = task.id
-        db.commit()
-        return {"message": "File uploaded successfully", "doc_id": doc.id, "task_id": task.id}
+        task_id = _dispatch_document(doc, db, background_tasks)
+        return {"message": "File uploaded successfully", "doc_id": doc.id, "task_id": task_id}
     except Exception as e:
         # broker 不可用(demo 无 RabbitMQ):转后台同步处理,上传立即成功,前端轮询状态
         logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
@@ -389,7 +426,7 @@ def batch_retry_documents(
             doc.error_msg = None
             db.commit()
             try:
-                _try_celery_delay(doc.id)
+                _dispatch_document(doc, db, background_tasks)
             except Exception:
                 background_tasks.add_task(process_document, doc.id)
             restarted.append(doc.id)
@@ -443,10 +480,8 @@ def retry_document(
     db.commit()
 
     try:
-        task = _try_celery_delay(doc.id)
-        doc.celery_task_id = task.id
-        db.commit()
-        return {"message": "Retry started", "task_id": task.id}
+        task_id = _dispatch_document(doc, db, background_tasks)
+        return {"message": "Retry started", "task_id": task_id}
     except Exception as e:
         logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
         background_tasks.add_task(process_document, doc.id)
@@ -467,6 +502,21 @@ def list_documents(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     return db.query(KnowledgeDocument).filter(KnowledgeDocument.kb_id == kb_id).all()
+
+
+@router.post("/{kb_id}/search")
+def search_local_knowledge(kb_id: int, search: KeywordSearch,
+                         current_user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    kb = get_knowledge_base(kb_id, current_user, db)
+    if (kb.chunking_config or {}).get("retrieval_mode") != "bm25":
+        raise HTTPException(status_code=400, detail="此入口仅用于本地关键词知识库")
+    from src.retrieval.knowledge_bm25 import retrieve_knowledge_bm25
+    results = retrieve_knowledge_bm25(db, kb_id, search.query, search.top_k)
+    return {"data_source": "knowledge_base", "retrieval_mode": "bm25", "results": [
+        {"chunk_id": r.id, "content": r.text, "score": r.score, **r.metadata}
+        for r in results
+    ]}
 
 @router.post("/documents/{doc_id}/generate-qa", response_model=List[QAPairOut])
 def generate_qa_for_document(
@@ -662,17 +712,19 @@ def reprocess_document(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     if config:
-        doc.chunking_config = config
+        previous = doc.chunking_config or kb.chunking_config or {}
+        mode = config.get("retrieval_mode", previous.get("retrieval_mode", "hybrid"))
+        if mode not in ("hybrid", "bm25"):
+            raise HTTPException(status_code=422, detail="Invalid retrieval_mode")
+        doc.chunking_config = {**config, "retrieval_mode": mode}
 
     doc.status = 0 # Reset status to pending
     doc.error_msg = None
     db.commit()
 
     try:
-        task = _try_celery_delay(doc.id)
-        doc.celery_task_id = task.id
-        db.commit()
-        return {"message": "Reprocessing started", "doc_id": doc.id, "task_id": task.id}
+        task_id = _dispatch_document(doc, db, background_tasks)
+        return {"message": "Reprocessing started", "doc_id": doc.id, "task_id": task_id}
     except Exception as e:
         logger.warning(f"Celery broker 不可用,转同步处理 doc {doc.id}: {e}")
         background_tasks.add_task(process_document, doc.id)

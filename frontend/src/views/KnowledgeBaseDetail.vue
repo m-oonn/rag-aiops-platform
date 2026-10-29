@@ -6,6 +6,19 @@
       <span class="desc">{{ kb.description }}</span>
     </div>
 
+    <section v-if="isLocalKnowledge" class="keyword-search">
+      <p>本地关键词检索 · 文档解析后直接检索，无需模型服务。手册提供检查方法，现场结论仍需本次证据。</p>
+      <el-input v-model="searchQuery" placeholder="输入排查关键词，例如：连接拒绝" @keyup.enter="searchKnowledge" />
+      <el-button @click="searchKnowledge" :loading="searching">检索手册</el-button>
+      <p v-if="searchDone && !searchResults.length">没有匹配片段，请调整关键词；不能据此判断现场故障原因。</p>
+      <article v-for="result in searchResults" :key="result.chunk_id" class="search-result">
+        <strong>{{ result.filename }} · 第 {{ result.page }} 页</strong>
+        <small>片段 {{ result.chunk_id }}</small>
+        <el-button size="small" @click="previewFile({ id: result.doc_id, filename: result.filename }, result.page)">查看引用原文</el-button>
+        <p>{{ result.content }}</p>
+      </article>
+    </section>
+
     <div class="actions-bar">
       <el-upload
         class="upload-demo"
@@ -64,6 +77,17 @@
         </template>
       </el-table-column>
       <el-table-column prop="chunk_count" label="分片数" width="100" />
+      <el-table-column label="检索方式" width="140">
+        <template #default="scope">
+          {{ (scope.row.chunking_config || kb.chunking_config)?.retrieval_mode === 'bm25' ? '本地关键词' : '向量与关键词' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="资料来源" min-width="150">
+        <template #default="scope">
+          <a v-if="/^https?:\/\//i.test(scope.row.source_url || '')" :href="scope.row.source_url" target="_blank" rel="noopener noreferrer">参考来源</a>
+          <span v-else>见文档原文</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="上传时间">
         <template #default="scope">
           {{ formatDate(scope.row.created_at) }}
@@ -244,6 +268,27 @@ const activeNames = ref(['1'])
 const headers = computed(() => ({
   Authorization: `Bearer ${localStorage.getItem('token')}`
 }))
+
+const isLocalKnowledge = computed(() => kb.value.chunking_config?.retrieval_mode === 'bm25')
+const searchQuery = ref('')
+const searchResults = ref([])
+const searchDone = ref(false)
+const searching = ref(false)
+const searchKnowledge = async () => {
+  if (!searchQuery.value.trim()) return
+  searching.value = true
+  searchDone.value = false
+  searchResults.value = []
+  try {
+    const res = await api.post(`/knowledge-bases/${kbId}/search`, { query: searchQuery.value, top_k: 5 })
+    searchResults.value = res.data.results
+    searchDone.value = true
+  } catch (e) {
+    ElMessage.error('检索失败，请检查知识库状态')
+  } finally {
+    searching.value = false
+  }
+}
 
 const fetchKB = async () => {
   try {
@@ -480,13 +525,13 @@ const viewChunks = async (row) => {
   }
 }
 
-const previewFile = async (row) => {
+const previewFile = async (row, page = null) => {
     try {
         currentPreviewFile.value = row
         console.log('Requesting preview for:', row.id)
         const res = await api.get(`/knowledge-bases/documents/${row.id}/preview`, { responseType: 'blob' })
         const blob = new Blob([res.data], { type: res.headers['content-type'] })
-        previewUrl.value = URL.createObjectURL(blob)
+        previewUrl.value = URL.createObjectURL(blob) + (page && /^application\/pdf/i.test(blob.type) ? `#page=${page}` : '')
         previewVisible.value = true
     } catch (e) {
         console.error('Preview error:', e)
@@ -593,4 +638,9 @@ onMounted(() => {
   gap: 10px;
   align-items: center;
 }
+.keyword-search { margin-bottom: 20px; }
+.keyword-search > .el-input { max-width: 520px; margin-right: 10px; }
+.search-result { padding: 16px; margin-top: 12px; border: 1px solid var(--el-border-color); border-radius: 6px; }
+.search-result small { display: block; color: var(--el-text-color-secondary); overflow-wrap: anywhere; margin: 6px 0; }
+.search-result p { white-space: pre-wrap; line-height: 1.7; }
 </style>

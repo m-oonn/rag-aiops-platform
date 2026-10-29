@@ -84,6 +84,25 @@ def search_knowledge_base(
     Returns:
         包含 results 列表（每个元素有 content/source/page/score）和 total 计数。
     """
+    from src.database.sql_session import SessionLocal
+    from src.database.models import KnowledgeBase
+    from src.retrieval.knowledge_bm25 import retrieve_knowledge_bm25
+    db = SessionLocal()
+    try:
+        kb = db.get(KnowledgeBase, kb_id)
+        local = bool(kb and (kb.chunking_config or {}).get("retrieval_mode") == "bm25")
+        local_results = retrieve_knowledge_bm25(db, kb_id, query, min(max(top_k, 1), 20)) if local else None
+    finally:
+        db.close()
+    if local:
+        return {
+            "data_source": "knowledge_base", "retrieval_mode": "bm25",
+            "query": query, "kb_id": kb_id, "total": len(local_results),
+            "results": [{"content": r.text, "source": r.metadata["filename"],
+                         "page": r.metadata["page"], "doc_id": r.metadata["doc_id"],
+                         "source_url": r.metadata["source_url"], "score": r.score,
+                         "chunk_id": r.id} for r in local_results],
+        }
     retriever = _get_retriever()
     reranker = _get_reranker()
 

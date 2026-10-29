@@ -10,6 +10,8 @@
 """
 
 import re
+import math
+from collections import Counter
 from typing import Any, Optional
 from rank_bm25 import BM25Okapi
 
@@ -55,6 +57,11 @@ class BM25Retriever(BaseRetriever):
         self._chunks = list(chunks)
         tokenized = [_tokenize(text) for _, text, _ in self._chunks]
         self._bm25 = BM25Okapi(tokenized) if tokenized else None
+        if self._bm25:
+            # 正值 IDF 防止小语料或高频词的明确匹配因零/负分被丢弃。
+            frequencies = Counter(word for words in tokenized for word in set(words))
+            self._bm25.idf = {word: math.log(1 + (len(tokenized) - count + 0.5) / (count + 0.5))
+                              for word, count in frequencies.items()}
 
     @property
     def is_indexed(self) -> bool:

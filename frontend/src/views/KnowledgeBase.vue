@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="知识库" subtitle="管理文档集合与向量索引">
+    <PageHeader title="知识库" subtitle="管理文档集合与检索索引">
       <template #actions>
         <el-button type="primary" @click="dialogVisible = true">创建知识库</el-button>
       </template>
@@ -68,6 +68,12 @@
         </el-form-item>
         
         <el-divider>分块策略</el-divider>
+        <el-form-item label="检索方式">
+          <el-select v-model="form.chunking_config.retrieval_mode">
+            <el-option label="向量与关键词（使用模型服务）" value="hybrid" />
+            <el-option label="本地关键词（无需模型服务）" value="bm25" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="切分方式">
             <el-select v-model="form.chunking_config.method">
                 <el-option label="递归切分（推荐）" value="recursive" />
@@ -105,6 +111,12 @@
         </el-form-item>
         
         <el-divider>分块策略</el-divider>
+        <el-form-item label="检索方式">
+          <el-select v-model="editForm.chunking_config.retrieval_mode">
+            <el-option label="向量与关键词（使用模型服务）" value="hybrid" />
+            <el-option label="本地关键词（无需模型服务）" value="bm25" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="切分方式">
             <el-select v-model="editForm.chunking_config.method">
                 <el-option label="递归切分（推荐）" value="recursive" />
@@ -155,6 +167,7 @@ const form = reactive({
   name: '',
   description: '',
   chunking_config: {
+      retrieval_mode: 'hybrid',
       method: 'recursive',
       chunk_size: 500,
       chunk_overlap: 50,
@@ -166,6 +179,7 @@ const editForm = reactive({
   name: '',
   description: '',
   chunking_config: {
+      retrieval_mode: 'hybrid',
       method: 'recursive',
       chunk_size: 500,
       chunk_overlap: 50,
@@ -198,12 +212,12 @@ const openEditDialog = (kb) => {
     editForm.name = kb.name
     editForm.description = kb.description
     // Deep copy to avoid reference issues
-    editForm.chunking_config = JSON.parse(JSON.stringify(kb.chunking_config || {
+    editForm.chunking_config = JSON.parse(JSON.stringify({ retrieval_mode: 'hybrid', ...(kb.chunking_config || {
         method: 'recursive',
         chunk_size: 500,
         chunk_overlap: 50,
         separator: ''
-    }))
+    }) }))
     editDialogVisible.value = true
 }
 

@@ -25,6 +25,33 @@ async function mountDetail() {
 }
 
 describe('KnowledgeBaseDetail.vue', () => {
+  it('searches local runbooks and shows page and chunk provenance without QA generation', async () => {
+    api.get.mockImplementation((url) => Promise.resolve({ data: url.endsWith('/documents') ? [] : {
+      id: 1, name: '运维手册', chunking_config: { retrieval_mode: 'bm25' }
+    } }))
+    api.post.mockResolvedValue({ data: { results: [{ doc_id: 10, chunk_id: 'guide-2', filename: 'guide.pdf', page: 2, content: '查看连接拒绝日志' }] } })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.find('input[placeholder*="排查关键词"]').setValue('连接拒绝')
+    await wrapper.findAll('button').find(b => b.text() === '检索手册').trigger('click')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('/knowledge-bases/1/search', { query: '连接拒绝', top_k: 5 })
+    expect(wrapper.text()).toContain('guide.pdf · 第 2 页')
+    expect(wrapper.text()).toContain('片段 guide-2')
+    const objectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:runbook')
+    api.get.mockResolvedValueOnce({ data: new Blob(['PDF']), headers: { 'content-type': 'application/pdf' } })
+    await wrapper.findAll('button').find(b => b.text() === '查看引用原文').trigger('click')
+    await flushPromises()
+    expect(api.get).toHaveBeenCalledWith('/knowledge-bases/documents/10/preview', { responseType: 'blob' })
+    expect(wrapper.find('iframe').attributes('src')).toBe('blob:runbook#page=2')
+    objectUrl.mockRestore()
+    api.post.mockResolvedValueOnce({ data: { results: [] } })
+    await wrapper.findAll('button').find(b => b.text() === '检索手册').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('没有匹配片段')
+    expect(wrapper.text()).not.toContain('查看连接拒绝日志')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue()

@@ -1,7 +1,6 @@
 """BM25 检索器测试。
 
-注意：rank_bm25 的 BM25Okapi 在极小语料（≤3 篇文档）时 IDF 可能为 0。
-测试语料需足够大让 IDF 有意义，或使用常见词/罕见词比例合适的查询。
+使用正值 IDF，单片段及高频匹配词也必须可检索。
 """
 
 from src.retrieval.bm25_retriever import BM25Retriever
@@ -59,9 +58,14 @@ class TestBM25Retriever:
         ]
         self.retriever.index_chunks(chunks)
         results = self.retriever.retrieve("CPU 过高", top_k=5)
-        # 正确性：空结果可接受（极小语料下 IDF=0），但如果有结果，得分应在 0-1
-        if results:
-            assert all(0 < r.score <= 1.0 for r in results)
+        assert results
+        assert all(0 < r.score <= 1.0 for r in results)
+
+    def test_single_chunk_and_common_term_are_retrievable(self):
+        self.retriever.index_chunks([('one', 'connection refused', {'kb_id': 1})])
+        assert [r.id for r in self.retriever.retrieve('refused')] == ['one']
+        self.retriever.index_chunks([('one', 'connection refused', {}), ('two', 'connection timeout', {})])
+        assert len(self.retriever.retrieve('connection')) == 2
 
     def test_no_match_returns_empty(self):
         """完全不匹配的关键词应返回空。"""
