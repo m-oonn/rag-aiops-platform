@@ -10,7 +10,7 @@
 
 两个消费方共用同一套判定口径,避免"Agent 看到的"和"命令行看到的"不一致:
   - mcp_servers/monitor_server.py: 包成 MCP 工具暴露给运维 Agent;
-  - scripts/probe_site.py:         命令行直接探测,给人和脚本用。
+  - scripts/probes/probe_site.py:         命令行直接探测,给人和脚本用。
 
 关键纪律(实测踩坑沉淀):
   - 默认**绕过系统代理直连**:诊断工具必须反映"网站本身是否可达",走代理时代理的

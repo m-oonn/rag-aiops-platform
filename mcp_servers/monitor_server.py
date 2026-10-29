@@ -11,7 +11,7 @@
   - check_service_health(base_url, health_path): 服务级健康端点探测;
   - check_api_endpoint(url, method, payload): 接口级业务探测,识别"页面能打开但功能坏"。
   这些探测的**判定口径与实现**统一收敛在 mcp_servers/site_probe.py(纯标准库引擎),
-  命令行工具 scripts/probe_site.py 复用同一套逻辑,保证"Agent 看到的"与"人看到的"一致。
+  命令行工具 scripts/probes/probe_site.py 复用同一套逻辑,保证"Agent 看到的"与"人看到的"一致。
 
 指标工具(query_cpu_metrics/query_memory_metrics)返回体统一带 data_source
 ("prometheus"真实 / "unavailable"不可用)。

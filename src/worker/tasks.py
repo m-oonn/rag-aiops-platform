@@ -11,6 +11,7 @@ from src.database.vector_db import MilvusClient
 from src.models.vector import VectorRecord
 from src.utils.logger import logger
 import os
+import re
 
 # 进度回调签名: (state, progress_pct, message) -> None
 ProgressCallback = Callable[[str, int, str], None]
@@ -107,18 +108,37 @@ def process_document(doc_id: int, progress: Optional[ProgressCallback] = None) -
         
         chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         # split_document returns List[Chunk] (Pydantic models)
-        chunks = chunker.split_document(parsed_doc)
+        # PDF 按真实页边界切分，避免跨页 chunk 的引用页码失真。
+        if doc.file_type == "pdf":
+            parts = re.split(r"\[Page (\d+)\]", parsed_doc.content or "")
+            pages = [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts), 2)]
+            chunks = chunker.split_text_with_pages(pages, parsed_doc.id, parsed_doc.metadata.source)
+        else:
+            chunks = chunker.split_document(parsed_doc)
         
         doc.chunk_count = len(chunks)
         db.commit()
         
         if not chunks:
              logger.warning(f"No chunks created for doc {doc_id}")
+             db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc.id).delete()
              # Treat as completed but empty
              doc.status = 2
              db.commit()
              return "Completed (No content)"
         
+        if config.get("retrieval_mode", "hybrid") == "bm25":
+            db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc.id).delete()
+            for chunk in chunks:
+                db.add(DocumentChunk(
+                    chunk_uid=chunk.id, doc_id=doc.id, content=chunk.text,
+                    page_num=chunk.metadata.page, vector_id="",  # 本地模式没有向量记录
+                ))
+            doc.status = 2
+            db.commit()
+            update_progress('SUCCESS', 100, 'Local keyword retrieval ready (no embeddings)')
+            return "Success (BM25 only)"
+
         update_progress('PROCESSING', 50, f'Generated {len(chunks)} chunks, embedding...')
 
         # 4. Generate Embeddings
