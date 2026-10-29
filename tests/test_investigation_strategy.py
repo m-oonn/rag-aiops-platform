@@ -323,6 +323,27 @@ async def test_blocked_report_keeps_verified_provenance_and_unresolved_explanati
 
 
 @pytest.mark.asyncio
+async def test_localized_stop_does_not_claim_available_checks_are_exhausted(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989,
+        'tcp': 'failed', 'tcp_error': 'ConnectionRefusedError'})
+    answer = decision(blocked_reason='当前没有新的可执行检查')
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
+    current = state()
+    current['raw_evidence'] = [('downstream probe', json.dumps(raw))]
+    current['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    assert result['diagnosis']['kind'] == 'localized_fault'
+    assert '模型停止建议（检查覆盖未独立核验）' in result['diagnosis']['stop_reason']
+    assert '系统未独立验证当前可用检查是否已穷尽' in result['response'] or '未独立核验' in result['response']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('invalid_quote', ['', 'invented observation'])
 async def test_uncited_exclusion_stays_unresolved_in_report_and_memory(monkeypatch, invalid_quote):
     evidence = [module.Citation(evidence_id='e1.1', quote=invalid_quote)] if invalid_quote else []

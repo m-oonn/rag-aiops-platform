@@ -855,6 +855,15 @@ def followup_check_error(memory, state):
     return ''
 
 
+def investigation_stop_reason(decision, check_error=''):
+    """Report who supplied the stop reason without claiming checks were exhausted."""
+    if check_error:
+        return check_error
+    if decision.blocked_reason.strip():
+        return f'模型停止建议（检查覆盖未独立核验）：{decision.blocked_reason.strip()}'
+    return '模型未提出下一项检查；系统未独立验证当前可用检查是否已穷尽。'
+
+
 def _observation_scope(value):
     """Return the configured scope of one Probe observation.
 
@@ -1120,7 +1129,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
                           if _valid_citations([c], records) and (c.evidence_id, c.quote) not in seen)
         decision.supporting_evidence = references
         update['investigation_memory'] = _decision_memory(decision, model_suggestion, records, state, tracking)
-        reason = check_error or decision.blocked_reason or '故障层已定位，更深原因尚未核实；当前没有新的可执行检查'
+        reason = investigation_stop_reason(decision, check_error)
         lines = [f'已定位故障层：{decision.localized_fault}',
                  f'检查范围：{decision.scope or state.get("input", "")}',
                  '停止原因：' + reason,
@@ -1134,7 +1143,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
                 + format_knowledge_references(state.get('raw_evidence'))}
     # Reject unsupported conclusions. A repeated check without a new check target
     # is lack of progress, not success or a hidden overall execution budget.
-    reason = check_error or decision.blocked_reason or "没有新的可执行检查，或结论未通过原始证据与替代解释核验"
+    reason = investigation_stop_reason(decision, check_error)
     lines = [f'未定位根因：{reason}', '本次结论未通过证据门槛，不能据此认定目标正常。',
              f'模型推断（未验证，不作为现场事实）：{decision.hypothesis}']
     lines.extend(resource_fact_lines(records))
