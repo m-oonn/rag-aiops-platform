@@ -1,5 +1,7 @@
 # Windows Probe 首期运行说明
 
+2026-10-29 专用业务新增精确进程参数匹配、依赖服务映射和独立下游日志，见[下游进程与日志补查验收](downstream-observation-mapping-20261029.md)。process_args 只在采集端按连续精确 argv 片段匹配，不输出命令行；不可读计入跳过数。旧配置不变。业务目录 dependency_services 必须同时满足本次依赖范围和实际 inventory 白名单，不能凭别名同名扩大检查对象。
+
 Probe 只读采集当前 Windows 目标的服务、进程、端口、资源、白名单日志和配置依赖探测。它没有 `exec`、PowerShell、写文件或服务控制协议；高风险动作继续走 Termcp。
 
 1. 在目标机安装 `pywin32` 和项目依赖，创建 `C:\ProgramData\RagAIOpsProbe\config.toml`、`token`、`ca.pem`。配置格式参见 [windows-probe-config.example.toml](windows-probe-config.example.toml)。
