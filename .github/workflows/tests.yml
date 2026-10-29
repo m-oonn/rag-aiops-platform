@@ -2,7 +2,7 @@ name: offline-tests
 
 # 离线单测 CI:不需要任何外部服务(PostgreSQL / Redis / Elasticsearch / Milvus / 网络),
 # 只运行 tests/ 中**未**标注 @pytest.mark.integration 的用例(分类规则见根目录 pytest.ini)。
-# 需要外部服务的 98 个集成用例不在本工作流运行,可本地用 `pytest -m integration` 手工触发。
+# 需要外部服务的集成用例不在本工作流运行,可本地用 `pytest -m integration` 手工触发。
 
 on:
   push:
@@ -16,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           cache: pip
 
       - name: Install dependencies (exclude heavyweight OCR / LLM extras)

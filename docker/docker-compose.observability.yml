@@ -9,7 +9,7 @@ version: '3.8'
 # 用法:
 #   docker compose -f docker/docker-compose.observability.yml up -d
 #   python scripts/seed_es_demo_logs.py        # ES 是空的,灌入样本日志后日志链路才查得出东西
-#   python scripts/probe_real_backends.py      # 验证;Prometheus 需等 1~2 分钟采够样本
+#   python scripts/probes/probe_real_backends.py      # 验证;Prometheus 需等 1~2 分钟采够样本
 #
 # 注意: 本栈与 docker-compose.yml(应用主栈)相互独立,单独启停,不影响现有部署。
 
