@@ -391,6 +391,68 @@ def test_stop_runs_current_unresolved_check_without_claiming_a_mechanism(protect
                    for e in result['investigation_memory']['hypothesis_tracking']['events'])
 
 
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+def test_failed_dependency_checks_mapped_process_then_log_before_stopping(protection, trigger):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    raw = [evidence(target_id=settings.PROBE_TARGET_ID, operation=op, payload=body) for op, body in [
+        ('inventory', {'configured_services': {'worker': {'process_names': ['python.exe'],
+            'process_identity_configured': True, 'text_logs_available': True,
+            'text_logs': ['C:/demo/downstream.log'], 'event_logs_available': False}}}),
+        ('dependency_probe', {'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'}),
+        ('ports', {'local_port': 6989, 'listening_only': True, 'ports': []})]]
+    current = {'input': 'localapp unavailable', 'past_steps': [],
+        'raw_evidence': [(str(i), json.dumps(row)) for i, row in enumerate(raw)],
+        'target_resolution': {'status': 'resolved', 'allowed_dependencies': ['downstream'],
+            'allowed_services': ['worker'], 'dependency_services': {'downstream': 'worker'}, 'services': {}},
+        'investigation_config': {'hypothesis_protection': protection, 'contradiction_trigger': trigger},
+        'investigation_tools': [{'name': name} for name in ['probe_process_snapshot', 'probe_text_log']]}
+    for operation, tool, args, body in [
+        ('processes', 'probe_process_snapshot', {'service': 'worker'},
+         {'service': 'worker', 'processes': [], 'skipped_count': 0}),
+        ('text_logs', 'probe_text_log', {'service': 'worker', 'path': 'C:/demo/downstream.log', 'lines': 100},
+         {'service': 'worker', 'path': 'C:/demo/downstream.log', 'lines': []})]:
+        result = module.decide_from_evidence(current, decision(blocked_reason='done'), module.evidence_index(current))
+        assert result['plan'], result
+        memory = result['investigation_memory']
+        assert memory['next_tools'] == [tool]
+        assert memory['policy_selected_check']['arguments'] == args
+        assert memory['model_suggestion']['next_check'] == ''
+        assert not any(e['kind'] in {'protection_check_selected', 'contradiction_triggered'}
+                       for e in memory['hypothesis_tracking']['events'])
+        current.update(result)
+        current['past_steps'].append((result['plan'][0], 'observed'))
+        current['raw_evidence'].append((tool, json.dumps(evidence(
+            target_id=settings.PROBE_TARGET_ID, operation=operation, payload=body))))
+    result = module.decide_from_evidence(current, decision(blocked_reason='done'), module.evidence_index(current))
+    assert result['plan'] == []
+    assert '日志为空' in result['response'] and '事件通道未配置' in result['response']
+    assert '当前调查未获得该依赖对应' not in result['response']
+
+
+@pytest.mark.parametrize('boundary', ['remote', 'no_mapping', 'not_allowed', 'no_inventory', 'missing_tool', 'failed'])
+def test_mapped_checks_do_not_expand_permissions_or_retry_failed_parameters(boundary):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    values = [('inventory', {'configured_services': {'worker': {'process_names': ['python.exe']}}}),
+              ('dependency_probe', {'dependency': 'db', 'host': '127.0.0.1', 'tcp': 'failed'})]
+    current = {'target_resolution': {'status': 'resolved', 'allowed_dependencies': ['db'],
+        'allowed_services': ['worker'], 'dependency_services': {'db': 'worker'}},
+        'investigation_tools': [{'name': 'probe_process_snapshot'}]}
+    if boundary == 'remote': values[1][1]['host'] = '192.0.2.1'
+    if boundary == 'no_mapping': current['target_resolution']['dependency_services'] = {}
+    if boundary == 'not_allowed': current['target_resolution']['allowed_services'] = []
+    if boundary == 'no_inventory': values.pop(0)
+    if boundary == 'missing_tool': current['investigation_tools'] = []
+    current['raw_evidence'] = [(op, json.dumps(evidence(
+        target_id=settings.PROBE_TARGET_ID, operation=op, payload=body))) for op, body in values]
+    if boundary == 'failed':
+        current['raw_evidence'].append(('process', json.dumps({'data_source': 'tool_execution',
+            'tool': 'probe_process_snapshot', 'arguments': {'service': 'worker'},
+            'status': 'failed', 'reason': 'timeout'})))
+    assert module._mapped_dependency_check(current, module.evidence_index(current)) is None
+
+
 def test_stop_explains_missing_listener_tool_and_unmapped_downstream_process():
     from src.probe.protocol import evidence
     from src.settings import settings

@@ -60,7 +60,7 @@ def _set_acl(path: Path, *, writable: bool = False) -> None:
     subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r",
                     f"*S-1-5-19:{rights}", "*S-1-5-32-544:(OI)(CI)F" if path.is_dir() else "*S-1-5-32-544:F",
                     "*S-1-5-18:(OI)(CI)F" if path.is_dir() else "*S-1-5-18:F"],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True)
 
 
 def _deploy_runtime(destination: Path) -> Path:

@@ -69,7 +69,14 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             assert 'localapp-guide' in messages[0].content
             selected = [('probe_dependency_probe', {'dependency': 'downstream'}),
                         ('probe_text_log', {'service': 'localapp', 'path': str(log), 'lines': 20})]
-        assert calls['executor'] <= 2, 'unexpected extra executor step'
+        if calls['executor'] > 2:
+            prefix = '此项检查由确定性策略选定，必须调用指定工具并原样使用这些参数：'
+            policy = next((line.split(prefix, 1)[1] for line in messages[0].content.splitlines()
+                           if prefix in line), None)
+            assert policy is not None, 'unexpected extra executor step without a policy check'
+            check = json.loads(policy)
+            selected = [(check['tool'], check['arguments'])]
+        assert calls['executor'] <= 5, 'unexpected extra executor step'
         return AIMessage(content='', tool_calls=[{'id': str(index), 'name': name, 'args': args}
             for index, (name, args) in enumerate(selected)])
 
@@ -135,10 +142,12 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             assert complete['diagnosis']['unresolved_questions']
             assert 'localapp-guide' in report and '参考知识库' in report
             ledger = run_store.list_evidence(thread_id, 1)
-            assert len(ledger) == 4, 'inventory + app + dependency + log expected'
-            assert len([event for event in events if event['type'] == 'evidence']) == 4
+            expected_steps = 5 if scenario == 'downstream_unreachable' else 2
+            expected_evidence = 7 if scenario == 'downstream_unreachable' else 4
+            assert len(ledger) == expected_evidence
+            assert len([event for event in events if event['type'] == 'evidence']) == expected_evidence
             assert run_store.get_run(thread_id).status == 'completed'
-            assert calls['planner'] == 1 and calls['executor'] == calls['decisions'] == 2
+            assert calls['planner'] == 1 and calls['executor'] == calls['decisions'] == expected_steps
             for item in ledger:
                 saved = run_store.get_evidence(thread_id, item['evidence_id'], 1, include_raw=True)
                 validate_evidence(saved['raw'], target_id=settings.PROBE_TARGET_ID)
@@ -153,7 +162,7 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             graph = await service._persistent_graph(service._create_run_strategy())
             state = await graph.aget_state({'configurable': {'thread_id': thread_id}})
             assert not state.next and not state.values['plan']
-            assert state.values['response'] == report and len(state.values['past_steps']) == 2
+            assert state.values['response'] == report and len(state.values['past_steps']) == expected_steps
             assert state.values['autonomous_investigation'] and not state.values['terminal_enabled']
             assert state.values['target_resolution']['status'] == 'resolved'
             assert state.values['target_resolution']['allowed_dependencies'] == ['downstream', 'localapp']
@@ -165,12 +174,12 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             assert read.artifact['status'] == 'success' and read.artifact['action'] == 'evidence_read'
             assert json.loads(read.content)['new_observation'] is False
             assert executor._record_probe_evidence(state.values, read.content, 'inventory') == []
-            assert len(run_store.list_evidence(thread_id, 1)) == 4
+            assert len(run_store.list_evidence(thread_id, 1)) == expected_evidence
             assert '手册不是现场事实' in state.values['investigation_reference_context']
             assert 'downstream' in state.values['investigation_reference_context']
             from src.agent.aiops.evidence_sources import knowledge_context
             assert knowledge_context(state.values['raw_evidence'])[0]['chunk_id'] == 'localapp-guide'
-            assert len(investigation.evidence_index(state.values)) == 4
+            assert len(investigation.evidence_index(state.values)) == expected_evidence
             (output / ('graph-' + scenario + '.json')).write_text(json.dumps(redact({
                 'events': events, 'report': report, 'ledger': ledger}), ensure_ascii=False, indent=2), encoding='utf-8')
             return {'case': 'fixed_model_graph_' + scenario, 'status': 'passed', 'thread_id': thread_id,

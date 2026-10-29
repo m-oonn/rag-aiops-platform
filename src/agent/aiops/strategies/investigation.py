@@ -374,6 +374,49 @@ def _unverified_loopback_dependency_check(state, records):
     return None
 
 
+def _mapped_dependency_check(state, records):
+    """Use explicit local mappings; directory references never grant permissions."""
+    scope = state.get('target_resolution') or {}
+    if scope.get('status') != 'resolved':
+        return None
+    available = {item.get('name') for item in state.get('investigation_tools', [])}
+    current = [json.loads(record['payload']) for record in current_probe_records(records).values()]
+    inventories = [raw['payload'] for raw in current if raw.get('operation') == 'inventory'
+                   and not raw.get('truncated') and not raw['payload'].get('error')]
+    configured = inventories[-1].get('configured_services', {}) if inventories else {}
+    for raw in current:
+        body = raw.get('payload') or {}
+        dep = body.get('dependency')
+        if (raw.get('operation') != 'dependency_probe' or raw.get('truncated') or body.get('error')
+                or body.get('tcp') != 'failed' or dep not in scope.get('allowed_dependencies', [])
+                or str(body.get('host', '')).lower() not in {'localhost', '127.0.0.1', '::1'}):
+            continue
+        service = scope.get('dependency_services', {}).get(dep)
+        if service not in scope.get('allowed_services', []) or service not in configured:
+            continue
+        cfg = configured[service]
+        checks = []
+        if cfg.get('process_names'):
+            checks.append(('processes', 'probe_process_snapshot', {'service': service},
+                           f'核验依赖 {dep} 对应服务 {service} 的配置进程是否存在',
+                           '配置进程PID与资源字段；访问受限时不能断言进程不存在'))
+        for path in cfg.get('text_logs', []) if cfg.get('text_logs_available') else []:
+            if not any(char in path for char in '*?['):
+                checks.append(('text_logs', 'probe_text_log', {'service': service, 'path': path, 'lines': 100},
+                               f'读取依赖 {dep} 对应服务 {service} 的允许日志 {path}',
+                               '实际日志行或读取限制；空日志不证明没有异常'))
+        for operation, tool, args, question, expected in checks:
+            observed = any(item.get('operation') == operation
+                and item.get('payload', {}).get('service') == service
+                and (operation != 'text_logs' or item['payload'].get('path') == args['path'])
+                for item in current)
+            if observed or tool not in available or _failed_check_reason(state, tool, args):
+                continue
+            return ({'next_check': question, 'next_tools': [tool],
+                     'discriminating_question': question, 'expected_observation': expected}, args, raw)
+    return None
+
+
 def _valid_citations(citations, records):
     return bool(citations) and all(
         citation.evidence_id in records
@@ -1063,8 +1106,37 @@ def investigation_gaps(state, decision, records):
             reasons.append('依赖在远端；本机端口快照不能核查远端监听与进程，当前未获得远端采集通道。')
         else:
             reasons.append('依赖探测未返回目标地址，无法判断应使用本机还是远端的监听检查。')
-        if dependency not in scope.get('allowed_services', []):
+        service = scope.get('dependency_services', {}).get(dependency)
+        if service not in scope.get('allowed_services', []):
             reasons.append('当前调查未获得该依赖对应的允许服务/进程及日志映射，无法核查退出或启动失败原因。')
+        elif str(body.get('host', '')).lower() in {'localhost', '127.0.0.1', '::1'}:
+            inventories = [json.loads(r['payload']) for r in current.values()
+                if r.get('provenance', {}).get('operation') == 'inventory']
+            cfg = next((r['payload'].get('configured_services', {}).get(service, {})
+                        for r in reversed(inventories) if not r.get('truncated') and not r['payload'].get('error')), {})
+            for operation, tool in [('processes', 'probe_process_snapshot'), ('text_logs', 'probe_text_log')]:
+                observations = [json.loads(r['payload']) for r in current.values()
+                    if r.get('provenance', {}).get('operation') == operation
+                    and json.loads(r['payload']).get('payload', {}).get('service') == service]
+                failure = _failed_check_reason(state, tool, {'service': service})
+                if not cfg or (operation == 'processes' and not cfg.get('process_names')):
+                    reasons.append(f'{service} 未公布可用的进程身份配置，无法核实该对象进程。')
+                elif operation == 'text_logs' and not cfg.get('text_logs_available'):
+                    reasons.append(f'{service} 文本日志未配置。')
+                elif not observations:
+                    reason = failure or (f'{tool} 工具未加载。' if tool not in available else
+                        f'{service} 的 {operation} 检查尚未取得结果。')
+                    if operation == 'text_logs' and any(any(char in p for char in '*?[') for p in cfg.get('text_logs', [])):
+                        reason += ' 日志通配路径需先配置具体允许文件。'
+                    reasons.append(reason)
+                elif any(r.get('truncated') or r['payload'].get('error')
+                         or (operation == 'processes' and r['payload'].get('skipped_count') != 0) for r in observations):
+                    reasons.append(f'{service} 的 {operation} 结果不可用或不完整，不能排除未观测部分。')
+                elif operation == 'text_logs':
+                    reasons.append('允许日志为空，未记录退出原因。' if all(not r['payload'].get('lines') for r in observations)
+                                   else '已读取允许日志；现有日志内容尚未独立验证停止或启动失败的因果解释。')
+            if not cfg.get('event_logs_available'):
+                reasons.append(f'{service} 事件通道未配置，不能核查系统记录的退出历史。')
         if reasons:
             gaps.append({'id': 'gap-dependency-' + hashlib.sha256(str(dependency).encode()).hexdigest()[:12],
                 'question': f'{dependency} 连接失败的更深原因是什么？',
@@ -1225,7 +1297,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
     current_records = current_probe_records(records)
     scoped_records = {key: value for key, value in current_records.items()
                       if in_business_scope(json.loads(value['payload']), state.get('target_resolution'), current_records)}
-    policy_check = _unverified_loopback_dependency_check(state, scoped_records)
+    policy_check = (_unverified_loopback_dependency_check(state, scoped_records)
+                    or _mapped_dependency_check(state, scoped_records))
     tracking = _apply_investigation_mechanisms(state, decision, scoped_records,
                                                policy_selected=bool(policy_check))
     policy_selection = None
@@ -1237,9 +1310,11 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         decision.discriminating_question = check['discriminating_question']
         decision.expected_observation = check['expected_observation']
         decision.next_question_id = ''
-        policy_selection = {'kind': 'failed_loopback_dependency_listener_check',
+        listener = check['next_tools'] == ['probe_port_snapshot']
+        policy_selection = {'kind': 'failed_loopback_dependency_listener_check' if listener else 'failed_dependency_mapped_check',
             'arguments': policy_arguments, 'dependency_evidence': dependency_evidence.get('raw_hash'),
-            'reason': '白名单 loopback 依赖 TCP 探测失败，尚无同端口监听快照'}
+            'reason': '白名单 loopback 依赖 TCP 探测失败，尚无同端口监听快照' if listener else
+                      '白名单 loopback 依赖 TCP 探测失败，继续核对显式映射的进程或允许日志'}
         tracking['policy_selected_check'] = policy_selection
     else:
         tracking['policy_selected_check'] = None

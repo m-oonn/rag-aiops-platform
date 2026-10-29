@@ -235,7 +235,8 @@ def target_catalog(cfg):
     """Expose configured query names, never the token, CA or gateway settings."""
     from dataclasses import asdict
     return json.dumps({'target_id': cfg.target_id,
-        'services': {name: asdict(value) for name, value in cfg.services.items()},
+        'services': {name: {key: item for key, item in asdict(value).items() if key != 'process_args'}
+                     for name, value in cfg.services.items()},
         'dependencies': {name: asdict(value) for name, value in cfg.dependencies.items()}},
         ensure_ascii=False)
 
@@ -249,7 +250,9 @@ def business_catalog(cfg):
             entries[f'{dep.health_scheme}://{dep.host}:{dep.port}{dep.health_path}'] = name
     return json.dumps({'version': 1, 'target_id': cfg.target_id, 'services': {
         'localapp': {'aliases': ['测试应用'], 'entries': entries,
+            'probe_service': 'localapp' if 'localapp' in cfg.services else None,
             'log_refs': ['localapp'] if 'localapp' in cfg.services else [],
+            'dependency_services': {name: name for name in dependencies if name in cfg.services},
             'dependencies': dependencies}}}, ensure_ascii=False)
 
 

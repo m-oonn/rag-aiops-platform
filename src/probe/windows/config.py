@@ -31,6 +31,7 @@ class ServiceConfig:
     log_providers: tuple[str, ...] = ()
     text_logs: tuple[str, ...] = ()
     kind: str = 'windows_service'
+    process_args: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ def load_config(path: str | Path) -> ProbeConfig:
             service_name=str(table.get("service_name") or name) if kind == 'windows_service' else '',
             kind=kind,
             process_names=_string_tuple(table.get("process_names"), f"services.{name}.process_names"),
+            process_args=_string_tuple(table.get("process_args"), f"services.{name}.process_args"),
             log_channels=_string_tuple(table.get("log_channels"), f"services.{name}.log_channels"),
             log_providers=_string_tuple(table.get("log_providers"), f"services.{name}.log_providers"),
             text_logs=tuple(_validate_path_pattern(x) for x in _string_tuple(table.get("text_logs"), f"services.{name}.text_logs")),

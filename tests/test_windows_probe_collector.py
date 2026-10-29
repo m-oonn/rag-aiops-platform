@@ -224,6 +224,31 @@ def test_collector_fixed_operations_do_not_expose_shell(tmp_path):
         collector.collect("exec", {"command": "whoami"})
 
 
+def test_configured_process_identity_excludes_other_python_and_counts_denied(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from src.probe.windows import collector as module
+    cfg, _ = _config(tmp_path)
+    path = tmp_path / 'probe.toml'
+    path.write_text(path.read_text(encoding='utf-8').replace('process_names = ["orders.exe"]',
+        'process_names = ["python.exe"]\nprocess_args = ["--mode-file", "downstream.mode"]'), encoding='utf-8')
+    cfg = load_config(path)
+    def process(pid, args):
+        return SimpleNamespace(info={'pid': pid, 'name': 'python.exe',
+            'memory_info': SimpleNamespace(rss=100)}, cmdline=Mock(return_value=args),
+            cpu_percent=Mock(return_value=1))
+    right = process(11, ['python.exe', 'app.py', '--mode-file', 'downstream.mode'])
+    wrong = process(12, ['python.exe', 'app.py', '--mode-file', 'app.mode', 'downstream.mode'])
+    denied = process(13, [])
+    denied.cmdline.side_effect = module.psutil.AccessDenied(13)
+    monkeypatch.setattr(module.psutil, 'process_iter', lambda attrs: iter([right, wrong, denied]))
+    monkeypatch.setattr(module.time, 'sleep', lambda _: None)
+    result = WindowsCollector(cfg).processes('orders')
+    assert [row['pid'] for row in result['payload']['processes']] == [11]
+    assert result['payload']['skipped_count'] == 1
+    assert 'downstream.mode' not in str(result)
+    assert WindowsCollector(cfg).inventory()['payload']['configured_services']['orders']['process_identity_configured']
+
+
 def test_process_cpu_is_sampled_twice_with_one_shared_interval(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from src.probe.windows import collector as module
@@ -433,6 +458,7 @@ def test_install_preflight_rejects_empty_token_before_service_changes(tmp_path, 
 def test_acl_failure_is_not_ignored(tmp_path, monkeypatch):
     def fail(command, **kwargs):
         assert kwargs["check"] is True
+        assert not kwargs.get('text'), 'icacls uses the Windows code page, not Python UTF-8 mode'
         assert "*S-1-5-19:(OI)(CI)RX" in command
         raise subprocess.CalledProcessError(5, ["icacls"])
     monkeypatch.setattr(subprocess, "run", fail)

@@ -625,6 +625,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
     (out / 'token').write_text(token, encoding='utf-8')
     log = out / 'app.log'
     log.touch()
+    dep_log = out / 'downstream.log'
+    dep_log.touch()
     app_mode, dep_mode = out / 'app.mode', out / 'downstream.mode'
     app_mode.write_text('normal', encoding='utf-8')
     dep_mode.write_text('normal', encoding='utf-8')
@@ -633,6 +635,9 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
         f"token_file = '{(out / 'token').as_posix()}'", 'baseline_interval_seconds = 60',
         '[services.localapp]', "kind = 'process'",
         "process_names = ['python.exe']", f"text_logs = ['{log.as_posix()}']",
+        f"process_args = ['--mode-file', '{app_mode}']",
+        '[services.downstream]', "kind = 'process'", "process_names = ['python.exe']",
+        f"process_args = ['--mode-file', '{dep_mode}']", f"text_logs = ['{dep_log.as_posix()}']",
         '[dependencies.localapp]', "host = '127.0.0.1'", f'port = {app_port}',
         "health_scheme = 'http'", "health_path = '/health'",
         '[dependencies.downstream]', "host = '127.0.0.1'", f'port = {dep_port}',
@@ -651,7 +656,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             return proc
 
         def application(port, mode, name, dependency=None):
-            args = [str(Path(__file__).resolve()), '--serve', str(port), '--log', str(log), '--mode-file', str(mode)]
+            app_log = log if port == app_port else dep_log
+            args = [str(Path(__file__).resolve()), '--serve', str(port), '--log', str(app_log), '--mode-file', str(mode)]
             if dependency is not None:
                 args += ['--downstream', str(dependency)]
             proc = launch(args, name)
@@ -732,14 +738,14 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 code = await asyncio.to_thread(process.wait, 45)
                 assert code == 0, 'evaluation preflight failed: ' + case
                 result = json.loads((result_dir / 'preflight.json').read_text(encoding='utf-8'))
-                assert result['ok'] and result['model_calls'] == 0 and result['evidence_count'] == 4
+                assert result['ok'] and result['model_calls'] == 0 and result['evidence_count'] == 5
                 assert not (result_dir / 'cost.json').exists(), 'free preflight entered paid budget path'
                 assert len(result['tool_names']) == 10
                 assert result['knowledge_mcp']['transport'] == 'streamable_http_loopback'
                 assert not result['knowledge_mcp']['autonomously_selected']
                 tool_trace = json.loads((result_dir / 'tool_trace.json').read_text(encoding='utf-8'))
-                assert len(tool_trace) == 5
-                assert sum(row['validated_live_evidence'] for row in tool_trace) == 4
+                assert len(tool_trace) == 6
+                assert sum(row['validated_live_evidence'] for row in tool_trace) == 5
                 knowledge_rows = [row for row in tool_trace if row['tool'] == 'search_knowledge_base']
                 assert len(knowledge_rows) == 1 and knowledge_rows[0]['source'] == 'knowledge_base'
                 assert not knowledge_rows[0]['validated_live_evidence']
@@ -776,6 +782,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     else 'application_error' if case in {'application_error', 'missing_evidence'} else 'normal', encoding='utf-8')
                 dep_mode.write_text('normal', encoding='utf-8')
                 log.write_text('', encoding='utf-8')
+                dep_log.write_text('', encoding='utf-8')
                 if case == 'downstream_unreachable':
                     pass
                 else:
@@ -868,6 +875,16 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             process_snapshot = await query('probe_process_snapshot', {'service': 'localapp'}, 'normal')
             app_pids = {app.pid} | {p.pid for p in psutil.Process(app.pid).children(recursive=True)}
             assert app_pids & {row['pid'] for row in process_snapshot['payload']['processes']}
+            dependency_snapshot = await query('probe_process_snapshot', {'service': 'downstream'}, 'normal')
+            dep_pids = {dep.pid} | {p.pid for p in psutil.Process(dep.pid).children(recursive=True)}
+            observed_app = {row['pid'] for row in process_snapshot['payload']['processes']}
+            observed_dep = {row['pid'] for row in dependency_snapshot['payload']['processes']}
+            assert observed_app <= app_pids and observed_dep and observed_dep <= dep_pids
+            assert not observed_app & observed_dep
+            dep_logs = await query('probe_text_log', {'service': 'downstream', 'path': str(dep_log)}, 'normal')
+            assert dep_logs['payload']['lines']
+            assert all(json.loads(line)['pid'] in dep_pids for line in dep_logs['payload']['lines'])
+            cases.append({'case': 'separate_process_and_log_identities', 'status': 'passed', 'model_calls': 0})
             stop(app)
             exited, _ = await observe('application_exit')
             assert exited['app_tcp'] == 'failed' and exited['dependency_http'] == 200
@@ -884,6 +901,49 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             assert app.poll() is None and down['app_tcp'] == 'ok' and down['app_http'] == 503
             assert down['dependency_tcp'] == 'failed' and 'upstream connection failed' in str(logs)
             down['status'] = 'passed'
+            from scripts.evaluate_windows_probe import business_catalog
+            from src.probe.windows.config import load_config
+            from src.agent.aiops.target_catalog import resolve_target
+            from src.agent.aiops.strategies import investigation
+            from src.agent.aiops.executor import _probe_request_limit
+            inventory = await query('probe_inventory', {}, 'mapped-downstream-checks')
+            failed_dependency = await query('probe_dependency_probe', {'dependency': 'downstream'}, 'mapped-downstream-checks')
+            mapped_state = {'input': 'localapp unavailable', 'autonomous_investigation': True,
+                'past_steps': [], 'raw_evidence': [('inventory', json.dumps(inventory)),
+                    ('dependency', json.dumps(failed_dependency))],
+                'target_resolution': resolve_target(business_catalog(load_config(out / 'config.toml')),
+                    'localapp', inventory['payload'], target),
+                'investigation_tools': [{'name': name} for name in tools],
+                'investigation_config': {'hypothesis_protection': False, 'contradiction_trigger': False}}
+            selected = []
+            for expected_tool in ['probe_port_snapshot', 'probe_process_snapshot', 'probe_text_log']:
+                update = investigation.decide_from_evidence(mapped_state,
+                    investigation.InvestigationDecision(hypothesis='dependency unavailable', blocked_reason='fixed stop proposal'),
+                    investigation.evidence_index(mapped_state))
+                mapped_state.update(update)
+                memory = update['investigation_memory']
+                assert update['plan'] and memory['next_tools'] == [expected_tool]
+                args = memory['policy_selected_check']['arguments']
+                assert not _probe_request_limit({'name': expected_tool, 'args': args}, mapped_state)
+                observed = await query(expected_tool, args, 'mapped-downstream-checks')
+                if expected_tool == 'probe_process_snapshot':
+                    assert observed['payload']['processes'] == []
+                if expected_tool == 'probe_text_log':
+                    assert all(json.loads(line)['pid'] in dep_pids for line in observed['payload']['lines'])
+                mapped_state['raw_evidence'].append((update['plan'][0], json.dumps(observed)))
+                mapped_state['past_steps'].append((update['plan'][0], 'observed'))
+                selected.append({'tool': expected_tool, 'arguments': args, 'raw_hash': observed['raw_hash']})
+            final = investigation.decide_from_evidence(mapped_state,
+                investigation.InvestigationDecision(hypothesis='dependency unavailable', blocked_reason='fixed stop proposal'),
+                investigation.evidence_index(mapped_state))
+            assert final['plan'] == [] and final['diagnosis']['kind'] == 'localized_fault'
+            assert '事件通道未配置' in final['response']
+            (out / 'mapped-downstream-checks.json').write_text(json.dumps({
+                'selected': selected, 'diagnosis': final['diagnosis'], 'report': final['response'],
+                'model_calls': 0, 'fixed_decisions': True, 'autonomous_effectiveness_verified': False},
+                ensure_ascii=False, indent=2), encoding='utf-8')
+            cases.append({'case': 'mapped_downstream_checks_executed', 'status': 'passed', 'model_calls': 0,
+                          'fixed_decisions': True, 'tools': [row['tool'] for row in selected]})
             await check_evaluation_entry('downstream_unreachable')
             cases.append(await verify_graph(tools, out, log, 'downstream_unreachable', knowledge_tool))
             dep = application(dep_port, dep_mode, 'downstream-recovered')

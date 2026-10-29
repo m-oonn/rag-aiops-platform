@@ -37,6 +37,19 @@ def test_exact_business_resolution_and_conflicts_do_not_grant_permissions():
     assert resolve_target('old reference', 'orders', {}, settings.PROBE_TARGET_ID)['status'] == 'legacy_reference'
 
 
+def test_dependency_service_mapping_is_explicit_and_inventory_restricted():
+    catalog = {'version': 1, 'target_id': settings.PROBE_TARGET_ID, 'services': {
+        'entry': {'dependencies': ['db'], 'dependency_services': {'db': 'db-worker', 'rogue': 'other'}}}}
+    inventory = {'configured_dependencies': ['db'], 'configured_services': {'db-worker': {}, 'other': {}}}
+    found = resolve_target(json.dumps(catalog), 'entry', inventory, settings.PROBE_TARGET_ID)
+    assert found['status'] == 'resolved'
+    assert found['allowed_services'] == ['db-worker']
+    assert found['dependency_services'] == {'db': 'db-worker'}
+    inventory['configured_services'] = {}
+    found = resolve_target(json.dumps(catalog), 'entry', inventory, settings.PROBE_TARGET_ID)
+    assert found['allowed_services'] == [] and found['dependency_services'] == {}
+
+
 def test_negative_process_query_requires_configured_names_and_complete_access():
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='processes', payload={
         'service': 'svc', 'processes': [], 'skipped_count': 0})

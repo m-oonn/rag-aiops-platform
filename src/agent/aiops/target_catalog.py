@@ -14,6 +14,7 @@ class BusinessService(BaseModel):
     expected_ports: list[int] = Field(default_factory=list)
     log_refs: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
+    dependency_services: dict[str, str] = Field(default_factory=dict)
 
 
 class TargetCatalog(BaseModel):
@@ -98,4 +99,9 @@ def resolve_target(raw, query, inventory, target_id, aliases='{}'):
     configured = (inventory or {}).get('configured_services', {})
     result['allowed_services'] = sorted({name for name in [service.probe_service, *service.log_refs] if name in configured})
     result['allowed_dependencies'] = sorted(set([*service.dependencies, *service.entries.values()]) & set((inventory or {}).get('configured_dependencies', [])))
+    result['dependency_services'] = {dep: ref for dep, ref in service.dependency_services.items()
+        if dep in result['allowed_dependencies'] and ref in configured}
+    result['allowed_services'] = sorted(set(result['allowed_services']) | set(result['dependency_services'].values()))
+    if len(result['dependency_services']) != len(service.dependency_services):
+        result['mismatches'].append('部分依赖服务映射未同时满足业务范围和 Probe 白名单，不能执行对应检查')
     return result

@@ -53,6 +53,7 @@ class WindowsCollector:
             "configured_services": {name: {"kind": cfg.kind,
                 "service_name": cfg.service_name if cfg.kind == 'windows_service' else None,
                 "process_names": list(cfg.process_names), "event_logs_available": bool(cfg.log_channels),
+                "process_identity_configured": bool(cfg.process_args),
                 "text_logs_available": bool(cfg.text_logs),
                 "text_logs": list(cfg.text_logs)} for name, cfg in self.config.services.items()},
             "configured_dependencies": sorted(self.config.dependencies),
@@ -115,6 +116,7 @@ class WindowsCollector:
         if sort_by not in {'memory', 'cpu'}:
             raise ProbeConfigError('sort_by must be memory or cpu')
         allowed = set(self.config.service(name).process_names) if name else None
+        identity = self.config.service(name).process_args if name else ()
         rows = []
         sampled = []
         inspected = skipped = 0
@@ -124,6 +126,14 @@ class WindowsCollector:
                 pname = proc.info.get("name") or ""
                 if allowed is not None and not any(fnmatch.fnmatch(pname.lower(), x.lower()) for x in allowed):
                     continue
+                if identity:
+                    argv = proc.cmdline()
+                    if not argv:
+                        skipped += 1
+                        continue
+                    if not any(tuple(argv[i:i + len(identity)]) == identity
+                               for i in range(len(argv) - len(identity) + 1)):
+                        continue
                 mem = proc.info.get("memory_info")
                 row = {"pid": proc.info.get("pid"), "name": pname, "cpu_percent": None,
                        "memory_bytes": getattr(mem, "rss", None)}

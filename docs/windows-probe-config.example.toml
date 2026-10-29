@@ -11,6 +11,9 @@ baseline_interval_seconds = 60
 # process 类型的服务状态为 not_applicable；须查询进程、端口和入口核实。
 service_name = 'OrdersService'
 process_names = ['orders.exe']
+# 可选：按连续、精确 argv 片段匹配，避免同名 Python/Java 进程混入。
+# process_args = ['--mode-file', 'C:\Demo\orders.mode']
+# 参数仅供本地匹配；不要在此填凭据。命令行不可读计入 skipped_count。
 log_channels = ['Application']
 log_providers = ['Orders']
 text_logs = ['C:\ProgramData\Orders\logs\*.log']
