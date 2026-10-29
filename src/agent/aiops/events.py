@@ -23,23 +23,42 @@ def investigation_summary(state: dict) -> dict | None:
     tracking = memory.get('hypothesis_tracking') or (state.get('diagnosis') or {}).get('mechanisms')
     if not tracking:
         return None
+    unsafe_claims = []
+    for candidate in tracking.get('candidates', []):
+        proposal = candidate.get('proposal') or {}
+        if (proposal.get('verification') == 'causal_claim_unverified'
+                or (proposal.get('claim_type') == 'causal_explanation'
+                    and proposal.get('original_status') in {'excluded', 'supported'}
+                    and proposal.get('condition') is not None
+                    and proposal.get('verification') != 'predicate_verified')):
+            unsafe_claims.append(candidate.get('explanation', ''))
+
+    def public_text(value):
+        text = str(value or '')
+        for claim in unsafe_claims:
+            if claim and claim in text:
+                text = text.replace(claim, '该因果解释尚无可验证的现场条件。')
+        return text
+
     candidate_fields = ('id', 'explanation', 'status', 'relation', 'birth_step', 'condition',
                         'evidence_ids', 'evidence_history')
     event_fields = ('kind', 'step', 'hypothesis_id', 'reason', 'from_check', 'next_check',
                     'previous_leader_id', 'evidence_ids', 'condition')
     return redact({
         'config': tracking.get('config', {}), 'leading_id': tracking.get('leading_id', ''),
-        'candidates': [{k: c[k] for k in candidate_fields if k in c}
+        'candidates': [{k: (public_text(c[k]) if k == 'explanation' else c[k])
+                        for k in candidate_fields if k in c}
                        for c in tracking.get('candidates', [])],
-        'events': [{k: e[k] for k in event_fields if k in e} for e in tracking.get('events', [])],
+        'events': [{k: (public_text(e[k]) if k in {'reason', 'from_check', 'next_check'} else e[k])
+                    for k in event_fields if k in e} for e in tracking.get('events', [])],
         'identity_issues': tracking.get('identity_issues', []),
         # Keep the decision trail visible without exposing raw tool payloads.
         'observed_findings': memory.get('observed_findings', []),
         'evidence_summaries': memory.get('evidence_summaries', []),
-        'next_check': next(iter(state.get('plan') or []), ''),
-        'discriminating_question': memory.get('discriminating_question', ''),
-        'expected_observation': memory.get('expected_observation', ''),
-        'blocked_reason': memory.get('blocked_reason', ''),
+        'next_check': public_text(next(iter(state.get('plan') or []), '')),
+        'discriminating_question': public_text(memory.get('discriminating_question', '')),
+        'expected_observation': public_text(memory.get('expected_observation', '')),
+        'blocked_reason': public_text(memory.get('blocked_reason', '')),
     })
 
 # ── 事件类型常量（SSE payload["type"]）──────────────────────────

@@ -432,6 +432,33 @@ async def test_uncited_exclusion_stays_unresolved_in_report_and_memory(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_unverified_causal_alternative_is_sanitized_from_user_output(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'})
+    claim = '下游进程崩溃导致入口服务拒绝请求'
+    answer = decision(blocked_reason='no permitted checks', alternatives=[module.Alternative(
+        explanation=claim, status='excluded', claim_type='causal_explanation',
+        condition=module.ObservationCondition(operation='dependency_probe', object_name='downstream',
+            field='tcp', expected='ok'),
+        evidence=[module.Citation(evidence_id='e1.1', quote='failed')])])
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
+
+    result = await module.InvestigationStrategy().decide(state(raw))
+
+    public = json.dumps(result['diagnosis'], ensure_ascii=False) + result['response']
+    assert claim not in public
+    assert '该因果解释尚无可验证的现场条件' in public
+    assert '该因果解释是否有独立现场证据支持？' in public
+    assert '当前现场检查不能确认该因果解释' in public
+    assert result['investigation_memory']['model_suggestion']['alternatives'][0]['explanation'] == claim
+    assert result['investigation_memory']['alternatives'][0]['explanation'] == claim
+    assert result['diagnosis']['alternatives'][0]['verification'] == 'causal_claim_unverified'
+
+
+@pytest.mark.asyncio
 async def test_unlocated_report_exposes_resource_facts_despite_bad_model_quote(monkeypatch):
     from src.probe.protocol import evidence
     from src.settings import settings

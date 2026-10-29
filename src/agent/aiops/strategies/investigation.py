@@ -217,20 +217,73 @@ def diagnosis_result(state, decision, kind, records, reason='', *, tracking=None
             'mechanism_config': mechanism_config(state),
             'hypothesis_id': decision.hypothesis_id,
             'scope': decision.scope or (state.get('target_resolution') or {}).get('service') or state.get('input', ''),
-            'conclusion': (decision.root_cause if kind == 'confirmed_cause' else
+            'conclusion': (_public_text(decision.root_cause, decision) if kind == 'confirmed_cause' else
                            decision.localized_fault if kind == 'localized_fault' else
                            '当前检查范围内未发现故障' if kind == 'healthy_within_scope' else '未定位根因'),
-            'evidence': citations, 'alternatives': [a.model_dump() for a in decision.alternatives],
+            'evidence': citations, 'alternatives': [_public_alternative(a) for a in decision.alternatives],
             'observed_findings': findings,
             'recommendations': recommendations,
             'unresolved_questions': unresolved_questions(decision),
-            'validation_issues': list(decision.validation_issues),
-            'contradictions': decision.contradictions,
-            'limitations': [a.limitation for a in decision.alternatives if a.status != 'excluded' and a.limitation],
-            'stop_reason': reason}
+            'validation_issues': _public_validation_issues(decision),
+            'contradictions': [_public_text(item, decision) for item in decision.contradictions],
+            'limitations': [item['limitation'] for a in decision.alternatives
+                            if a.status != 'excluded'
+                            for item in [_public_alternative(a)] if item['limitation']],
+            'stop_reason': _public_text(reason, decision)}
     if tracking is not None:
-        result['mechanisms'] = tracking
+        result['mechanisms'] = _public_tracking(tracking)
     return result
+
+
+def _public_alternative(alternative):
+    """Keep unverified causal claims in the audit memory, not user-facing text."""
+    item = alternative.model_dump()
+    if _is_unverified_causal_claim(item):
+        safe_explanation = '该因果解释尚无可验证的现场条件。'
+        item['explanation'] = safe_explanation
+        item['limitation'] = '当前现场检查不能确认该因果解释。'
+        if isinstance(item.get('proposal'), dict):
+            item['proposal'] = {'explanation': safe_explanation, 'status': 'unresolved'}
+    return item
+
+
+def _public_tracking(tracking):
+    """Sanitize candidate text in the public diagnosis; retain full audit memory."""
+    public = deepcopy(tracking)
+    for candidate in public.get('candidates', []):
+        proposal = candidate.get('proposal') or {}
+        if not isinstance(proposal, dict) or not _is_unverified_causal_claim(proposal):
+            continue
+        safe_explanation = '该因果解释尚无可验证的现场条件。'
+        candidate['explanation'] = safe_explanation
+        candidate['proposal'] = {'explanation': safe_explanation, 'status': 'unresolved',
+                                 'verification': 'causal_claim_unverified'}
+    return public
+
+
+def _is_unverified_causal_claim(item):
+    return (item.get('verification') == 'causal_claim_unverified'
+            or (item.get('claim_type') == 'causal_explanation'
+                and item.get('original_status') in {'excluded', 'supported'}
+                and item.get('condition') is not None
+                and item.get('verification') != 'predicate_verified'))
+
+
+def _public_validation_issues(decision):
+    return [_public_text(issue, decision) for issue in decision.validation_issues]
+
+
+def _unverified_causal_claims(decision):
+    return [a.explanation for a in decision.alternatives
+            if _is_unverified_causal_claim(a.model_dump()) and a.explanation]
+
+
+def _public_text(value, decision):
+    text = str(value or '')
+    for claim in _unverified_causal_claims(decision):
+        if claim in text:
+            text = text.replace(claim, '该因果解释尚无可验证的现场条件。')
+    return text
 
 
 def unresolved_questions(decision):
@@ -239,15 +292,17 @@ def unresolved_questions(decision):
     if decision.next_check.strip():
         text = decision.discriminating_question.strip() or decision.next_check.strip()
         ident = decision.next_question_id.strip() or 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]
-        questions.append({'id': ident, 'question': text,
-                          'expected_observation': decision.expected_observation.strip()})
+        questions.append({'id': ident, 'question': _public_text(text, decision),
+                          'expected_observation': _public_text(decision.expected_observation.strip(), decision)})
     for alternative in decision.alternatives:
         if alternative.status in {'unresolved', 'unavailable'}:
-            text = alternative.explanation.strip()
+            text = ('该因果解释是否有独立现场证据支持？'
+                    if _is_unverified_causal_claim(alternative.model_dump())
+                    else alternative.explanation.strip())
             if text:
                 ident = 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]
                 questions.append({'id': ident, 'question': text,
-                                  'limitation': alternative.limitation})
+                                  'limitation': (_public_alternative(alternative)['limitation'])})
     return questions
 
 
@@ -1183,11 +1238,13 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         reason = investigation_stop_reason(decision, check_error)
         lines = [f'已定位故障层：{decision.localized_fault}',
                  f'检查范围：{decision.scope or state.get("input", "")}',
-                 '停止原因：' + reason,
+                 '停止原因：' + _public_text(reason, decision),
                  '更深原因尚未确认，不据此推断服务停止、进程退出或网络故障的原因。']
         lines.extend(citation_line(c, records) for c in references)
-        lines.extend(f'未决解释：{a.explanation}；{a.limitation}' for a in decision.alternatives if a.status != 'excluded')
-        lines.extend('判断校验：' + issue for issue in decision.validation_issues)
+        lines.extend(f'未决解释：{public_alt["explanation"]}；{public_alt["limitation"]}'
+                     for a in decision.alternatives if a.status != 'excluded'
+                     for public_alt in [_public_alternative(a)])
+        lines.extend('判断校验：' + issue for issue in _public_validation_issues(decision))
         diagnosis = diagnosis_result(state, decision, 'localized_fault', records, reason, tracking=tracking)
         return {**update, 'plan': [], 'diagnosis': diagnosis,
                 'response': '\n'.join(lines) + format_manual_recommendations(diagnosis['recommendations'])
@@ -1195,14 +1252,16 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
     # Reject unsupported conclusions. A repeated check without a new check target
     # is lack of progress, not success or a hidden overall execution budget.
     reason = investigation_stop_reason(decision, check_error)
-    lines = [f'未定位根因：{reason}', '本次结论未通过证据门槛，不能据此认定目标正常。',
-             f'模型推断（未验证，不作为现场事实）：{decision.hypothesis}']
+    public_reason = _public_text(reason, decision)
+    lines = [f'未定位根因：{public_reason}', '本次结论未通过证据门槛，不能据此认定目标正常。',
+             f'模型推断（未验证，不作为现场事实）：{_public_text(decision.hypothesis, decision)}']
     lines.extend(resource_fact_lines(records))
     lines.append('已核验引用（原文匹配不代表推理或排除解释成立）：')
     citations = list(decision.supporting_evidence)
     for alternative in decision.alternatives:
         citations.extend(alternative.evidence)
-        lines.append(f'替代解释（{alternative.status}）：{alternative.explanation}；{alternative.limitation}')
+        public_alt = _public_alternative(alternative)
+        lines.append(f'替代解释（{alternative.status}）：{public_alt["explanation"]}；{public_alt["limitation"]}')
     seen = set()
     for citation in citations:
         pair = (citation.evidence_id, citation.quote)
@@ -1213,8 +1272,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
             seen.add(pair)
     if not seen:
         lines.append(incomplete_report(state, records, reason))
-    lines.extend('待核实矛盾：' + item for item in decision.contradictions)
-    lines.extend('判断校验：' + item for item in decision.validation_issues)
+    lines.extend('待核实矛盾：' + _public_text(item, decision) for item in decision.contradictions)
+    lines.extend('判断校验：' + item for item in _public_validation_issues(decision))
     return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'unlocated', records, reason, tracking=tracking), 'response': '\n'.join(lines)
             + format_manual_recommendations([])
             + format_knowledge_references(state.get('raw_evidence'))}

@@ -62,6 +62,29 @@ def test_old_state_has_no_invented_investigation():
     assert 'investigation' not in AIOpsService._format_event('replanner', {'plan': ['old check']})
 
 
+def test_live_investigation_summary_hides_unverified_causal_candidate_text():
+    claim = '下游进程崩溃导致入口服务拒绝请求'
+    candidate = {'id': 'h1', 'explanation': claim, 'status': 'active',
+        'proposal': {'explanation': claim, 'status': 'unresolved',
+            'claim_type': 'causal_explanation', 'original_status': 'excluded',
+            'condition': {'operation': 'dependency_probe', 'field': 'tcp', 'expected': 'ok'},
+            'verification': 'causal_claim_unverified'}}
+    state = {'plan': [f'核查：{claim}'], 'investigation_memory': {
+        'blocked_reason': claim, 'discriminating_question': claim,
+        'expected_observation': claim, 'hypothesis_tracking': {
+            'config': {}, 'leading_id': 'h1', 'candidates': [candidate],
+            'events': [{'kind': 'hypothesis_protected', 'step': 1, 'hypothesis_id': 'h1',
+                'reason': claim, 'from_check': claim, 'next_check': claim}],
+        }}}
+
+    summary = investigation_summary(state)
+
+    assert claim not in str(summary)
+    assert '该因果解释尚无可验证的现场条件。' in str(summary)
+    assert state['investigation_memory']['hypothesis_tracking']['candidates'][0]['explanation'] == claim
+    assert state['investigation_memory']['hypothesis_tracking']['events'][0]['reason'] == claim
+
+
 @pytest.mark.parametrize(('operation', 'payload', 'truncated', 'status', 'parts'), [
     ('services', {'service': 'localapp', 'state': 'not_applicable',
                   'reason': 'process application; use process observations'},
