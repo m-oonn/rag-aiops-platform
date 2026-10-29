@@ -249,3 +249,14 @@ async def test_followup_executor_only_advertises_selected_tools_and_evidence_rea
     await executor._run_step('check listener', state)
     assert [t.name for t in llm.bind_tools.call_args.args[0]] == ['probe_port_snapshot', 'read_run_evidence']
     assert executor._probe_request_limit({'name': 'probe_process_snapshot'}, state)
+
+
+def test_policy_selected_listener_check_rejects_model_changed_arguments():
+    from src.agent.aiops.executor import _probe_request_limit
+    state = {'autonomous_investigation': True,
+        'investigation_memory': {'next_tools': ['probe_port_snapshot'],
+            'policy_selected_check': {'arguments': {'local_port': 6989, 'listening_only': True}}}}
+    assert _probe_request_limit({'name': 'probe_port_snapshot', 'args': {'local_port': 6990,
+        'listening_only': True}}, state) == 'policy_selected_check_arguments_mismatch'
+    assert not _probe_request_limit({'name': 'probe_port_snapshot', 'args': {'local_port': 6989,
+        'listening_only': True}}, state)

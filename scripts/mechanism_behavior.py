@@ -10,7 +10,7 @@ from src.settings import settings
 def behavior_snapshot(state, validated_at):
     records = inv.evidence_index(state, now=datetime.fromisoformat(validated_at.replace('Z', '+00:00')))
     records = {key: value for key, value in inv.current_probe_records(records).items()
-               if inv.in_business_scope(json.loads(value['payload']), state.get('target_resolution'))}
+               if inv.in_business_scope(json.loads(value['payload']), state.get('target_resolution'), records)}
     memory = state.get('investigation_memory') or {}
     return {'step': len(state.get('past_steps', [])), 'plan': deepcopy(state.get('plan', [])),
         'tracking': deepcopy(memory.get('hypothesis_tracking') or {}),
@@ -47,7 +47,7 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
         for record in records.values():
             raw = json.loads(record['payload'])
             inv.validate_evidence(raw, target_id=settings.PROBE_TARGET_ID, now=now)
-            if not inv.in_business_scope(raw, context.get('target_resolution')):
+            if not inv.in_business_scope(raw, context.get('target_resolution'), records):
                 raise ValueError('out of business scope')
         config = tracking['config']
         state = {**context, 'investigation_config': config}

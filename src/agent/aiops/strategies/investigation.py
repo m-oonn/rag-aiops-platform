@@ -254,9 +254,42 @@ def unresolved_questions(decision):
 def _decision_memory(decision, model_suggestion, records, state, tracking):
     return {**decision.model_dump(), 'model_suggestion': model_suggestion,
             'hypothesis_tracking': tracking,
+            'policy_selected_check': tracking.get('policy_selected_check'),
             'observed_findings': _localized_findings(records, state),
             'evidence_summaries': _evidence_summaries(records, state),
             'unresolved_questions': unresolved_questions(decision)}
+
+
+def _unverified_loopback_dependency_check(state, records):
+    """Return a bounded listener check for a failed, allow-listed loopback dependency."""
+    resolution = state.get('target_resolution') or {}
+    if resolution.get('status') != 'resolved':
+        return None
+    available = {item.get('name') for item in state.get('investigation_tools', [])}
+    if 'probe_port_snapshot' not in available:
+        return None
+    current = current_probe_records(records)
+    snapshots = [json.loads(record['payload']) for record in current.values()
+                 if record.get('provenance', {}).get('operation') == 'ports']
+    for record in current.values():
+        raw = json.loads(record['payload'])
+        if raw.get('operation') != 'dependency_probe' or raw.get('truncated'):
+            continue
+        body = raw.get('payload') or {}
+        port, host = body.get('port'), str(body.get('host', '')).lower()
+        if (body.get('dependency') not in resolution.get('allowed_dependencies', [])
+                or body.get('tcp') != 'failed' or body.get('error')
+                or host not in {'localhost', '127.0.0.1', '::1'}
+                or type(port) is not int or not 1 <= port <= 65535):
+            continue
+        if any((snapshot.get('payload') or {}).get('local_port') == port for snapshot in snapshots):
+            continue
+        return ({'next_check': f'核验 loopback 依赖 {body["dependency"]} 的 {port} 端口监听状态及进程归属',
+            'next_tools': ['probe_port_snapshot'],
+            'discriminating_question': f'{body["dependency"]} 的 {port} 端口是否有监听进程',
+            'expected_observation': '端口是否处于 LISTEN，以及返回的监听进程 PID'},
+            {'local_port': port, 'listening_only': True}, raw)
+    return None
 
 
 def _valid_citations(citations, records):
@@ -454,7 +487,7 @@ def _resolve_candidate_identity(alternative, candidates):
     return ident, ''
 
 
-def _apply_investigation_mechanisms(state, decision, records):
+def _apply_investigation_mechanisms(state, decision, records, *, policy_selected=False):
     """Track predictions in every group; switches only change retention/scheduling.
 
     A matched predicate supports an observation, never a free-text causal claim.
@@ -570,7 +603,7 @@ def _apply_investigation_mechanisms(state, decision, records):
                 candidate['status'] = 'dropped'
 
     selected, selection_kind = None, ''
-    if not identity_issues and config['contradiction_trigger'] and contradicted_leader:
+    if not policy_selected and not identity_issues and config['contradiction_trigger'] and contradicted_leader:
         selected = next((c for c in candidates.values()
             if c['id'] != contradicted_leader['id'] and c['status'] in {'active', 'protected'}
             and c['relation'] != 'contradict' and _candidate_check(c, state, records)), None)
@@ -582,7 +615,7 @@ def _apply_investigation_mechanisms(state, decision, records):
             record_event('contradiction_blocked', contradicted_leader,
                 evidence_ids=contradicted_leader['evidence_ids'],
                 condition=contradicted_leader['condition'], reason=decision.blocked_reason)
-    if not identity_issues and selected is None and not (config['contradiction_trigger'] and contradicted_leader):
+    if not policy_selected and not identity_issues and selected is None and not (config['contradiction_trigger'] and contradicted_leader):
         selected = next((c for c in candidates.values() if c['status'] == 'protected'
             and _candidate_check(c, state, records)), None)
         selection_kind = 'protection_check_selected'
@@ -651,7 +684,7 @@ def _evidence_summaries(records, state):
     for evidence_id, record in current_probe_records(records).items():
         value = json.loads(record['payload'])
         if value.get('data_source') != 'probe_target' or not in_business_scope(
-                value, state.get('target_resolution')):
+                value, state.get('target_resolution'), records):
             continue
         payload = value.get('payload') or {}
         subject = next((payload.get(key) for key in ('service', 'dependency', 'path', 'local_port')
@@ -996,9 +1029,27 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         *[c for a in decision.alternatives for c in a.evidence]], records)
     if conflicts:
         decision.contradictions.append('引用已被同范围不同结果更新：' + '、'.join(conflicts))
-    scoped_records = {key: value for key, value in current_probe_records(records).items()
-                      if in_business_scope(json.loads(value['payload']), state.get('target_resolution'))}
-    tracking = _apply_investigation_mechanisms(state, decision, scoped_records)
+    current_records = current_probe_records(records)
+    scoped_records = {key: value for key, value in current_records.items()
+                      if in_business_scope(json.loads(value['payload']), state.get('target_resolution'), current_records)}
+    policy_check = _unverified_loopback_dependency_check(state, scoped_records)
+    tracking = _apply_investigation_mechanisms(state, decision, scoped_records,
+                                               policy_selected=bool(policy_check))
+    policy_selection = None
+    policy_arguments = None
+    if policy_check:
+        check, policy_arguments, dependency_evidence = policy_check
+        decision.next_check = check['next_check']
+        decision.next_tools = check['next_tools']
+        decision.discriminating_question = check['discriminating_question']
+        decision.expected_observation = check['expected_observation']
+        decision.next_question_id = ''
+        policy_selection = {'kind': 'failed_loopback_dependency_listener_check',
+            'arguments': policy_arguments, 'dependency_evidence': dependency_evidence.get('raw_hash'),
+            'reason': '白名单 loopback 依赖 TCP 探测失败，尚无同端口监听快照'}
+        tracking['policy_selected_check'] = policy_selection
+    else:
+        tracking['policy_selected_check'] = None
     update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state, tracking)}
     sufficient = (
         (bool(decision.root_cause) or decision.outcome == "healthy")

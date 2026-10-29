@@ -37,7 +37,7 @@ def current_probe_records(records):
     return {key: record for _, key, record in latest.values()}
 
 
-def in_business_scope(value, scope):
+def in_business_scope(value, scope, records=None):
     scope = scope or {}
     if scope.get('target_id') and value.get('target_id') != scope['target_id']:
         return False
@@ -55,6 +55,18 @@ def in_business_scope(value, scope):
     if operation == 'ports':
         expected = {p for service in scope.get('services', {}).values()
                     for p in service.get('expected_ports', [])}
+        # A loopback dependency port is in scope only when it came from a
+        # validated observation of an explicitly allowed dependency.
+        for record in (records or {}).values():
+            raw = json.loads(record['payload'])
+            if raw.get('operation') != 'dependency_probe':
+                continue
+            dependency = raw.get('payload') or {}
+            port, host = dependency.get('port'), str(dependency.get('host', '')).lower()
+            if (dependency.get('dependency') in scope.get('allowed_dependencies', [])
+                    and host in {'localhost', '127.0.0.1', '::1'}
+                    and type(port) is int and 1 <= port <= 65535):
+                expected.add(port)
         return payload.get('local_port') in expected
     return True
 
@@ -71,7 +83,7 @@ def observation_clues(records, scope=None):
             configured.update(value.get('payload', {}).get('configured_services', {}))
     for evidence_id, record in records.items():
         raw = json.loads(record['payload'])
-        if raw.get('data_source') != 'probe_target' or not in_business_scope(raw, scope):
+        if raw.get('data_source') != 'probe_target' or not in_business_scope(raw, scope, records):
             continue
         payload, operation = raw.get('payload', {}), raw.get('operation')
         codes = []

@@ -405,6 +405,11 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
                 observations.append(value)
         if len(observations) >= 2 and diagnostic_fingerprint(observations[-1]) == diagnostic_fingerprint(observations[-2]):
             return 'repeated_identical_observation_for_same_arguments'
+    policy_check = ((state.get('investigation_memory') or {}).get('policy_selected_check') or {})
+    if policy_check:
+        policy_tool = next(iter((state.get('investigation_memory') or {}).get('next_tools') or []), '')
+        if name == policy_tool and (tc.get('args') or {}) != policy_check.get('arguments'):
+            return 'policy_selected_check_arguments_mismatch'
     resolution = state.get('target_resolution') or {}
     if resolution.get('status') in {'ambiguous', 'unmatched', 'invalid_catalog'} and name in PROBE_TOOL_OPERATIONS and name != 'probe_inventory':
         return 'business_target_not_resolved'
@@ -498,6 +503,11 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
         sys_content = _EXECUTOR_SYSTEM
         if state.get('autonomous_investigation') and (state.get('investigation_memory') or {}).get('next_check'):
             sys_content += '\n本步只允许以下工具；需要其他检查时交由调查器重新规划：' + ', '.join(t.name for t in tools)
+            policy_check = (state.get('investigation_memory') or {}).get('policy_selected_check')
+            if policy_check:
+                sys_content += '\n此项检查由确定性策略选定，必须调用指定工具并原样使用这些参数：' + json.dumps(
+                    {'tool': (state['investigation_memory'].get('next_tools') or [''])[0],
+                     'arguments': policy_check.get('arguments', {})}, ensure_ascii=False)
         if any(t.name in {"diagnostic_exec", "diagnostic_probe_dependency"} for t in tools):
             sys_content += _DIAGNOSTIC_EXECUTION_RULE
         if not tools:

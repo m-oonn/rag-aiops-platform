@@ -344,6 +344,78 @@ async def test_localized_stop_does_not_claim_available_checks_are_exhausted(monk
 
 
 @pytest.mark.asyncio
+async def test_failed_allowlisted_loopback_dependency_forces_exact_listener_check(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989,
+        'tcp': 'failed', 'tcp_error': 'ConnectionRefusedError'})
+    current = state()
+    current.update({'raw_evidence': [('downstream probe', json.dumps(raw))],
+        'target_resolution': {'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+            'allowed_dependencies': ['downstream'], 'allowed_services': [], 'services': {}},
+        'investigation_tools': [{'name': 'probe_port_snapshot'}],
+        'investigation_config': {'hypothesis_protection': False, 'contradiction_trigger': False}})
+    answer = decision(blocked_reason='nothing else to inspect')
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
+
+    result = await module.InvestigationStrategy().decide(current)
+    memory = result['investigation_memory']
+    assert result['plan'] == [memory['next_check']]
+    assert memory['next_tools'] == ['probe_port_snapshot']
+    assert '6989' in memory['next_check']
+    assert memory['policy_selected_check']['arguments'] == {'local_port': 6989, 'listening_only': True}
+    assert memory['model_suggestion']['blocked_reason'] == 'nothing else to inspect'
+    assert not any(event['kind'] in {'protection_check_selected', 'contradiction_triggered'}
+                   for event in memory['hypothesis_tracking']['events'])
+
+
+@pytest.mark.parametrize(('resolution', 'host', 'include_tool', 'prior_snapshot', 'expected'), [
+    ({'status': 'unmatched', 'allowed_dependencies': ['downstream']}, '127.0.0.1', True, False, False),
+    ({'status': 'resolved', 'allowed_dependencies': []}, '127.0.0.1', True, False, False),
+    ({'status': 'resolved', 'allowed_dependencies': ['downstream']}, '10.0.0.2', True, False, False),
+    ({'status': 'resolved', 'allowed_dependencies': ['downstream']}, '127.0.0.1', False, False, False),
+    ({'status': 'resolved', 'allowed_dependencies': ['downstream']}, '127.0.0.1', True, True, False),
+])
+def test_listener_check_requires_resolved_allowlisted_loopback_and_missing_snapshot(
+        resolution, host, include_tool, prior_snapshot, expected):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    dependency = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': host, 'port': 6989, 'tcp': 'failed'})
+    raw = [('dependency', json.dumps(dependency))]
+    if prior_snapshot:
+        snapshot = evidence(target_id=settings.PROBE_TARGET_ID, operation='ports', payload={
+            'local_port': 6989, 'listening_only': True, 'ports': []})
+        raw.append(('ports', json.dumps(snapshot)))
+    records = module.evidence_index({'raw_evidence': raw})
+    current = {'target_resolution': resolution,
+        'investigation_tools': [{'name': 'probe_port_snapshot'}] if include_tool else []}
+    selected = module._unverified_loopback_dependency_check(current, records)
+    assert bool(selected) is expected
+
+
+def test_loopback_dependency_port_snapshot_is_accepted_as_business_scoped_evidence():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    dependency = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'})
+    snapshot = evidence(target_id=settings.PROBE_TARGET_ID, operation='ports', payload={
+        'local_port': 6989, 'listening_only': True, 'ports': []})
+    state = {'raw_evidence': [('dependency', json.dumps(dependency)), ('ports', json.dumps(snapshot))]}
+    records = module.evidence_index(state)
+    current = module.current_probe_records(records)
+    scope = {'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+        'allowed_dependencies': ['downstream'], 'services': {}}
+    port_value = json.loads(current['e2.1']['payload'])
+    assert module.in_business_scope(port_value, scope, current)
+    assert not module.in_business_scope(port_value, {**scope, 'allowed_dependencies': []}, current)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('invalid_quote', ['', 'invented observation'])
 async def test_uncited_exclusion_stays_unresolved_in_report_and_memory(monkeypatch, invalid_quote):
     evidence = [module.Citation(evidence_id='e1.1', quote=invalid_quote)] if invalid_quote else []
