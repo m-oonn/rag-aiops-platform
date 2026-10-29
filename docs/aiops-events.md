@@ -83,3 +83,5 @@ GET /api/v1/aiops/runs/{thread_id} 在既有拥有者校验后，从 checkpoint 
 3. 新字段保持可选（默认值），不破坏既有前端。
 
 2026-10-27摘要覆盖补充：进程覆盖统计缺失保留unknown并标partial，端口/进程区分returned和matched；不回填旧checkpoint。[四类状态串联验收](probe-summary-flow-20261027.md)覆盖正式SSE、重开读取与浏览器显示。
+
+2026-10-29公开因果文本边界补充：SSE调查摘要和`diagnosis.mechanisms`复用同一公开投影，对已裁决为未核实的因果候选说明、检查描述、事件理由及检查文本替换重复断言。内部`investigation_memory.hypothesis_tracking`保留完整记录，评测依此核查真实行为；公开轨迹不能替代内部审计。未决问题ID按候选身份生成，多个候选显示相同待核实提示仍保持独立；旧checkpoint原样读取。字段结构保持兼容，处理仅覆盖规则识别的候选及其原句重复，不能据此宣称任意自由文本已完成语义审核。详见[公开输出边界](public-diagnosis-causal-claims-20261029.md)。
