@@ -32,7 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
-PID_FILE = ROOT / ".demo_pids.json"
+PID_FILE = ROOT / "runtime" / "demo" / "pids.json"
 LOG_DIR = ROOT / "logs"
 
 # Docker 基础服务（与 docker/docker-compose*.yml 对齐）
@@ -251,6 +251,7 @@ def load_pids() -> dict:
 
 
 def save_pids(data: dict) -> None:
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 

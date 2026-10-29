@@ -3,7 +3,7 @@
 """带故障靶场的端到端诊断验收（2026-10-09 建立）
 
 流程：
-  1) 启动带故障的演示站点（tools/faulty_demo_site.py，埋 4 类问题）
+  1) 启动带故障的演示站点（scripts/tools/faulty_demo_site.py，埋 4 类问题）
   2) 启动诊断服务栈（MCP×3 + FastAPI）
   3) 让诊断 Agent 去查这个站点
   4) 记录：**耗时** + **真实 token 消耗** + 折算费用

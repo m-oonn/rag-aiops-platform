@@ -46,6 +46,7 @@ reports/
 
 # 本机工具、运行状态与检查产物：保留本地，不进入提交
 /.local/
+/.runtime/
 /runtime/
 /.demo_pids.json
 /.playwright-cli/
@@ -88,6 +89,7 @@ docker_error*.png
 ^
 
 # 私人工作文档 / 审查报告 / prompt(不公开)
+/docs/local/
 code-review-report.md
 docs/毕设选题说明.md
 docs/CODE_WIKI.md

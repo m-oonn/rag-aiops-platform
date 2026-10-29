@@ -347,7 +347,8 @@ def _ensure_servers() -> list:
             print(f"[警告] 找不到 {script}，跳过")
             continue
         print(f"[启动] {script} -> 127.0.0.1:{port}")
-        log_path = os.path.join(PROJECT_ROOT, f"{os.path.basename(script)}.log")
+        os.makedirs(os.path.join(PROJECT_ROOT, "logs"), exist_ok=True)
+        log_path = os.path.join(PROJECT_ROOT, "logs", f"{os.path.basename(script)}.log")
         proc = subprocess.Popen(
             [sys.executable, path], cwd=PROJECT_ROOT,
             stdout=subprocess.DEVNULL, stderr=open(log_path, "w", encoding="utf-8"),

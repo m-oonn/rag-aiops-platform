@@ -147,7 +147,7 @@ def main() -> int:
     for line in _suggest_templates(cpu_names, mem_names, label_key):
         print(line)
     print("\n提示: {service} 会被 service_map 展开成候选正则,值里不要手写 |")
-    print("改完 .env 后: python scripts/probe_real_backends.py 验证取数是否有点")
+    print("改完 .env 后: python scripts/probes/probe_real_backends.py 验证取数是否有点")
     return 0
 
 

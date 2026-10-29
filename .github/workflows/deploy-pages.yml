@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "docs-site/**"
+      - "docs/site/**"
       - ".github/workflows/deploy-pages.yml"
   # 允许在 Actions 页面手动触发
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # 只发布展示页目录,不含后端源码
-          path: docs-site
+          path: docs/site
 
       - name: Deploy to GitHub Pages
         id: deployment

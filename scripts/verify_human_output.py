@@ -3,7 +3,7 @@
 
 用途：在 UI 演示前快速核对诊断步骤与报告是否"人人看得懂"。
 注意：真实调用 DeepSeek（每个场景约 0.1~0.3 元），需 MCP 服务已启动。
-场景 faulty 需先启动演示靶站: python tools/faulty_demo_site.py 8090
+场景 faulty 需先启动演示靶站: python scripts/tools/faulty_demo_site.py 8090
 
 用法: .venv/Scripts/python.exe scripts/verify_human_output.py [web|faulty|cpu|all]
 """

@@ -99,7 +99,7 @@ def main() -> int:
             return 1
         print(f"[ OK ] {index}: 写入 {len(lines)} 条日志")
 
-    print("\n完成。验证: python scripts/probe_real_backends.py")
+    print("\n完成。验证: python scripts/probes/probe_real_backends.py")
     return 0
 
 

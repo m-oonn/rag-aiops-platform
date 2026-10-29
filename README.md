@@ -10,6 +10,8 @@
 
 ## 🌟 核心特性
 
+项目入口：[目录约定](docs/project-layout.md) · [文档分类](docs/README.md) · [脚本分类](scripts/README.md)。
+
 ### 1. 📚 多模态知识库管理
 
 - **多格式支持**: 支持 PDF, Word (.docx), Excel (.xlsx), PPT (.pptx), Markdown (.md), TXT 等多种文件格式。
@@ -81,7 +83,7 @@ RAG 与 AIOps 两条链路共享底座(Milvus/Redis/MinIO/SQLite + DashScope LLM
 ### 前置要求
 
 - Docker & Docker Compose
-- Python 3.10+
+- Python 3.11+（含内置 tomllib，CI 与 Docker 使用 3.12）
 - Node.js 16+
 - DashScope API Key (通义千问)
 
@@ -92,6 +94,8 @@ cd docker
 docker-compose up -d
 # 启动 Milvus, MinIO, Redis, RabbitMQ
 ```
+
+当前配置与本机/实验边界见[配置盘点](docs/configuration-current-20261027.md)；[字段全表](docs/configuration-fields-20261027.md)覆盖132项。已有本机配置请保留，不要用示例覆盖 `.env`。
 
 ### 2. 后端部署
 
@@ -105,10 +109,10 @@ pip install -r requirements.txt
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 DASHSCOPE_API_KEY 等信息
+# 按配置盘点填写所用路径的凭据；后续Agent实验使用独立私有profile
 
 # 初始化数据库
-python create_tables.py
+python scripts/create_tables.py
 
 # 启动 API 服务
 python -m src.main
@@ -204,7 +208,7 @@ pytest -m integration
 
 ## 🤝 贡献
 
-欢迎提交 Issue 和 Pull Request。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交 Issue 和 Pull Request。提交前请阅读 [CONTRIBUTING.md](docs/CONTRIBUTING.md)。
 
 ## 📄 许可证
 

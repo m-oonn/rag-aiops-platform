@@ -62,6 +62,12 @@ plan → step_complete ×N（中途可由 status 提示）→ report / draft
 
 ## 消费建议
 
+2026-10-23 增加可选 investigation 摘要：自主调查的 replanner status/report/draft 和 complete 事件可携带同一投影。内容包括 candidates（稳定 ID、解释、状态、必要预期、关联证据）、累计 events（保护、到期、改向及理由）、下一检查、鉴别问题、预期观察和阻塞原因。投影来自 investigation_memory.hypothesis_tracking，终态兼容 diagnosis.mechanisms；不包含候选 proposal、观测去重 token 或原始工具返回，并通过现有 redact 脱敏。
+
+GET /api/v1/aiops/runs/{thread_id} 在既有拥有者校验后，从 checkpoint 返回同一 investigation 摘要。旧状态或结构化判断失败时可为空/缺省，不生成机制事件。前端按完整快照替换累计记录，不重复追加；引用仍通过原证据时间线定位，原文权限不变。状态支持必要预期不等于已确认因果，机制未触发不自动判定失败或成功。
+
+2026-10-26投影新增两个可选数组：`observed_findings` 是共享裁决产生的故障发现；`evidence_summaries` 是截至当前业务范围内最新有效Probe观测的简要描述，包含正常观测，最多八条。每条字段为 `evidence_id`、`operation`、`subject`、`collected_at`、`summary`、`status`、`truncated` 和 `error`，不包含原始payload；整个投影经过 `redact`。`status` 用 `observed`、`partial`、`unavailable`、`not_applicable` 描述检查覆盖和适用性，不代表根因判断；`error` 是经过长度限制的错误文本，不能单独证明对象正常或异常。旧checkpoint缺 `status` 时前端继续按旧 `error`/`truncated` 字段兼容展示。摘要记录在调查记忆中，不能假设后续模型输入不变；摘要也不能替代完整证据账本或因果裁决。当前代码24项正式历史输出测试及两场浏览器回放的范围见[浏览器回放验收](investigation-browser-replay-20261026.md)，状态语义另行见[Probe摘要状态与错误边界](probe-summary-semantics-20261026.md)。
+
 - 按 `type` 判别事件（判别联合）；`stage` 用于细分场景（如 error 的三类来源）；
 - `complete` 的四个元数据数组**缺省为 `[]`**，消费方勿假设非空；
 - `pending_review` 之后调用方应转入审批流程（`AIOpsService.resume` / 实验脚本），事件流在该点暂停；
@@ -69,7 +75,11 @@ plan → step_complete ×N（中途可由 status 提示）→ report / draft
 
 ## 变更纪律
 
+2026-10-28 增加可选 `investigation_failure`，区分正常完成但未定位与模型决策故障导致提前停止。结构为 `{code, message, error_type?}`；code 为 `model_request_failed` 或 `invalid_model_decision`，不传递供应商异常正文。失败链路为 `report → error(stage=investigation_failed)`，不发送 `complete`，也不进入报告审批；report 的存在只表示有可阅读材料。终止 error 同时携带 `thread_id`、`response`、`diagnosis` 与可用调查摘要，方便保留证据及刷新定位。运行记录为 `failed`，报告仍保存；拥有者刷新接口从 checkpoint 返回相同失败标记。正常 `unlocated` 诊断不自动算失败，旧 checkpoint 缺此字段保持兼容。评测分别保存 `has_final_report` 与 `workflow_completed`，失败有文字仍记 incomplete；失败标记与完成事件冲突时拒绝成功评分。
+
 改事件字段 = 改契约。任何字段增删改必须：
 1. 更新 `events.py`（构造函数 + TypedDict）与本文件；
 2. 跑 `tests/test_aiops_events.py`（快照断言）与全量离线测试；
 3. 新字段保持可选（默认值），不破坏既有前端。
+
+2026-10-27摘要覆盖补充：进程覆盖统计缺失保留unknown并标partial，端口/进程区分returned和matched；不回填旧checkpoint。[四类状态串联验收](probe-summary-flow-20261027.md)覆盖正式SSE、重开读取与浏览器显示。

@@ -20,13 +20,8 @@ def create_local_knowledge_server(directory: Path):
     from src.settings import settings
     import mcp_servers.rag_server as rag_server
     retriever = BM25Retriever()
-    retriever.index_chunks([
-        ('localapp-guide', 'localapp availability ' + (directory / 'localapp-availability.md').read_text(encoding='utf-8'),
-            {'kb_id': 14, 'filename': 'localapp-availability.md', 'page': 1}),
-        ('cpu-guide', 'processor utilization sampling interval', {'kb_id': 14}),
-        ('disk-guide', 'disk capacity filesystem storage', {'kb_id': 14}),
-        ('auth-guide', 'identity certificate authentication login', {'kb_id': 14}),
-    ])
+    from scripts.knowledge_conditions import fixture_chunks
+    retriever.index_chunks(fixture_chunks(directory))
     rag_server._get_retriever = lambda: retriever
     rag_server._get_reranker = lambda: None
     settings.RAG_MIN_SCORE = 0.1

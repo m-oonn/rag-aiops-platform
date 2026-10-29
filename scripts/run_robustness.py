@@ -3,7 +3,7 @@
 重建说明
 --------
 原始采集脚本 ``scripts/verify_scenarios.py`` 属**论文侧**且从未随本仓库入库（见
-``docs/architecture.md`` 附录「脚本交付说明」）。本脚本按 ``docs/修复工作总结报告.md``
+``docs/architecture.md`` 附录「脚本交付说明」）。本脚本按 ``docs/history/修复工作总结报告.md``
 §3.1 的口径**重新实现**，口径对齐如下目标值：
 
 ======  ======================================  ==========================
@@ -148,7 +148,8 @@ def _start_subset(include: set[str]) -> List[subprocess.Popen]:
             continue
         cmd = [PYTHON_EXE, os.path.join(PROJECT_ROOT, script)]
         print(f"[启动] {script} -> 127.0.0.1:{port}")
-        log_path = os.path.join(PROJECT_ROOT, f"{os.path.basename(script)}.robust.log")
+        os.makedirs(os.path.join(PROJECT_ROOT, "logs"), exist_ok=True)
+        log_path = os.path.join(PROJECT_ROOT, "logs", f"{os.path.basename(script)}.robust.log")
         proc = subprocess.Popen(
             cmd,
             cwd=PROJECT_ROOT,
@@ -478,7 +479,7 @@ def _write_report(payload: Dict[str, Any], path: str) -> None:
     lines.append(f"- 场景数: {payload['meta']['scene_count']}   证据裁判(默认线): {judge}   "
                  f"生成时间: {payload['meta']['generated_at']}")
     lines.append("- 重建说明: 原采集脚本 `scripts/verify_scenarios.py` 属论文侧、未随仓库交付；"
-                 "本报告由 `scripts/run_robustness.py` 按 `docs/修复工作总结报告.md` §3.1 口径重新采集。")
+                 "本报告由 `scripts/run_robustness.py` 按 `docs/history/修复工作总结报告.md` §3.1 口径重新采集。")
     lines.append("")
     lines.append("## 汇总")
     lines.append("")
