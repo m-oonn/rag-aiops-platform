@@ -1,7 +1,8 @@
-"""Authorized real-model acceptance: <=4 isolated cases, <=5 CNY reserved."""
+"""Real-model acceptance; each paid run requires explicit authorization."""
 import asyncio
 import importlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -18,45 +19,97 @@ class EvaluationBudgetExceeded(RuntimeError):
     pass
 
 
+def model_usage_known(row):
+    usage = row.get('usage')
+    return (row.get('http_status') == 200 and isinstance(usage, dict)
+        and all(type(usage.get(key)) is int and usage[key] >= 0
+                for key in ('prompt_tokens', 'completion_tokens')))
+
+
 class PaidRequestBudget:
-    # Official 2026-10-14 Flash peak: USD0.30/M input, USD1.20/M output.
+    # Official Flash peak, rechecked 2026-10-23: USD0.30/M input, USD1.20/M output.
     # Use 8 CNY/USD and input UTF-8 bytes + 8192 for protocol/token overhead.
-    def __init__(self, output, max_output_tokens=2048):
+    def __init__(self, output, max_output_tokens=2048, limit_cny=5, run_limit_cny=None,
+                 allow_unpriced_models=False, max_requests=None):
+        if isinstance(limit_cny, bool) or not isinstance(limit_cny, (int, float)) or not math.isfinite(limit_cny) or limit_cny <= 0:
+            raise ValueError('invalid cumulative cost limit')
         self.output = output
+        self.limit_cny = limit_cny
         self.max_output_tokens = max_output_tokens
+        if run_limit_cny is not None and (type(run_limit_cny) not in (int, float)
+                or not math.isfinite(run_limit_cny) or run_limit_cny <= 0):
+            raise ValueError('invalid per-run reservation limit')
+        self.run_limit_cny = run_limit_cny
+        self.allow_unpriced_models = bool(allow_unpriced_models)
+        self.max_requests = max_requests
+        self.inherited_reserved = 0.0
         self.reserved = 0.0
         self.ledger = []
 
     def reserve(self, body):
         model = body.get('model', '')
-        if model not in {'deepseek-v4-flash', 'deepseek-flash'}:
+        priced_model = model in {'deepseek-v4-flash', 'deepseek-flash'}
+        if not priced_model and not self.allow_unpriced_models:
             raise EvaluationBudgetExceeded('Pricing not verified for configured model')
+        if not priced_model and self.max_requests is not None and len(self.ledger) >= self.max_requests:
+            raise EvaluationBudgetExceeded('Unpriced model request cap reached')
         input_upper = len(json.dumps(body, ensure_ascii=False).encode()) + 8192
         output_upper = min(int(body.get('max_tokens') or body.get('max_completion_tokens') or self.max_output_tokens), self.max_output_tokens)
         body.pop('max_completion_tokens', None)
         body['max_tokens'] = output_upper
         body['stream'] = False
-        reserve = (input_upper * .30 + output_upper * 1.20) * 8 / 1_000_000
-        if self.reserved + reserve > 5.0:
-            raise EvaluationBudgetExceeded('5 CNY request reservation limit reached')
+        reserve = (input_upper * .30 + output_upper * 1.20) * 8 / 1_000_000 if priced_model else 0.0
+        if (self.run_limit_cny is not None
+                and self.reserved - self.inherited_reserved + reserve > self.run_limit_cny):
+            raise EvaluationBudgetExceeded('Per-run reservation limit reached')
+        if self.reserved + reserve > self.limit_cny:
+            raise EvaluationBudgetExceeded(f'{self.limit_cny:g} CNY request reservation limit reached')
         self.reserved += reserve
         row = {'number':len(self.ledger)+1,'model':model,'input_token_upper':input_upper,
-               'output_token_upper':output_upper,'reserved_cny':reserve,'status':'reserved'}
+               'output_token_upper':output_upper,'reserved_cny':reserve,'status':'reserved',
+               'pricing_verified': priced_model}
         self.ledger.append(row)
         self.save()
         return row
 
     def save(self):
         (self.output / 'cost.json').write_text(json.dumps({
-            'reserved_cny':self.reserved,'limit_cny':5,'requests':self.ledger,
-            'rate_basis':'Flash peak USD0.30 input / USD1.20 output per million; 8 CNY/USD',
+            'reserved_cny':self.reserved,'limit_cny':self.limit_cny,'requests':self.ledger,
+            'rate_basis':'DeepSeek Flash peak USD0.30 input / USD1.20 output per million; 8 CNY/USD; other models are unpriced',
             'pricing_source':'https://api-docs.deepseek.com/quick_start/pricing',
         },ensure_ascii=False,indent=2),encoding='utf-8')
 
+    def cost_summary(self, start_index=0):
+        rows = self.ledger[start_index:]
+        known, unknown, unpriced = 0.0, 0, False
+        for row in rows:
+            usage_known = model_usage_known(row)
+            if not usage_known:
+                unknown += 1
+            # Older ledgers predate the explicit pricing_verified/model fields.
+            # Treat those rows as legacy DeepSeek-priced entries so a resume
+            # does not turn known historical usage into an unknown supplier bill.
+            pricing_verified = row.get('pricing_verified')
+            if pricing_verified is None:
+                pricing_verified = row.get('model') in (None, 'deepseek-v4-flash', 'deepseek-flash')
+            if pricing_verified is False:
+                unpriced = True
+                continue
+            usage = row.get('usage')
+            if not usage_known:
+                continue
+            known += (usage['prompt_tokens'] * .30 + usage['completion_tokens'] * 1.20) * 8 / 1_000_000
+        return {'requests': len(rows), 'usage_unknown_requests': unknown,
+            'pricing_unknown_requests': sum(1 for row in rows if (
+                row.get('pricing_verified') is False or (
+                    row.get('pricing_verified') is None and row.get('model') not in
+                    (None, 'deepseek-v4-flash', 'deepseek-flash')))),
+            'known_estimated_cny_peak': known, 'estimated_cny_peak': None if unknown or unpriced else known,
+            'reserved_cny': math.fsum(row['reserved_cny'] for row in rows),
+            'supplier_bill_verified': False, 'pricing_verified': not unpriced}
+
     def actual_cost_cny(self):
-        prompt = sum(row.get('usage', {}).get('prompt_tokens', 0) for row in self.ledger)
-        completion = sum(row.get('usage', {}).get('completion_tokens', 0) for row in self.ledger)
-        return (prompt * .30 + completion * 1.20) * 8 / 1_000_000
+        return self.cost_summary()['estimated_cny_peak']
 
 
 APP = r'''
@@ -132,22 +185,17 @@ async def main():
             row=budget.reserve(body)
             revised=httpx.Request(request.method,request.url,headers={k:v for k,v in request.headers.items() if k.lower()!='content-length'},
                                   content=json.dumps(body).encode(),extensions=request.extensions)
-            try:
-                response=await self.inner.handle_async_request(revised)
-                await response.aread()
-                row['http_status']=response.status_code
-                row['status']='returned'
-                if response.status_code==200:
-                    data=response.json(); row['usage']=data.get('usage',{}); row['served_model']=data.get('model')
-                budget.save()
-                return response
-            except Exception as error:
-                row['status']=type(error).__name__;budget.save();raise
+            from scripts.model_request_diagnostics import record_model_response
+            return await record_model_response(self.inner, revised, row, budget.save)
         async def aclose(self): await self.inner.aclose()
     http=httpx.AsyncClient(transport=BudgetTransport(),timeout=60)
     def bounded_factory(**kwargs):
         llm=factory(**kwargs)
         llm.max_tokens=2048;llm.max_retries=0
+        for client_name in ('root_async_client', 'root_client'):
+            client = getattr(llm, client_name, None)
+            if client is not None:
+                client.max_retries = 0
         llm.http_async_client=http
         llm.root_async_client._client=http
         return llm
@@ -259,13 +307,20 @@ async def main():
             except EvaluationBudgetExceeded as error:
                 case_status='budget_stopped'
                 stop_reason=str(error)
-            final=next((e.get('response','') for e in reversed(events) if e.get('type')=='complete'),'')
+            final=next((e.get('response') or e.get('report') for e in reversed(events)
+                        if e.get('type') in {'complete','report','error'} and (e.get('response') or e.get('report'))),'')
+            if case_status=='completed' and (not any(e.get('type')=='complete' for e in events)
+                    or any(e.get('type')=='error' or e.get('investigation_failure') for e in events)):
+                case_status='incomplete'
             row={'case_id':case_id,'fixture_truth':kind,'symptom':symptoms,'response':final,'events':events,
                  'tool_trace':list(trace),'elapsed_s':round(time.monotonic()-start,2),
                  'status':case_status}
             results.append(row);(output/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps({'case_id':case_id,'stage':'finished','truth':kind,'response':final,'reserved_cny':budget.reserved},ensure_ascii=False),flush=True)
             if case_status=='budget_stopped':break
+            if case_status=='incomplete':
+                stop_reason='investigation incomplete; evidence and failure report preserved'
+                break
             if not final:
                 stop_reason='investigation returned no final response'
                 break

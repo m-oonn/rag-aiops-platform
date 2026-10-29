@@ -3,9 +3,152 @@ from unittest.mock import Mock
 from pathlib import Path
 import json
 import sqlite3
+import subprocess
+import sys
 import pytest
 
 from scripts import verify_windows_local_faults as module
+
+
+def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path):
+    ports = [module.free_port()]
+    while len(ports) < 2:
+        port = module.free_port()
+        if port not in ports:
+            ports.append(port)
+    app_port, dep_port = ports
+    mode, dep_mode, log = tmp_path / 'app.mode', tmp_path / 'dep.mode', tmp_path / 'app.log'
+    mode.write_text('normal')
+    dep_mode.write_text('normal')
+    owned = []
+    def launch(port, mode_file, downstream=None, wait=True):
+        args = [sys.executable, str(Path(module.__file__).resolve()), '--serve', str(port),
+            '--mode-file', str(mode_file), '--log', str(log)]
+        if downstream is not None:
+            args += ['--downstream', str(downstream)]
+        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        owned.append(process)
+        if wait:
+            module.wait_listener(port, process)
+        return process
+    def verify(case, app, dep, blocker=None):
+        return module.verify_case_state(tmp_path, case, app, dep, app_port, dep_port, log, blocker)
+    try:
+        dep = launch(dep_port, dep_mode)
+        app = launch(app_port, mode, dep_port)
+        assert verify('normal', app, dep)['passed']
+        mode.write_text('application_error')
+        assert verify('application_error', app, dep)['passed']
+        assert verify('missing_evidence', app, dep)['passed']
+        mode.write_text('normal')
+        module.stop(dep)
+        assert verify('downstream_unreachable', app, dep)['passed']
+        unavailable_response = module.get_local(app_port)
+        dep = launch(dep_port, dep_mode)
+        assert verify('normal', app, dep)['passed']
+        mode.write_text(json.dumps({'max_attempts': 'invalid'}))
+        assert verify('application_config_error', app, dep)['passed']
+        assert module.get_local(app_port) == unavailable_response == (503, 'temporarily unavailable')
+        assert module.get_local(dep_port) == (200, 'healthy')
+        with pytest.raises(RuntimeError, match='state verification failed'):
+            verify('downstream_unreachable', app, dep)
+        # Valid configuration takes the normal application path again.
+        mode.write_text(json.dumps({'max_attempts': 3}))
+        assert verify('normal', app, dep)['passed']
+        mode.write_text('normal')
+        module.stop(app)
+        assert verify('application_exit', app, dep)['passed']
+        blocker = launch(app_port, dep_mode)
+        app = launch(app_port, mode, dep_port, wait=False)
+        assert app.wait(timeout=10) != 0
+        assert verify('port_conflict', app, dep, blocker)['passed']
+        module.stop(blocker)
+        app = launch(app_port, mode, dep_port)
+        assert verify('normal', app, dep)['passed']
+        # An unsuccessful injection must never proceed to a model run.
+        with pytest.raises(RuntimeError, match='state verification failed'):
+            verify('downstream_unreachable', app, dep)
+    finally:
+        for process in reversed(owned):
+            module.stop(process)
+    assert all(p.poll() is not None for p in owned)
+    assert module.listening_rows(ports) == []
+    rows = [json.loads(line) for line in (tmp_path / 'controller-observations.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert len(rows) == 12 and rows[-1]['passed'] is False
+    assert all(row['agent_evidence'] is False for row in rows)
+
+
+@pytest.mark.parametrize('mutation', ['wrong_body', 'missing_body', 'wrong_log', 'wrong_pid', 'wrong_error_type'])
+def test_config_error_requires_generic_response_and_current_application_log(tmp_path, monkeypatch, mutation):
+    app = SimpleNamespace(pid=111, poll=lambda: None)
+    dep = SimpleNamespace(pid=222, poll=lambda: None)
+    body = 'invalid configuration' if mutation == 'wrong_body' else 'temporarily unavailable'
+    def get_local(port):
+        if port == 23001 and mutation == 'missing_body':
+            raise OSError('test application unavailable')
+        return (503, body) if port == 23001 else (200, 'healthy')
+    monkeypatch.setattr(module, 'get_local', get_local)
+    monkeypatch.setattr(module, 'listening_rows', lambda ports: [{'port': 23001, 'pid': 111}, {'port': 23002, 'pid': 222}])
+    monkeypatch.setattr(module.psutil, 'Process', lambda pid: SimpleNamespace(children=lambda **kw: []))
+    log = tmp_path / 'app.log'
+    log.write_text(json.dumps({'pid': 999 if mutation == 'wrong_pid' else 111, 'status': 503,
+        'detail': 'request failed' if mutation == 'wrong_log' else 'invalid max_attempts configuration',
+        'error_type': 'TypeError' if mutation == 'wrong_error_type' else 'ValueError'}))
+    with pytest.raises(RuntimeError, match='state verification failed'):
+        module.verify_case_state(tmp_path, 'application_config_error', app, dep, 23001, 23002, log)
+    row = json.loads((tmp_path / 'controller-observations.jsonl').read_text())
+    assert not row['passed']
+    assert not row['checks']['generic_response' if mutation in {'wrong_body', 'missing_body'} else 'application_log']
+
+
+@pytest.mark.asyncio
+async def test_failed_injection_prevents_model_start_and_preserves_failure(tmp_path, monkeypatch):
+    changes = []
+    async def set_case(case):
+        changes.append(case)
+        if case != 'normal':
+            raise RuntimeError('state verification failed')
+    model = Mock()
+    monkeypatch.setattr(module, 'evaluate_model_case', model)
+    with pytest.raises(RuntimeError, match='state verification failed'):
+        await module.evaluate_blind_cases(tmp_path, Mock(), set_case, suite=['application_error'])
+    model.assert_not_called()
+    controller = json.loads((tmp_path / 'blind-controller.json').read_text(encoding='utf-8'))
+    assert changes == ['application_error', 'normal']
+    assert controller['failure']['exception_type'] == 'RuntimeError'
+    assert controller['injections'] == []
+    assert controller['recovery'] == 'normal_restored'
+
+
+def test_foreign_listener_fails_even_when_http_is_healthy(tmp_path, monkeypatch):
+    app = SimpleNamespace(pid=111, poll=lambda: None)
+    dep = SimpleNamespace(pid=222, poll=lambda: None)
+    monkeypatch.setattr(module, 'get_local', lambda port: (200, 'healthy'))
+    monkeypatch.setattr(module, 'listening_rows', lambda ports: [
+        {'port': 23001, 'pid': 999}, {'port': 23002, 'pid': 222}])
+    monkeypatch.setattr(module.psutil, 'Process', lambda pid: SimpleNamespace(children=lambda **kwargs: []))
+    with pytest.raises(RuntimeError, match='state verification failed'):
+        module.verify_case_state(tmp_path, 'normal', app, dep, 23001, 23002, tmp_path / 'app.log')
+    snapshot = json.loads((tmp_path / 'controller-observations.jsonl').read_text(encoding='utf-8'))
+    assert snapshot['checks']['http_states']
+    assert not snapshot['checks']['app_listener']
+
+
+@pytest.mark.asyncio
+async def test_recovery_failure_is_recorded_without_losing_investigation_failure(tmp_path, monkeypatch):
+    async def set_case(case):
+        if case == 'normal':
+            raise RuntimeError('recovery failed')
+    async def fail(*args, **kwargs):
+        raise ValueError('investigation failed')
+    monkeypatch.setattr(module, 'evaluate_model_case', fail)
+    with pytest.raises(RuntimeError, match='recovery failed'):
+        await module.evaluate_blind_cases(tmp_path, Mock(), set_case, suite=['application_error'])
+    controller = json.loads((tmp_path / 'blind-controller.json').read_text(encoding='utf-8'))
+    assert controller['failure']['exception_type'] == 'ValueError'
+    assert controller['recovery'] == 'failed'
+    assert controller['recovery_error'] == 'RuntimeError'
 
 
 def test_stop_waits_for_owned_child_before_launcher(monkeypatch):
@@ -31,40 +174,63 @@ def test_listener_check_excludes_time_wait_and_unrelated_ports(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('failure', ['none', 'process', 'budget', 'unknown_cost', 'lost_previous'])
-async def test_model_runner_inherits_budget_and_fails_closed(tmp_path, failure):
+@pytest.mark.parametrize('failure', ['none', 'process', 'budget', 'unknown_cost', 'lost_previous', 'missing_complete'])
+@pytest.mark.parametrize('group', [None, 'G00', 'G10', 'G01', 'G11'])
+@pytest.mark.parametrize('limit', [5, 10])
+async def test_model_runner_inherits_budget_and_fails_closed(tmp_path, monkeypatch, failure, group, limit):
+    from scripts import evaluation_record
+    monkeypatch.setattr(evaluation_record, 'audit_evaluation', lambda *args, **kwargs:
+        {'passed': True, 'this_run_cost': {'requests': 1}})
     previous = {'limit_cny': 5, 'reserved_cny': 0.4, 'requests': [
-        {'number': 1, 'reserved_cny': 0.4, 'http_status': 200, 'usage': {'prompt_tokens': 3}}]}
+        {'number': 1, 'reserved_cny': 0.4, 'http_status': 200, 'usage': {'prompt_tokens': 3, 'completion_tokens': 1}}]}
     prior = tmp_path / 'prior.json'
     prior.write_text(json.dumps(previous))
     launches = []
     def launch(args, name):
         launches.append(args)
         assert '--run-model' in args and args[args.index('--previous-cost') + 1] == str(prior)
+        symptom = Path(args[args.index('--symptom-file') + 1]).read_text(encoding='utf-8')
+        assert symptom == '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。'
+        assert 'downstream_unreachable' not in ' '.join(args)
+        assert float(args[args.index('--budget-limit-cny') + 1]) == limit
+        if group:
+            assert args[args.index('--mechanism-group') + 1] == group
         assert args[args.index('--knowledge-mcp-url') + 1] == 'http://127.0.0.1:9200/mcp'
         output = Path(args[args.index('--output-dir') + 1])
         output.mkdir()
         assert 'downstream_unreachable' not in str(output)
         summary = {'budget_stopped': failure == 'budget', 'execution_error': None,
-            'error_events': 0, 'has_final_report': True, 'report_kind': 'unlocated'}
+            'error_events': 0, 'has_final_report': True, 'report_kind': 'unlocated',
+            'mechanism_group': group, 'mechanism_audit': {'passed': True}}
+        if group:
+            from scripts.evaluate_windows_probe import MECHANISM_GROUPS
+            protection, trigger = MECHANISM_GROUPS[group]
+            config = {'hypothesis_protection': protection, 'contradiction_trigger': trigger, 'protection_steps': 2}
+            summary['mechanism_audit'].update(actual_config=config, expected_config=config)
         (output / 'summary.json').write_text(json.dumps(summary))
-        row = {'number': 2, 'reserved_cny': 0.2, 'http_status': 200, 'usage': {'prompt_tokens': 4}}
-        cost = {'limit_cny': 5, 'reserved_cny': 0.6, 'requests': [*previous['requests'], row]}
+        (output / 'events.json').write_text(json.dumps([{'type': 'complete', 'response': 'fixture report'}]))
+        if failure == 'missing_complete':
+            (output / 'events.json').write_text('[]')
+        row = {'number': 2, 'reserved_cny': 0.2, 'http_status': 200, 'usage': {'prompt_tokens': 4, 'completion_tokens': 1}}
+        cost = {'limit_cny': limit, 'reserved_cny': 0.6, 'requests': [*previous['requests'], row]}
         if failure == 'unknown_cost':
             row.pop('usage')
         if failure == 'lost_previous':
             cost = {'limit_cny': 5, 'reserved_cny': 0.2, 'requests': [{**row, 'number': 1}]}
         (output / 'cost.json').write_text(json.dumps(cost))
         return SimpleNamespace(wait=lambda: 1 if failure == 'process' else 0)
-    if failure == 'none':
+    if failure in {'none', 'missing_complete'}:
         result = await module.evaluate_model_case(tmp_path, 'downstream_unreachable', launch, prior,
-            knowledge_url='http://127.0.0.1:9200/mcp')
+            knowledge_url='http://127.0.0.1:9200/mcp', mechanism_group=group, budget_limit_cny=limit)
         assert result['reserved_cny'] == 0.6 and result['cumulative_requests'] == 2
-        assert result['workflow_completed'] and not result['diagnostic_correctness_verified']
+        assert result['workflow_completed'] is (failure == 'none')
+        if failure == 'missing_complete':
+            assert result['status'] == 'failed'
+        assert not result['diagnostic_correctness_verified']
     else:
         with pytest.raises((RuntimeError, ValueError)):
             await module.evaluate_model_case(tmp_path, 'downstream_unreachable', launch, prior,
-                knowledge_url='http://127.0.0.1:9200/mcp')
+                knowledge_url='http://127.0.0.1:9200/mcp', mechanism_group=group, budget_limit_cny=limit)
     assert len(launches) == 1
 
 
@@ -80,8 +246,28 @@ async def test_uncertain_prior_cost_prevents_starting_another_model_process(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('mutation', ['wrong_group', 'failed', 'wrong_config', 'missing_config'])
+async def test_controller_rejects_mislabeled_or_unverified_mechanism_result(tmp_path, mutation):
+    def launch(args, name):
+        output = Path(args[args.index('--output-dir') + 1])
+        output.mkdir()
+        config = {'hypothesis_protection': False, 'contradiction_trigger': False, 'protection_steps': 2}
+        audit = {'passed': mutation != 'failed', 'actual_config': dict(config), 'expected_config': dict(config)}
+        if mutation == 'wrong_config':
+            audit['actual_config']['hypothesis_protection'] = True
+        if mutation == 'missing_config':
+            audit.pop('actual_config')
+        (output / 'summary.json').write_text(json.dumps({
+            'mechanism_group': 'G11' if mutation == 'wrong_group' else 'G00', 'mechanism_audit': audit}))
+        return SimpleNamespace(wait=lambda: 0)
+    with pytest.raises(RuntimeError, match='mechanism audit failed'):
+        await module.evaluate_model_case(tmp_path, 'normal', launch, mechanism_group='G00')
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('reverse', [False, True])
-async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp_path, monkeypatch, reverse):
+@pytest.mark.parametrize('limit', [5, 10])
+async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp_path, monkeypatch, reverse, limit):
     changes, seen = [], []
     class Shuffle:
         def shuffle(self, rows):
@@ -90,12 +276,14 @@ async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp
     monkeypatch.setattr(module.secrets, 'SystemRandom', Shuffle)
     async def set_case(case):
         changes.append(case)
-    async def run(out, case, launch, previous, knowledge_url=None):
+    async def run(out, case, launch, previous, knowledge_url=None, budget_limit_cny=5):
         assert knowledge_url == 'http://127.0.0.1:9200/mcp'
+        assert budget_limit_cny == limit
         seen.append((case, previous))
         return {'cost_file': str(tmp_path / (str(len(seen)) + '.json'))}
     monkeypatch.setattr(module, 'evaluate_model_case', run)
-    await module.evaluate_blind_cases(tmp_path, Mock(), set_case, knowledge_url='http://127.0.0.1:9200/mcp')
+    await module.evaluate_blind_cases(tmp_path, Mock(), set_case, knowledge_url='http://127.0.0.1:9200/mcp',
+        budget_limit_cny=limit)
     assert seen[0][0] == ('downstream_unreachable' if reverse else 'normal')
     assert {row[0] for row in seen} == {'normal', 'downstream_unreachable'}
     assert seen[0][1] is None and seen[1][1] == tmp_path / '1.json'
@@ -122,6 +310,7 @@ def test_mechanical_review_checks_trace_without_claiming_causal_correctness(tmp_
     diagnosis = {'version': 1, 'kind': 'localized_fault', 'target_id': 'windows-local-01',
         'evidence': [{'evidence_id': 'ev-123', 'quote': 'failed'}]}
     trace = [{'tool': 'probe_dependency_probe', 'validated_live_evidence': True,
+              'evidence_id': 'ev-123',
               'result': {'payload': {'tcp': 'failed'}}}]
     if mutation == 'wrong_target': diagnosis['target_id'] = 'other'
     if mutation == 'foreign_id': diagnosis['evidence'][0]['evidence_id'] = 'ev-other'
@@ -132,6 +321,22 @@ def test_mechanical_review_checks_trace_without_claiming_causal_correctness(tmp_
     result = module.review_model_artifacts(tmp_path, 'downstream_unreachable', {'diagnosis': diagnosis})
     assert result['passed'] is (mutation is None)
     assert result['causal_correctness_proven'] is False and result['manual_verdict'] == 'pending'
+
+
+@pytest.mark.parametrize('failure_location', ['none', 'summary', 'event'])
+def test_failure_marker_prevents_workflow_completion_even_with_report(tmp_path, failure_location):
+    summary = {'has_final_report': True, 'diagnosis': {'version': 1, 'kind': 'unlocated',
+        'target_id': 'windows-local-01'}}
+    events = [{'type': 'complete', 'response': '未定位根因：offline fixture'}]
+    if failure_location == 'summary':
+        summary.update(workflow_completed=False, investigation_failure={'code': 'model_request_failed'})
+    if failure_location == 'event':
+        events[0]['investigation_failure'] = {'code': 'model_request_failed'}
+    (tmp_path / 'events.json').write_text(json.dumps(events))
+    (tmp_path / 'tool_trace.json').write_text('[]')
+    result = module.review_model_artifacts(tmp_path, 'downstream_unreachable', summary)
+    assert result['workflow_status'] == ('completed' if failure_location == 'none' else 'incomplete')
+    assert result['causal_correctness_proven'] is False
 
 
 @pytest.mark.parametrize('mutation', [None, 'missing_row', 'missing_file', 'tampered', 'wrong_id', 'corrupt_db'])

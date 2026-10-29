@@ -1,0 +1,165 @@
+{
+  "mode": "historical_probe_fixture",
+  "source": "runtime/windows-local-faults-87750cb6d3f34bc6b55ff26319f19e9e",
+  "source_files_sha256": {
+    "evidence.json": "83395008833a0237f559088c8dbf54a4b973829dcfb06179b21e96b427461a11",
+    "matching-503-observations.json": "5b2ffa5b36e91e74e2815bcbd2b14e3ec6f51eec0ca44f62dce142b73018b654"
+  },
+  "cases": {
+    "downstream_unreachable": [
+      {
+        "evidence_id": "ev-135be3a282574e3ab03481c9ff6f34a9",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "dependency_probe",
+          "collected_at": "2026-10-24T11:19:38.675729Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "dependency": "localapp",
+            "host": "127.0.0.1",
+            "port": 5389,
+            "dns": [
+              "127.0.0.1"
+            ],
+            "tcp": "ok",
+            "http": {
+              "status": 503,
+              "body_prefix": "temporarily unavailable",
+              "truncated": false
+            },
+            "elapsed_ms": 543.3
+          },
+          "raw_hash": "sha256:240214ac365fed1f96f99d71e7d7df045a13cdc0eae6f0b623e212cebc1fd3ec"
+        }
+      },
+      {
+        "evidence_id": "ev-69d2ca9378c445d9ad9f359b47ecd13d",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "dependency_probe",
+          "collected_at": "2026-10-24T11:19:42.973302Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "dependency": "downstream",
+            "host": "127.0.0.1",
+            "port": 5390,
+            "dns": [
+              "127.0.0.1"
+            ],
+            "tcp": "failed",
+            "tcp_error": "ConnectionRefusedError",
+            "http": {
+              "error": "URLError"
+            },
+            "elapsed_ms": 4099.2
+          },
+          "raw_hash": "sha256:60dccc136205830f65b09951ac8e8f829e122ce5346b517e28eaa0a3b0294fc2"
+        }
+      },
+      {
+        "evidence_id": "ev-bbead47ddf8e42628fdeeaba53db4831",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "text_logs",
+          "collected_at": "2026-10-24T11:19:43.151759Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "service": "localapp",
+            "path": "D:\\ragPdfSystem++agent\\runtime\\windows-local-faults-87750cb6d3f34bc6b55ff26319f19e9e\\app.log",
+            "line_limit": 100,
+            "lines": [
+              "{\"at\": \"2026-10-24T11:19:35.954971+00:00\", \"pid\": 20340, \"status\": 503, \"detail\": \"upstream connection failed\"}",
+              "{\"at\": \"2026-10-24T11:19:38.674084+00:00\", \"pid\": 20340, \"status\": 503, \"detail\": \"upstream connection failed\"}"
+            ]
+          },
+          "raw_hash": "sha256:e693d5494b6a70c93867b13cbe53f4a91935b20cfa91c69eca90c5cea548129d"
+        }
+      }
+    ],
+    "application_config_error": [
+      {
+        "evidence_id": "ev-f05c556e12384368a66bcf1031eda07f",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "dependency_probe",
+          "collected_at": "2026-10-24T11:19:54.435433Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "dependency": "localapp",
+            "host": "127.0.0.1",
+            "port": 5389,
+            "dns": [
+              "127.0.0.1"
+            ],
+            "tcp": "ok",
+            "http": {
+              "status": 503,
+              "body_prefix": "temporarily unavailable",
+              "truncated": false
+            },
+            "elapsed_ms": 37.0
+          },
+          "raw_hash": "sha256:2ef005029bf8ecf0def03115b73f5974dc4a25f57115bdadb19d4e1fbe39f35e"
+        }
+      },
+      {
+        "evidence_id": "ev-21afd3ceee1940c6add2c6de0da78af0",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "dependency_probe",
+          "collected_at": "2026-10-24T11:19:54.628897Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "dependency": "downstream",
+            "host": "127.0.0.1",
+            "port": 5390,
+            "dns": [
+              "127.0.0.1"
+            ],
+            "tcp": "ok",
+            "http": {
+              "status": 200,
+              "body_prefix": "healthy",
+              "truncated": false
+            },
+            "elapsed_ms": 37.7
+          },
+          "raw_hash": "sha256:d759196953116bbeae5506fe3301af5e1e14ec75937b7693c82d7a2ae74204bf"
+        }
+      },
+      {
+        "evidence_id": "ev-e2279aea21694cc182175d0909c4b883",
+        "raw": {
+          "target_id": "windows-local-01",
+          "platform": "windows",
+          "operation": "text_logs",
+          "collected_at": "2026-10-24T11:19:54.795107Z",
+          "collector_version": "1.0.0",
+          "data_source": "probe_target",
+          "payload": {
+            "service": "localapp",
+            "path": "D:\\ragPdfSystem++agent\\runtime\\windows-local-faults-87750cb6d3f34bc6b55ff26319f19e9e\\app.log",
+            "line_limit": 100,
+            "lines": [
+              "{\"at\": \"2026-10-24T11:19:54.225731+00:00\", \"pid\": 6892, \"status\": 503, \"detail\": \"invalid max_attempts configuration\", \"error_type\": \"ValueError\"}",
+              "{\"at\": \"2026-10-24T11:19:54.247950+00:00\", \"pid\": 24436, \"status\": 200, \"detail\": \"healthy\"}",
+              "{\"at\": \"2026-10-24T11:19:54.433681+00:00\", \"pid\": 6892, \"status\": 503, \"detail\": \"invalid max_attempts configuration\", \"error_type\": \"ValueError\"}",
+              "{\"at\": \"2026-10-24T11:19:54.627525+00:00\", \"pid\": 24436, \"status\": 200, \"detail\": \"healthy\"}"
+            ]
+          },
+          "raw_hash": "sha256:1da4c7de6ee646950ca135af60dfd8716f9acb47755523dd81e82c13005c83c2"
+        }
+      }
+    ]
+  }
+}
