@@ -260,3 +260,70 @@ def test_policy_selected_listener_check_rejects_model_changed_arguments():
         'listening_only': True}}, state) == 'policy_selected_check_arguments_mismatch'
     assert not _probe_request_limit({'name': 'probe_port_snapshot', 'args': {'local_port': 6989,
         'listening_only': True}}, state)
+
+
+@pytest.mark.asyncio
+async def test_failed_loopback_dependency_listener_check_runs_and_pid_stays_observation(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import StructuredTool
+    executor = importlib.import_module('src.agent.aiops.executor')
+    investigation = importlib.import_module('src.agent.aiops.strategies.investigation')
+
+    dependency = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989,
+        'tcp': 'failed', 'tcp_error': 'ConnectionRefusedError'})
+    async def port_snapshot(local_port: int, listening_only: bool = False):
+        assert local_port == 6989 and listening_only is True
+        return evidence(target_id=settings.PROBE_TARGET_ID, operation='ports', payload={
+            'local_port': local_port, 'listening_only': listening_only, 'matched_count': 1,
+            'ports': [{'local': {'host': '127.0.0.1', 'port': local_port},
+                'remote': None, 'status': 'LISTEN', 'pid': 43210, 'process': 'test-worker'}]})
+    schema_tool = StructuredTool.from_function(coroutine=port_snapshot, name='probe_port_snapshot',
+                                               description='Read-only filtered listener snapshot')
+    async def invoke_port_snapshot(args):
+        return await port_snapshot(**args)
+    tool = SimpleNamespace(name=schema_tool.name, description=schema_tool.description,
+        args=schema_tool.args, ainvoke=AsyncMock(side_effect=invoke_port_snapshot))
+    monkeypatch.setattr(executor, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(executor, 'create_agent_llm', lambda **kwargs:
+                        SimpleNamespace(bind_tools=lambda tools: object()))
+    tool_call = {'id': 'ports-1', 'name': 'probe_port_snapshot',
+        'args': {'local_port': 6989, 'listening_only': True}}
+    monkeypatch.setattr(executor, 'ainvoke_with_retry', AsyncMock(side_effect=[
+        AIMessage(content='', tool_calls=[tool_call]), AIMessage(content='监听进程 PID 为 43210。')]))
+
+    initial = {'input': '入口返回503，下游连接失败', 'target_resolution': {
+        'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+        'service': 'localapp', 'allowed_dependencies': ['downstream'],
+        'allowed_services': ['localapp'], 'services': {'localapp': {'expected_ports': []}}},
+        'investigation_config': {'hypothesis_protection': False, 'contradiction_trigger': False},
+        'investigation_tools': [{'name': 'probe_port_snapshot', 'parameters': {
+            'local_port': 'integer', 'listening_only': 'boolean'}}],
+        'autonomous_investigation': True, 'plan': [], 'past_steps': [('探测下游', 'TCP failed')],
+        'raw_evidence': [('探测下游', json.dumps(dependency))]}
+    scheduled = investigation.decide_from_evidence(initial,
+        investigation.InvestigationDecision(hypothesis='downstream is unavailable',
+            blocked_reason='no more checks'), investigation.evidence_index(initial))
+    assert scheduled['plan'] and scheduled['investigation_memory']['policy_selected_check']
+    step_state = {**initial, **scheduled, 'plan': scheduled['plan']}
+
+    executed = await executor.executor(step_state)
+    tool.ainvoke.assert_awaited_once_with({'local_port': 6989, 'listening_only': True})
+    assert executed['evidence_events'] == []  # no run/thread storage in this isolated test
+    next_state = {**step_state, **executed,
+        'raw_evidence': [*step_state['raw_evidence'], *executed['raw_evidence']],
+        'past_steps': [*step_state['past_steps'], *executed['past_steps']]}
+    records = investigation.evidence_index(next_state)
+    port_id = next(key for key, value in records.items()
+                   if json.loads(value['payload']).get('operation') == 'ports')
+    port_payload = json.loads(records[port_id]['payload'])['payload']
+    assert port_payload['ports'][0]['pid'] == 43210
+
+    claimed_cause = investigation.InvestigationDecision(hypothesis='downstream is unavailable',
+        outcome='root_cause', conclusion_level='confirmed_cause', root_cause='PID 43210 crashed',
+        scope='downstream', supporting_evidence=[investigation.Citation(evidence_id=port_id, quote='43210')])
+    report = investigation.decide_from_evidence(next_state, claimed_cause, records)
+    assert report['diagnosis']['kind'] == 'localized_fault', report['response']
+    assert '43210' in report['response']
+    assert '更深原因尚未确认' in report['response']
+    assert 'PID 43210 crashed' not in report['response']
