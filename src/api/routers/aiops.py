@@ -139,7 +139,7 @@ async def get_run_status(thread_id: str, current_user: User = Depends(get_curren
         "report": run.report,
         "terminal_approval": approval,
         "termcp_ui_url": settings.TERMCP_UI_URL if approval else None,
-        'diagnosis': await aiops_service.run_diagnosis(thread_id),
+        **await aiops_service.run_details(thread_id),
     }
 
 

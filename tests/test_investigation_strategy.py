@@ -1,6 +1,7 @@
 import json
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from src.agent.aiops.strategies import investigation as module
@@ -30,6 +31,26 @@ async def test_structured_failure_returns_incomplete_report_with_evidence(monkey
     assert 'connection refused' in result['response']
     assert current['raw_evidence'] == before
     assert result['plan'] == []
+
+
+@pytest.mark.asyncio
+async def test_transient_model_failure_returns_incomplete_report_with_evidence(monkeypatch):
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=httpx.ReadTimeout('mock timeout')))
+    current = state()
+    result = await module.InvestigationStrategy().decide(current)
+    assert result['response'].startswith('未定位根因')
+    assert '模型决策请求失败' in result['response']
+    assert 'ReadTimeout' in result['response']
+    assert '[e1.1]' in result['response']
+    assert result['diagnosis']['kind'] == 'unlocated'
+    assert result['plan'] == []
+
+
+@pytest.mark.asyncio
+async def test_permanent_model_failure_is_not_hidden(monkeypatch):
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=ValueError('bad prompt')))
+    with pytest.raises(ValueError, match='bad prompt'):
+        await module.InvestigationStrategy().decide(state())
 
 
 @pytest.mark.asyncio

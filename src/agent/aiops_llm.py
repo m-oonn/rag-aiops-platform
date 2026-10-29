@@ -1,14 +1,8 @@
-"""运维 Agent 的 LLM 工厂(走 OpenAI compatible-mode,不用 ChatTongyi)。
+"""Agent的OpenAI兼容模型工厂。
 
-为什么 Agent 侧单独建工厂、不复用 src/llm/llm_client.py:
-  - RAG 路径用 ChatTongyi(走 dashscope 原生 SDK,只认通义 Qwen 系列);
-  - Agent 路径要 function calling + 可切供应商,必须走 ChatOpenAI compatible-mode。
-  探针(scripts/probe_llm.py)实测: qwen-max / deepseek-v3 经 compatible-mode 均支持
-  tool_calls;deepseek-r1 是推理模型不返回 tool_calls,严禁用于 Agent。
-
-单一事实来源: 模型名读 settings.AGENT_MODEL,地址/密钥读
-settings.RESOLVED_LLM_API_BASE / RESOLVED_LLM_API_KEY(供应商无关,
-支持 DeepSeek 官方 API: .env 里 LLM_API_BASE=https://api.deepseek.com + LLM_API_KEY=sk-xxx)。
+模型由显式参数、进程AGENT_MODEL或settings.AGENT_MODEL选择，地址/凭据来自
+RESOLVED_LLM_API_BASE/KEY。RAG的LLMClient按模型前缀选ChatTongyi或ChatOpenAI。
+供应商切换后的工具调用、结构化输出和计费须分别核验；构造实例不代表调用已通过。
 """
 
 import asyncio
@@ -29,7 +23,7 @@ def create_agent_llm(
     """创建运维 Agent 用的 ChatOpenAI 实例(compatible-mode)。
 
     Args:
-        model: 模型名;默认取 settings.AGENT_MODEL(deepseek-v3)。
+        model: 显式模型名；省略时取进程环境或settings.AGENT_MODEL。
         temperature: 默认 0,诊断要可复现、不要发散。
         streaming: 节点内部一次性 ainvoke 不需要流式;图层用 astream 做流式输出。
         callbacks: 额外的 LangChain 回调(如 TokenMeter 计量 token 消耗);

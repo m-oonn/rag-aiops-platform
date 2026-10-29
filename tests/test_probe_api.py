@@ -1,4 +1,5 @@
 from uuid import uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import sessionmaker
@@ -54,3 +55,21 @@ def test_other_owner_cannot_read_run(client, auth_headers, probe_run, other_user
 def test_unregistered_target_and_unauthenticated_requests_are_rejected(client, auth_headers):
     assert client.get('/api/v1/aiops/targets/not-configured/status', headers=auth_headers).status_code == 404
     assert client.get('/api/v1/aiops/runs/no-run/evidence').status_code == 401
+
+
+def test_run_details_only_loaded_after_owner_check(client, auth_headers, probe_run, other_user, monkeypatch):
+    from src.api.routers.aiops import aiops_service
+    details = {'diagnosis': None, 'investigation': {'candidates': [], 'events': [], 'next_check': 'check port'}}
+    load = AsyncMock(return_value=details)
+    monkeypatch.setattr(aiops_service, 'run_details', load)
+    tid, _ = probe_run
+    url = f'/api/v1/aiops/runs/{tid}'
+    assert client.get(url).status_code == 401
+    load.assert_not_awaited()
+    result = client.get(url, headers=auth_headers)
+    assert result.status_code == 200 and result.json()['investigation'] == details['investigation']
+    load.assert_awaited_once_with(tid)
+    load.reset_mock()
+    run_store._update_run(tid, user_id=other_user.id)
+    assert client.get(url, headers=auth_headers).status_code == 404
+    load.assert_not_awaited()

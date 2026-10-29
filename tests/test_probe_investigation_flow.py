@@ -55,7 +55,12 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
             config, interrupt_after=['replanner'])
         paused = await graph.aget_state(config)
         assert paused.next == ('executor',)
-        assert {k: paused.values['investigation_memory'][k] for k in followup.model_dump() if k != 'next_question_id'} == {k: v for k, v in followup.model_dump().items() if k != 'next_question_id'}
+        assert {k: paused.values['investigation_memory'][k] for k in followup.model_dump()
+                if k not in {'next_question_id', 'hypothesis_id'}} == {
+                    k: v for k, v in followup.model_dump().items() if k not in {'next_question_id', 'hypothesis_id'}}
+        assigned_id = paused.values['investigation_memory']['hypothesis_id']
+        assert assigned_id == paused.values['investigation_memory']['hypothesis_tracking']['leading_id']
+        assert assigned_id.startswith('h-')
         assert paused.values['investigation_memory']['next_question_id'].startswith('q-')
         assert paused.values['investigation_memory']['unresolved_questions']
         assert paused.values['investigation_memory']['model_suggestion']['next_check'] == followup.next_check
@@ -70,6 +75,7 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
         assert restored.values['investigation_memory'] == paused.values['investigation_memory']
         assert restored.values['investigation_reference_context'] == paused.values['investigation_reference_context']
         final = await graph.ainvoke(None, config)
+        assert final['diagnosis']['hypothesis_id'] == assigned_id
         denied.ainvoke.assert_not_awaited()
         assert allowed.ainvoke.await_count == 2
         assert decide.await_count == 2
@@ -90,14 +96,15 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('invalid_output', [False, True])
-async def test_probe_only_run_uses_persistent_investigation_and_survives_reopen(tmp_path, engine, monkeypatch, invalid_output):
+@pytest.mark.parametrize('invalid_output', [False, True, 'timeout'])
+@pytest.mark.parametrize('hitl', [False, True])
+async def test_probe_only_run_uses_persistent_investigation_and_survives_reopen(tmp_path, engine, monkeypatch, invalid_output, hitl):
     graph_module = importlib.import_module('src.agent.aiops.graph')
     investigation = importlib.import_module('src.agent.aiops.strategies.investigation')
     from src.agent.aiops.executor import _record_probe_evidence
     monkeypatch.setattr(settings, 'PROBE_ENABLED', True)
     monkeypatch.setattr(settings, 'TERMCP_ENABLED', False)
-    monkeypatch.setattr(settings, 'ENABLE_HITL', False)
+    monkeypatch.setattr(settings, 'ENABLE_HITL', hitl)
     monkeypatch.setattr(settings, 'AIOPS_CHECKPOINT_DB_PATH', str(tmp_path / 'checkpoints.sqlite'))
     monkeypatch.setattr(settings, 'PROBE_EVIDENCE_DIR', str(tmp_path / 'evidence'))
     monkeypatch.setattr(run_store, 'SessionLocal', sessionmaker(bind=engine))
@@ -121,22 +128,33 @@ async def test_probe_only_run_uses_persistent_investigation_and_survives_reopen(
         alternatives=[investigation.Alternative(explanation='process still serving', status='excluded',
             evidence=[investigation.Citation(evidence_id='e1.1', quote='absent')])])
     from src.agent.aiops.structured import StructuredOutputError
-    invoke = AsyncMock(side_effect=StructuredOutputError('invalid') if invalid_output else None, return_value=decision)
+    import httpx
+    failure = httpx.ReadTimeout('private-provider-detail') if invalid_output == 'timeout' else StructuredOutputError('invalid')
+    invoke = AsyncMock(side_effect=failure if invalid_output else None, return_value=decision)
     monkeypatch.setattr(investigation, 'ainvoke_structured', invoke)
     service = graph_module.AIOpsService()
     try:
         events = [e async for e in service.execute('service unavailable', user_id=17)]
-        final = next(e for e in events if e['type'] == 'complete')
+        if hitl and not invalid_output:
+            pending = next(e for e in events if e['type'] == 'pending_review')
+            events.extend([e async for e in service.resume(pending['thread_id'], {'action': 'approve'})])
+        final = next(e for e in events if e['type'] == ('error' if invalid_output else 'complete'))
+        if invalid_output:
+            assert not any(e['type'] in {'complete', 'pending_review', 'draft'} for e in events)
+            assert final['stage'] == 'investigation_failed'
+            assert final['investigation_failure']['code'] == ('model_request_failed' if invalid_output == 'timeout' else 'invalid_model_decision')
+            assert 'private-provider-detail' not in json.dumps(events)
         assert final['response'].startswith('未定位根因' if invalid_output else '已定位故障层：配置服务当前未运行')
         assert final['diagnosis']['kind'] == ('unlocated' if invalid_output else 'localized_fault')
         if not invalid_output:
             assert final['diagnosis']['evidence'][0]['evidence_id'].startswith('ev-')
         if invalid_output:
             assert 'stopped' in final['response']
-            assert '结构化' in final['response']
+            assert ('ReadTimeout' if invalid_output == 'timeout' else '结构化') in final['response']
         tid = final['thread_id']
         assert run_store.get_run(tid).user_id == 17
-        assert run_store.get_run(tid).status == 'completed'
+        assert run_store.get_run(tid).status == ('failed' if invalid_output else 'completed')
+        assert run_store.get_run(tid).report == final['response']
         assert len(run_store.list_evidence(tid, 17)) == 1
         assert len([e for e in events if e['type'] == 'evidence']) == 1
         assert invoke.await_count == 1
@@ -149,7 +167,19 @@ async def test_probe_only_run_uses_persistent_investigation_and_survives_reopen(
         assert checkpoint.values['autonomous_investigation'] is True
         assert checkpoint.values['response'] == final['response']
         assert await reopened.run_diagnosis(tid) == final['diagnosis']
+        details = await reopened.run_details(tid)
+        assert details.get('investigation_failure') == final.get('investigation_failure')
+        assert details['investigation'] == final.get('investigation')
+        if not invalid_output:
+            replanned = next(e for e in events if e.get('investigation'))
+            assert replanned['investigation'] == final['investigation']
+            assert details['investigation']['candidates']
         assert checkpoint.next == ()
+        from scripts.evaluate_windows_probe import save_mechanism_audit
+        audit = await save_mechanism_audit(reopened, tid, checkpoint.values['investigation_config'], tmp_path)
+        assert audit['passed'] is (not invalid_output), audit
+        saved_trace = json.loads((tmp_path / 'mechanism_trace.json').read_text(encoding='utf-8'))
+        assert len(saved_trace['decisions']) == (0 if invalid_output else 1)
     finally:
         await reopened.close()
 

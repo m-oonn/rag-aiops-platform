@@ -9,6 +9,7 @@
 """
 
 from src.agent.aiops.events import (
+    investigation_summary,
     EVENT_TYPES,
     make_complete_event,
     make_draft_event,
@@ -20,7 +21,116 @@ from src.agent.aiops.events import (
     make_step_complete_event,
 )
 from src.agent.aiops.graph import AIOpsService
+from src.agent.aiops.strategies.investigation import _evidence_summaries
 from src.settings import settings
+import pytest
+
+
+@pytest.mark.parametrize('response', ['', 'final report'])
+@pytest.mark.parametrize('hitl', [False, True])
+def test_replanner_projects_saved_investigation_without_raw_proposals(monkeypatch, response, hitl):
+    monkeypatch.setattr(settings, 'ENABLE_HITL', hitl)
+    state = {'response': response, 'plan': [] if response else ['check downstream'],
+        'investigation_memory': {'discriminating_question': 'is downstream reachable?',
+            'expected_observation': 'TCP result',
+            'observed_findings': [{'evidence_id': 'ev-1', 'summary': '入口返回503'}],
+            'evidence_summaries': [{'evidence_id': 'ev-1', 'summary': 'dependency_probe downstream: TCP ok, HTTP 200'}],
+            'hypothesis_tracking': {
+                'leading_id': 'h1', 'config': {'hypothesis_protection': True},
+                'candidates': [{'id': 'h1', 'explanation': 'candidate password=hidden-value',
+                    'status': 'protected', 'evidence_ids': ['ev-1'],
+                    'proposal': {'raw': 'private-proposal'}, 'seen_observations': ['internal-token']}],
+                'events': [{'kind': 'hypothesis_protected', 'step': 2, 'hypothesis_id': 'h1',
+                    'reason': 'still checkable', 'private': 'internal-event'}]}}}
+    result = AIOpsService._format_event('replanner', state)
+    summary = result['investigation']
+    assert summary['next_check'] == ('' if response else 'check downstream')
+    assert summary['events'][0]['kind'] == 'hypothesis_protected'
+    assert summary['candidates'][0]['evidence_ids'] == ['ev-1']
+    assert summary['discriminating_question'] == 'is downstream reachable?'
+    assert summary['observed_findings'] == [{'evidence_id': 'ev-1', 'summary': '入口返回503'}]
+    assert summary['evidence_summaries'][0]['summary'].endswith('HTTP 200')
+    assert 'hidden-value' not in str(summary) and 'private-proposal' not in str(summary)
+    assert 'internal-token' not in str(summary) and 'internal-event' not in str(summary)
+    assert state['investigation_memory']['hypothesis_tracking']['candidates'][0]['proposal'] == {'raw': 'private-proposal'}
+    assert make_complete_event('done', investigation=summary)['investigation'] == summary
+
+
+def test_old_state_has_no_invented_investigation():
+    assert investigation_summary({}) is None
+    assert 'investigation' not in make_complete_event('old result')
+    assert 'investigation' not in AIOpsService._format_event('replanner', {'plan': ['old check']})
+
+
+@pytest.mark.parametrize(('operation', 'payload', 'truncated', 'status', 'parts'), [
+    ('services', {'service': 'localapp', 'state': 'not_applicable',
+                  'reason': 'process application; use process observations'},
+     False, 'not_applicable', ['state', 'not_applicable', 'process application']),
+    ('event_logs', {'service': 'localapp', 'channels': [], 'events': [],
+                    'error': 'no event channels configured'},
+     False, 'not_applicable', ['not applicable', 'no event channels configured']),
+    ('ports', {'local_port': 7063, 'ports': [], 'matched_count': 0,
+               'error': 'AccessDenied'},
+     False, 'unavailable', ['unavailable (AccessDenied)']),
+    ('resources', {'cpu_percent': 12.5, 'memory': {'percent': 55.2},
+                   'disks': [{'mountpoint': 'C:', 'percent': 22},
+                             {'mountpoint': 'D:', 'error': 'unavailable'}]},
+     False, 'partial', ['CPU 12.5%', 'memory 55.2%', '2 disk records']),
+    ('processes', {'service': 'localapp', 'processes': [{'pid': 42}],
+                   'matched_count': 1, 'skipped_count': 2,
+                   'memory_unavailable_count': 1, 'cpu_unavailable_count': 0},
+     False, 'partial', ['1 returned process records', 'matched 1', 'skipped 2',
+                        'memory unavailable 1', 'CPU unavailable 0']),
+    ('dependency_probe', {'dependency': 'downstream', 'tcp': 'failed',
+                          'http': {'error': 'URLError'}},
+     False, 'observed', ['TCP failed', 'HTTP unavailable (URLError)']),
+    ('text_logs', {'service': 'localapp', 'path': 'app.log', 'lines': ['tail']},
+     True, 'partial', ['1 log lines']),
+])
+def test_evidence_summaries_describe_coverage_and_failure_semantics(
+        operation, payload, truncated, status, parts):
+    value = {'target_id': settings.PROBE_TARGET_ID, 'operation': operation,
+             'data_source': 'probe_target', 'collected_at': '2026-10-26T02:21:41Z',
+             'payload': payload, 'truncated': truncated}
+    records = {'ev-1': {'payload': __import__('json').dumps(value)}}
+    item = _evidence_summaries(records, {'target_resolution': {}})[0]
+    assert item['status'] == status
+    assert all(part in item['summary'] for part in parts)
+    if operation == 'event_logs':
+        assert item['error'] == 'no event channels configured'
+    if operation == 'ports':
+        assert '0 matched port records' not in item['summary']
+
+
+@pytest.mark.parametrize(('operation', 'payload', 'parts'), [
+    ('processes', {'service': 'localapp', 'processes': [{'pid': 42}]},
+     ['1 returned process records', 'matched unknown', 'skipped unknown',
+      'memory unavailable unknown', 'CPU unavailable unknown']),
+    ('ports', {'local_port': 7063, 'ports': [{'status': 'LISTEN'}], 'matched_count': 5},
+     ['1 returned port records', 'matched 5']),
+])
+def test_summary_distinguishes_returned_counts_from_missing_coverage(operation, payload, parts):
+    import json
+    value = {'target_id': settings.PROBE_TARGET_ID, 'operation': operation,
+             'data_source': 'probe_target', 'collected_at': '2026-10-26T02:21:41Z',
+             'payload': payload}
+    item = _evidence_summaries({'ev-legacy': {'payload': json.dumps(value)}}, {})[0]
+    assert all(part in item['summary'] for part in parts), item
+    if operation == 'processes':
+        assert item['status'] == 'partial'
+
+
+def test_evidence_summaries_keep_neutral_probe_facts_without_raw_payload():
+    records = {'ev-1': {'payload': '{"target_id":"windows-local-01",'
+        '"operation":"dependency_probe","data_source":"probe_target",'
+        '"collected_at":"2026-10-26T02:21:41Z",'
+        '"payload":{"dependency":"downstream","tcp":"ok",'
+        '"http":{"status":200},"secret":"must-not-leak"},"raw_hash":"sha256:x"}',
+        'provenance': {'operation': 'dependency_probe'}}}
+    result = _evidence_summaries(records, {'target_resolution': {}})
+    assert result[0]['summary'] == 'dependency_probe downstream: TCP ok, HTTP 200'
+    assert 'secret' not in str(result)
+    assert result[0]['evidence_id'] == 'ev-1'
 
 
 # ═══════════════ 构造函数字段快照 ═══════════════

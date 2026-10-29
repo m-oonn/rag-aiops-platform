@@ -14,6 +14,33 @@
 from typing import Any, Dict, List, Literal, TypedDict, Union, NotRequired
 
 from src.agent.aiops.roles import ROLE_EXECUTOR, ROLE_PLANNER, ROLE_REPLANNER
+from src.probe.protocol import redact
+
+
+def investigation_summary(state: dict) -> dict | None:
+    """Project saved decisions, excluding model proposals and raw tool payloads."""
+    memory = state.get('investigation_memory') or {}
+    tracking = memory.get('hypothesis_tracking') or (state.get('diagnosis') or {}).get('mechanisms')
+    if not tracking:
+        return None
+    candidate_fields = ('id', 'explanation', 'status', 'relation', 'birth_step', 'condition',
+                        'evidence_ids', 'evidence_history')
+    event_fields = ('kind', 'step', 'hypothesis_id', 'reason', 'from_check', 'next_check',
+                    'previous_leader_id', 'evidence_ids', 'condition')
+    return redact({
+        'config': tracking.get('config', {}), 'leading_id': tracking.get('leading_id', ''),
+        'candidates': [{k: c[k] for k in candidate_fields if k in c}
+                       for c in tracking.get('candidates', [])],
+        'events': [{k: e[k] for k in event_fields if k in e} for e in tracking.get('events', [])],
+        'identity_issues': tracking.get('identity_issues', []),
+        # Keep the decision trail visible without exposing raw tool payloads.
+        'observed_findings': memory.get('observed_findings', []),
+        'evidence_summaries': memory.get('evidence_summaries', []),
+        'next_check': next(iter(state.get('plan') or []), ''),
+        'discriminating_question': memory.get('discriminating_question', ''),
+        'expected_observation': memory.get('expected_observation', ''),
+        'blocked_reason': memory.get('blocked_reason', ''),
+    })
 
 # ── 事件类型常量（SSE payload["type"]）──────────────────────────
 EVENT_PLAN = "plan"
@@ -73,6 +100,7 @@ class StatusEvent(TypedDict, total=False):
     role: str
     message: str
     remaining_steps: int
+    investigation: dict
 
 
 class DraftEvent(TypedDict):
@@ -83,6 +111,7 @@ class DraftEvent(TypedDict):
     role: str
     message: str
     report: str
+    investigation: NotRequired[dict]
 
 
 class ReportEvent(TypedDict):
@@ -94,6 +123,8 @@ class ReportEvent(TypedDict):
     message: str
     report: str
     diagnosis: NotRequired[dict]
+    investigation: NotRequired[dict]
+    investigation_failure: NotRequired[dict]
 
 
 class PendingReviewEvent(TypedDict):
@@ -119,6 +150,7 @@ class CompleteEvent(TypedDict, total=False):
     evidence_source_availability: List[Dict[str, Any]]
     thread_id: str
     diagnosis: dict
+    investigation: dict
 
 
 class ErrorEvent(TypedDict):
@@ -127,6 +159,11 @@ class ErrorEvent(TypedDict):
     type: Literal["error"]
     stage: str
     message: str
+    thread_id: NotRequired[str]
+    response: NotRequired[str]
+    investigation_failure: NotRequired[dict]
+    diagnosis: NotRequired[dict]
+    investigation: NotRequired[dict]
 
 
 class EvidenceEvent(TypedDict, total=False):
@@ -231,6 +268,7 @@ def make_complete_event(
     belief_history: List | None = None,
     evidence_source_availability: List | None = None,
     diagnosis: dict | None = None,
+    investigation: dict | None = None,
 ) -> Dict[str, Any]:
     event = {
         "type": EVENT_COMPLETE,
@@ -246,6 +284,8 @@ def make_complete_event(
         event["thread_id"] = thread_id
     if diagnosis is not None:
         event['diagnosis'] = diagnosis
+    if investigation is not None:
+        event['investigation'] = investigation
     return event
 
 

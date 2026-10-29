@@ -1,9 +1,164 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import AIOps from './AIOps.vue'
 
 describe('AIOps.vue', () => {
+  const investigation = { leading_id: 'h1', next_check: '检查下游监听',
+    discriminating_question: '连接故障还是应用自身错误', expected_observation: '独立下游探测结果',
+    observed_findings: [{ evidence_id: 'ev-123', summary: '入口返回503' }],
+    evidence_summaries: [{ evidence_id: 'ev-123', summary: 'dependency_probe downstream: TCP ok, HTTP 200', collected_at: '2026-10-26T02:21:41Z' }],
+    candidates: [{ id: 'h1', explanation: '下游连接异常', status: 'protected', relation: 'neutral', evidence_ids: ['ev-123'] }],
+    events: [{ kind: 'hypothesis_protected', step: 2, hypothesis_id: 'h1', reason: '候选仍可核查' },
+      { kind: 'contradiction_triggered', step: 3, hypothesis_id: 'h1', evidence_ids: ['ev-123'],
+        reason: '新观察反驳原先预期', next_check: '检查下游监听' }] }
+
+  it('restores saved investigation without granting raw evidence access', async () => {
+    localStorage.getItem.mockImplementation(key => ({ token: 'test-token', aiops_last_thread: 'saved-run' })[key] || null)
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async url => {
+      if (url.endsWith('/saved-run')) return { ok: true, json: async () => ({ status: 'completed', report: '未定位', investigation }) }
+      if (url.endsWith('/evidence')) return { ok: true, json: async () => ({ evidence: [{ evidence_id: 'ev-123', summary: 'TCP observation' }] }) }
+      throw new Error(`unexpected ${url}`)
+    })
+    const wrapper = mount(AIOps, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const panel = wrapper.find('.investigation-card')
+    expect(panel.text()).toContain('保护期内')
+    expect(panel.text()).toContain('下游连接异常')
+    expect(panel.text()).toContain('反证触发改向')
+    expect(panel.text()).toContain('连接故障还是应用自身错误')
+    expect(panel.text()).toContain('本轮证据依据')
+    expect(panel.text()).toContain('入口返回503')
+    expect(panel.text()).toContain('本轮现场证据')
+    expect(panel.text()).toContain('TCP ok, HTTP 200')
+    expect(panel.text()).not.toContain('证据已截断')
+    expect(panel.text()).not.toContain('采集返回错误')
+    expect(panel.text()).toContain('候选仍可核查')
+    expect(wrapper.find('.el-collapse-item__header').attributes('aria-expanded')).toBe('false')
+    const scroll = vi.fn()
+    wrapper.find('#evidence-ev-123').element.scrollIntoView = scroll
+    const refs = panel.findAll('button.investigation-evidence-ref')
+    expect(refs).toHaveLength(2)
+    for (const button of refs) {
+      await button.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.el-collapse-item__header').attributes('aria-expanded')).toBe('true')
+      expect(document.activeElement).toBe(wrapper.find('#evidence-ev-123').element)
+    }
+    expect(scroll).toHaveBeenCalledTimes(2)
+    await wrapper.find('.el-collapse-item__wrap').trigger('transitionend', { propertyName: 'max-height' })
+    expect(scroll).toHaveBeenCalledTimes(3)
+    await wrapper.find('.el-collapse-item__wrap').trigger('transitionend', { propertyName: 'padding-top' })
+    expect(scroll).toHaveBeenCalledTimes(3)
+    expect(fetchSpy.mock.calls.some(([url]) => url.endsWith('/evidence/ev-123'))).toBe(false)
+    expect(wrapper.text()).not.toContain('查看现场证据')
+    wrapper.unmount()
+  })
+
+  it('preserves a failed investigation report live and after refresh', async () => {
+    const failure = { code: 'model_request_failed', message: '模型请求超时，调查未完成' }
+    localStorage.getItem.mockImplementation(key => key === 'token' ? 'test-token' : null)
+    let controller
+    vi.spyOn(global, 'fetch').mockImplementation(async url => {
+      if (url.endsWith('/failed-run')) return { ok: true, json: async () => ({ status: 'failed',
+        report: '未定位根因：保留已有证据', investigation_failure: failure, investigation }) }
+      if (url.endsWith('/evidence')) return { ok: true, json: async () => ({ evidence: [] }) }
+      return { ok: true, body: new ReadableStream({ start(value) { controller = value } }) }
+    })
+    let wrapper = mount(AIOps, { global: { plugins: [ElementPlus] } })
+    await wrapper.find('textarea').setValue('检查测试业务')
+    await wrapper.findAll('button').find(b => b.text().includes('开始诊断')).trigger('click')
+    await flushPromises()
+    controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({
+      type: 'error', stage: 'investigation_failed', thread_id: 'failed-run',
+      message: failure.message, investigation_failure: failure,
+      response: '未定位根因：保留已有证据', investigation,
+    }) + '\n\n'))
+    controller.close()
+    await flushPromises()
+    expect(wrapper.text()).toContain(failure.message)
+    expect(wrapper.find('.report-body').text()).toContain('保留已有证据')
+    expect(wrapper.find('.el-alert--error').exists()).toBe(true)
+    expect(localStorage.setItem).toHaveBeenCalledWith('aiops_last_thread', 'failed-run')
+    expect(wrapper.text()).not.toContain('诊断完成')
+    wrapper.unmount()
+    localStorage.getItem.mockImplementation(key => ({ token: 'test-token', aiops_last_thread: 'failed-run' })[key] || null)
+    wrapper = mount(AIOps, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain(failure.message)
+    expect(wrapper.find('.report-body').text()).toContain('保留已有证据')
+    expect(wrapper.find('.el-alert--error').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('诊断完成')
+    wrapper.unmount()
+  })
+
+  it('shows incomplete collection and missing references without fetching raw content', async () => {
+    localStorage.getItem.mockImplementation(key => ({ token: 'test-token', aiops_last_thread: 'saved-run' })[key] || null)
+    const incomplete = { ...investigation, observed_findings: [{ summary: '缺少引用的旧发现' }],
+      evidence_summaries: [
+        { evidence_id: 'ev-missing', summary: '未取得日志', status: 'unavailable',
+          truncated: true, error: '<img src=x onerror=alert(1)>' },
+        { evidence_id: 'ev-not-applicable', summary: '事件日志不适用', status: 'not_applicable',
+          error: 'no event channels configured' },
+        { evidence_id: 'ev-partial', summary: '进程结果不完整', status: 'partial' },
+        { evidence_id: 'ev-legacy-error', summary: '旧记录查询错误', error: 'AccessDenied' },
+        { summary: '没有编号的旧记录' },
+      ] }
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async url => {
+      if (url.endsWith('/saved-run')) return { ok: true, json: async () => ({ status: 'completed', report: '未定位', investigation: incomplete }) }
+      if (url.endsWith('/evidence')) return { ok: true, json: async () => ({ evidence: [] }) }
+      throw new Error(`unexpected ${url}`)
+    })
+    const wrapper = mount(AIOps, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const panel = wrapper.find('.investigation-card')
+    expect(panel.text()).toContain('检查结果不可用：<img src=x onerror=alert(1)>')
+    expect(panel.text()).toContain('该检查不适用于当前对象：no event channels configured')
+    expect(panel.text()).toContain('证据仅包含部分结果')
+    expect(panel.text()).toContain('检查返回错误：AccessDenied')
+    expect(panel.text()).toContain('证据已截断，仅包含部分结果')
+    expect(panel.find('img').exists()).toBe(false)
+    expect(panel.text()).toContain('不能据此判定对象正常或异常')
+    expect(panel.text()).toContain('缺少证据编号，无法定位原记录')
+    expect(panel.text()).toContain('采集时间未知')
+    const message = vi.spyOn(ElMessage, 'info')
+    await panel.find('button.investigation-evidence-ref').trigger('click')
+    await flushPromises()
+    expect(message).toHaveBeenCalledWith('当前证据账本中未找到该引用，无法定位；请先刷新证据状态。')
+    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/aiops/runs/saved-run', '/api/v1/aiops/runs/saved-run/evidence',
+    ])
+    wrapper.unmount()
+  })
+
+  it('replaces cumulative SSE investigation updates and clears them before a new run', async () => {
+    localStorage.getItem.mockImplementation(key => key === 'token' ? 'test-token' : null)
+    let streamController
+    vi.spyOn(global, 'fetch').mockImplementation(async () => ({ ok: true, body: new ReadableStream({
+      start(controller) { streamController = controller },
+    }) }))
+    const wrapper = mount(AIOps, { global: { plugins: [ElementPlus] } })
+    await wrapper.find('textarea').setValue('检查测试业务')
+    await wrapper.findAll('button').find(b => b.text().includes('开始诊断')).trigger('click')
+    await flushPromises()
+    const emit = (event) => streamController.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\n\n'))
+    emit({ type: 'status', message: '继续核查', investigation })
+    emit({ type: 'status', message: '继续核查', investigation })
+    await flushPromises()
+    expect(wrapper.find('.investigation-card').text()).toContain('下一检查：检查下游监听')
+    expect(wrapper.findAll('.investigation-events > li')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('诊断报告')
+    emit({ type: 'complete', response: '未定位', investigation: { ...investigation, next_check: '', blocked_reason: '缺少可执行检查' } })
+    streamController.close()
+    await flushPromises()
+    expect(wrapper.find('.investigation-card').text()).toContain('缺少可执行检查')
+    await wrapper.findAll('button').find(b => b.text().includes('开始诊断')).trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.investigation-card').exists()).toBe(false)
+    streamController.close()
+    await flushPromises()
+    wrapper.unmount()
+  })
   it.each([null, { version: 1, kind: 'localized_fault', scope: 'orders entry', target_id: 'windows-local-01',
     conclusion: '入口返回503，原因未明', stop_reason: '缺少下游证据',
     observed_findings: [{ evidence_id: 'ev-123', summary: '依赖 TCP 探测失败', collected_at: '2026-10-18T01:00:00Z' }],
@@ -28,6 +183,7 @@ describe('AIOps.vue', () => {
         expect(wrapper.text()).toContain('判断校验：因果解释未验证')
         expect(wrapper.findAll('button').some(b => b.text().includes('ev-123'))).toBe(true)
       } else expect(wrapper.text()).toContain('历史格式')
+      expect(wrapper.find('.investigation-card').exists()).toBe(false)
       wrapper.unmount()
     })
   beforeEach(() => {

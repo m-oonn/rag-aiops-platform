@@ -135,3 +135,15 @@ def test_knowledge_context_only_accepts_marked_results_and_bounds_content():
     assert knowledge_context([('host', json.dumps({'data_source': 'probe_target', 'payload': payload}))]) == []
     assert knowledge_context([('unmarked', json.dumps({'results': payload['results']}))]) == []
     assert knowledge_context([('empty', json.dumps({'data_source': 'knowledge_base', 'results': []}))]) == []
+
+
+def test_knowledge_context_preserves_source_ids_and_upstream_truncation():
+    raw = {'data_source': 'knowledge_base', 'kb_id': 15, 'results': [
+        {'source': 'handbook.pdf', 'doc_id': 35, 'page': 2, 'chunk_id': 'c1',
+         'content': 'short excerpt', 'truncated': True, 'source_url': 'https://example.com/manual'},
+        {'content': 'another excerpt', 'kb_id': 'invalid', 'doc_id': True}]}
+    first, second = knowledge_context([('planning', json.dumps(raw))])
+    assert first['kb_id'] == 15 and first['doc_id'] == 35
+    assert first['page'] == '2' and first['chunk_id'] == 'c1' and first['truncated']
+    assert first['source_url'] == 'https://example.com/manual'
+    assert 'kb_id' not in second and 'doc_id' not in second

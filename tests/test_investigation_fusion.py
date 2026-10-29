@@ -146,6 +146,7 @@ async def test_newer_normal_observation_blocks_old_fault_conclusion(monkeypatch)
     result = await inv.InvestigationStrategy().decide(current)
     assert result['diagnosis']['kind'] == 'unlocated'
     assert result['diagnosis']['contradictions']
+    assert result['diagnosis']['recommendations'] == []
 
 
 def test_superseded_observations_use_collection_time_not_insertion_order():
@@ -245,6 +246,7 @@ def test_fault_fallback_rejects_untrusted_or_out_of_scope_observations(invalid):
     result = inv.decide_from_evidence(current, inv.InvestigationDecision(hypothesis='unknown'), inv.evidence_index(current))
     assert result['diagnosis']['kind'] == 'unlocated'
     assert result['diagnosis']['observed_findings'] == []
+    assert result['diagnosis']['recommendations'] == []
 
 
 def test_observed_fault_does_not_stop_a_valid_new_check_and_question_id_survives():
@@ -300,6 +302,7 @@ def test_latest_normal_observation_removes_old_fault_from_findings():
     result = inv.decide_from_evidence(current, inv.InvestigationDecision(hypothesis='unknown'), inv.evidence_index(current))
     assert result['diagnosis']['kind'] == 'unlocated'
     assert result['diagnosis']['observed_findings'] == []
+    assert result['diagnosis']['recommendations'] == []
 
 
 @pytest.mark.parametrize('expected', ['impossible-state', 1, True])

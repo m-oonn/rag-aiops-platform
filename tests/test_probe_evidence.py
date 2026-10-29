@@ -6,6 +6,25 @@ from src.probe.evidence import EvidenceValidationError, validate_evidence
 from src.probe.protocol import evidence
 
 
+@pytest.mark.parametrize('row_time, accepted', [
+    ('2026-10-25T10:00:00+00:00', True),
+    ('2026-10-25T10:00:01+00:00', True),
+    ('2026-10-25T09:59:59+00:00', False),
+    ('2026-10-25T10:00:03+00:00', False),
+    ('2026-10-25T10:00:01', False),
+    ('invalid', False)])
+def test_observation_window_checks_row_time_against_reset_and_collection(row_time, accepted):
+    import json
+    from src.probe.evidence import validate_observation_window
+    item = evidence(target_id='t', operation='text_logs',
+        payload={'lines': [json.dumps({'at': row_time})]}, collected_at='2026-10-25T10:00:02+00:00')
+    if accepted:
+        validate_observation_window(item, '2026-10-25T10:00:00+00:00')
+    else:
+        with pytest.raises(ValueError):
+            validate_observation_window(item, '2026-10-25T10:00:00+00:00')
+
+
 def test_evidence_target_and_hash_are_verified():
     item = evidence(target_id="windows-local-01", operation="resources", payload={"cpu_percent": 1})
     assert validate_evidence(item, target_id="windows-local-01")["operation"] == "resources"

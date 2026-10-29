@@ -210,7 +210,14 @@ def knowledge_context(raw_evidence: Iterable[tuple[str, Any]] | None) -> list[di
                         'source': str(redact(item.get('source') or item.get('filename') or 'unknown'))[:300],
                         'chunk_id': str(redact(item.get('chunk_id') or ''))[:200],
                         'page': str(item['page'])[:30] if item.get('page') is not None else None,
-                        'content': content[:1200], 'truncated': len(content) > 1200}
+                        'content': content[:1200],
+                        'truncated': bool(item.get('truncated')) or len(content) > 1200}
+                    for key in ('kb_id', 'doc_id'):
+                        identifier = item.get(key, value.get(key))
+                        if type(identifier) is int:
+                            row[key] = identifier
+                    if isinstance(item.get('source_url'), str):
+                        row['source_url'] = str(redact(item['source_url']))[:1000]
                     if row not in rows:
                         rows.append(row)
             elif value.get('type') == 'text':

@@ -45,6 +45,8 @@ class PlanExecuteState(TypedDict):
     investigation_memory: NotRequired[dict]
     investigation_config: NotRequired[dict]
     diagnosis: NotRequired[dict]
+    # Execution failure is distinct from a normally completed unlocated diagnosis.
+    investigation_failure: NotRequired[dict]
     target_resolution: NotRequired[dict]
     investigation_tools: NotRequired[List[dict]]
     # Configured targets and retrieved guidance, never current host evidence.

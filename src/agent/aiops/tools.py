@@ -4,9 +4,8 @@
 knowledge_base(知识库 8105)、change(变更 8106);由 mcp_client 统一加载,任一服务不可达
 时按服务粒度降级,不影响其余工具。
 
-另有一条不经工具装配的经验检索:planner 在规划前用 HybridRetriever(向量+BM25+RRF,
-配 DashScopeReranker 重排)查一次知识库,把相关排查经验注入 prompt,查不到时降级到
-本地 runbook(local_retrieval);同一条能力也可由 LLM 通过 knowledge_base 工具自主调用。
+规划前经验检索按 EXPERIENCE_KB_IDS 中的库配置选本地 BM25 或原混检；显式范围无结果
+不扩大检索。未指定范围保留原混检和本地 runbook 降级。调查中也可调用知识 MCP。
 """
 
 from langchain_core.tools import BaseTool

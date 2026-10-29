@@ -107,8 +107,8 @@ def mark_completed(thread_id: str, report: str) -> None:
     _update_run(thread_id, status=STATUS_COMPLETED, report=report)
 
 
-def mark_failed(thread_id: str, error: str) -> None:
-    _update_run(thread_id, status=STATUS_FAILED, report=error)
+def mark_failed(thread_id: str, error: str, *, report: str | None = None) -> None:
+    _update_run(thread_id, status=STATUS_FAILED, report=report if report is not None else error)
 
 
 def add_approval(

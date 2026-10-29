@@ -27,7 +27,7 @@ def diagnostic_fingerprint(item: dict[str, Any]) -> str:
     return raw_hash({'payload': payload, 'truncated': bool(item.get('truncated'))})
 
 
-def validate_tool_evidence(result: Any, *, tool_name: str, target_id: str) -> dict[str, Any]:
+def validate_tool_evidence(result: Any, *, tool_name: str, target_id: str, now: datetime | None = None) -> dict[str, Any]:
     """Decode one MCP return and bind its evidence operation to the invoked tool."""
     import json
     value = result
@@ -41,7 +41,29 @@ def validate_tool_evidence(result: Any, *, tool_name: str, target_id: str) -> di
             value = value[0].get('text')
         else:
             break
-    return validate_evidence(value, target_id=target_id, expected_operation=PROBE_TOOL_OPERATIONS[tool_name])
+    return validate_evidence(value, target_id=target_id, expected_operation=PROBE_TOOL_OPERATIONS[tool_name], now=now)
+
+
+def validate_observation_window(item: dict[str, Any], boundary: str) -> None:
+    """Strict evaluation boundary for the disposable application's timestamped logs."""
+    import json
+    start = datetime.fromisoformat(boundary.replace('Z', '+00:00'))
+    end = datetime.fromisoformat(str(item.get('collected_at')).replace('Z', '+00:00'))
+    if start.tzinfo is None or end.tzinfo is None or end < start:
+        raise EvidenceValidationError('Probe observation predates this run boundary or lacks timezone')
+    payload = item.get('payload') or {}
+    if item['operation'] == 'event_logs':
+        times = [event.get('collected_at') for event in payload.get('events') or []]
+    elif item['operation'] == 'text_logs':
+        times = [json.loads(line).get('at') for line in payload.get('lines') or []]
+    else:
+        times = []
+    for value in times:
+        observed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if observed.tzinfo is None or observed < start:
+            raise EvidenceValidationError('Probe log row predates this run boundary or lacks timezone')
+        if observed > end:
+            raise EvidenceValidationError('Probe log row is later than collection')
 
 
 def validate_evidence(item: dict[str, Any], *, target_id: str, now: datetime | None = None,

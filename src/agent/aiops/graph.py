@@ -25,6 +25,7 @@ from langgraph.types import Command, interrupt
 
 from src.agent.aiops import run_store
 from src.agent.aiops.events import (
+    investigation_summary,
     make_complete_event,
     make_draft_event,
     make_error_event,
@@ -71,6 +72,7 @@ def _diagnostic_extras(final_state) -> Dict[str, Any]:
         "belief_history": values.get("belief_history", []),
         "evidence_source_availability": values.get("evidence_source_availability", []),
         'diagnosis': values.get('diagnosis'),
+        'investigation': investigation_summary(values),
     }
 
 
@@ -133,10 +135,15 @@ class AIOpsService:
             self._persistent_checkpointer = None
 
     async def run_diagnosis(self, thread_id: str) -> dict | None:
+        return (await self.run_details(thread_id))['diagnosis']
+
+    async def run_details(self, thread_id: str) -> dict:
         """Caller must check run ownership before reading its checkpoint."""
         graph = await self._persistent_graph(self._create_strategy())
         snapshot = await graph.aget_state({'configurable': {'thread_id': thread_id}})
-        return (snapshot.values or {}).get('diagnosis') if snapshot else None
+        values = (snapshot.values or {}) if snapshot else {}
+        return {'diagnosis': values.get('diagnosis'), 'investigation': investigation_summary(values),
+                'investigation_failure': values.get('investigation_failure')}
 
     async def _persistent_graph(self, strategy: BaseReplanStrategy):
         async with self._checkpoint_lock:
@@ -224,6 +231,8 @@ class AIOpsService:
             workflow.add_node(NODE_HUMAN_REVIEW, build_human_review_node())
 
             def should_continue(state: PlanExecuteState) -> str:
+                if state.get('investigation_failure'):
+                    return END
                 if state.get("response"):
                     return NODE_HUMAN_REVIEW
                 if state.get("plan"):
@@ -306,6 +315,20 @@ class AIOpsService:
     def _yield_pending_review(self, thread_id: str, draft: str) -> Dict[str, Any]:
         return make_pending_review_event(thread_id, draft)
 
+    def _failed_investigation(self, thread_id: str, final_state, *, managed: bool = True) -> Dict[str, Any] | None:
+        values = (final_state.values or {}) if final_state else {}
+        failure = values.get('investigation_failure')
+        if not failure:
+            return None
+        report = values.get('response', '')
+        if managed:
+            run_store.mark_failed(thread_id, failure['message'], report=report)
+            self._thread_runs.pop(thread_id, None)
+        clear_terminal_context(thread_id)
+        return {**make_error_event(failure['message'], stage='investigation_failed'),
+                'thread_id': thread_id, 'response': report, 'investigation_failure': failure,
+                **_diagnostic_extras(final_state)}
+
     async def execute(
         self, user_input: str, session_id: str = "default", user_id: Optional[int] = None,
         terminal_enabled: bool = False,
@@ -365,6 +388,10 @@ class AIOpsService:
                     yield event
 
                 final_state = await graph.aget_state(config)
+                failure_event = self._failed_investigation(unique_session, final_state, managed=managed_run)
+                if failure_event:
+                    yield failure_event
+                    return
 
                 if final_state and NODE_TERMINAL_REVIEW in (final_state.next or ()):
                     approval = (final_state.values or {}).get("terminal_approval") or {}
@@ -476,6 +503,10 @@ class AIOpsService:
                     yield event
 
                 final_state = await graph.aget_state(config)
+                failure_event = self._failed_investigation(thread_id, final_state)
+                if failure_event:
+                    yield failure_event
+                    return
                 if final_state and NODE_TERMINAL_REVIEW in (final_state.next or ()):
                     approval = (final_state.values or {}).get("terminal_approval") or {}
                     run_store.mark_pending_terminal(thread_id, approval)
@@ -545,6 +576,10 @@ class AIOpsService:
                 return make_step_complete_event(progress.get("done", 1), progress.get("total", 1),
                                                 past[-1][0], len(state.get("plan") or []))
         if node_name == NODE_REPLANNER:
+            summary = investigation_summary(state)
+            extra = {'investigation': summary} if summary is not None else {}
+            if state.get('investigation_failure'):
+                extra['investigation_failure'] = state['investigation_failure']
             response = state.get("response", "")
             plan = state.get("plan", [])
             branches = state.get("sidebar_branches", [])
@@ -552,14 +587,18 @@ class AIOpsService:
             sidebar_note = f"，旁开支线 {running} 条" if branches else ""
             if response:
                 # HITL 开启时 replanner 产出的是"草稿"，最终报告需人工审批
-                if settings.ENABLE_HITL:
-                    return make_draft_event(response)
-                return make_report_event(response, state.get('diagnosis'))
+                if settings.ENABLE_HITL and not state.get('investigation_failure'):
+                    return {**make_draft_event(response), **extra}
+                event = {**make_report_event(response, state.get('diagnosis')), **extra}
+                if state.get('investigation_failure'):
+                    event['message'] = '调查未完成，已保留已有证据与失败说明'
+                return event
             return make_status_event(
                 "replanner",
                 ROLE_REPLANNER,
                 f"继续执行剩余步骤{sidebar_note}" if plan else f"准备生成报告{sidebar_note}",
                 remaining_steps=len(plan),
+                **extra,
             )
         return make_status_event(node_name, node_name, f"{node_name} 执行中")
 

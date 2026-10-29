@@ -9,7 +9,7 @@ FAULT_LABELS = {
     'port_not_listening': '指定端口未监听',
     'expected_port_not_listening': '期望端口未监听',
     'dependency_tcp_failed': '配置依赖 TCP 探测失败',
-    'dependency_http_failed': '配置依赖 HTTP 健康检查失败',
+    'dependency_http_failed': 'HTTP 探测返回失败状态',
     'port_owner_mismatch': '监听端口归属与服务 PID 不符',
 }
 

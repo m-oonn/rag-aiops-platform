@@ -110,6 +110,76 @@
       </el-timeline>
     </el-card>
 
+    <el-card v-if="investigation" shadow="never" class="section-card investigation-card">
+      <template #header>调查依据与下一步</template>
+      <p class="diagnosis-item-meta">候选是待核查的解释；支持某条预期不等于确认根因。</p>
+      <div v-if="(investigation.observed_findings || []).length" class="investigation-basis">
+        <strong>本轮证据依据</strong>
+        <ul class="diagnosis-list">
+          <li v-for="(finding, index) in investigation.observed_findings" :key="`basis-${index}`" class="diagnosis-item">
+            <span>{{ finding.summary || '现场观测' }}</span>
+            <el-button v-if="finding.evidence_id" text size="small" type="primary" class="investigation-evidence-ref"
+              @click="focusEvidence(finding.evidence_id)">{{ finding.evidence_id }}</el-button>
+            <span v-else class="diagnosis-item-meta">缺少证据编号，无法定位原记录。</span>
+          </li>
+        </ul>
+      </div>
+      <div v-if="(investigation.evidence_summaries || []).length" class="investigation-basis">
+        <strong>本轮现场证据</strong>
+        <ul class="diagnosis-list">
+          <li v-for="item in investigation.evidence_summaries" :key="item.evidence_id" class="diagnosis-item">
+            <span>{{ item.summary }}</span>
+            <el-button v-if="item.evidence_id" text size="small" type="primary" class="investigation-evidence-ref"
+              @click="focusEvidence(item.evidence_id)">{{ item.evidence_id }}</el-button>
+            <span v-else class="diagnosis-item-meta">缺少证据编号，无法定位原记录。</span>
+            <span class="diagnosis-item-meta">{{ item.collected_at || '采集时间未知' }}</span>
+            <span v-if="item.status === 'not_applicable'" class="investigation-evidence-warning">
+              该检查不适用于当前对象：{{ item.error || '当前对象不支持此检查' }}；不能据此判定对象正常或异常。
+            </span>
+            <span v-else-if="item.status === 'unavailable'" class="investigation-evidence-warning">
+              检查结果不可用：{{ item.error || '未取得可用数据' }}；不能据此判定对象正常或异常。
+            </span>
+            <span v-if="item.truncated || item.status === 'partial'" class="investigation-evidence-warning">
+              {{ item.truncated
+                ? '证据已截断，仅包含部分结果；不能据此排除未显示的问题。'
+                : '证据仅包含部分结果；不能据此排除未覆盖的对象或字段。' }}
+            </span>
+            <span v-if="item.error && !['not_applicable', 'unavailable'].includes(item.status)"
+              class="investigation-evidence-warning">
+              检查返回错误：{{ item.error }}；不能据此判定对象正常或异常。
+            </span>
+          </li>
+        </ul>
+      </div>
+      <ul class="diagnosis-list">
+        <li v-for="candidate in investigation.candidates || []" :key="candidate.id" class="diagnosis-item">
+          <el-tag size="small" :type="candidate.status === 'protected' ? 'warning' : 'info'">{{ candidateStatus[candidate.status] || candidate.status }}</el-tag>
+          <span>{{ candidate.explanation }}</span>
+          <span v-if="candidate.id === investigation.leading_id" class="diagnosis-item-meta">当前核查方向</span>
+          <span class="diagnosis-item-meta">预期核对：{{ relationLabels[candidate.relation] || '尚无可判定观察' }}</span>
+          <span v-if="candidate.condition" class="diagnosis-item-meta">必要预期：{{ observationCondition(candidate.condition) }}</span>
+          <el-button v-for="id in candidate.evidence_ids || []" :key="id" text size="small" type="primary" @click="focusEvidence(id)">{{ id }}</el-button>
+        </li>
+      </ul>
+      <p v-if="investigation.next_check">下一检查：{{ investigation.next_check }}</p>
+      <p v-if="investigation.discriminating_question">要区分的问题：{{ investigation.discriminating_question }}</p>
+      <p v-if="investigation.expected_observation">预期观察：{{ investigation.expected_observation }}</p>
+      <p v-if="investigation.blocked_reason">停止或阻塞：{{ investigation.blocked_reason }}</p>
+      <p v-for="issue in investigation.identity_issues || []" :key="issue">候选校验：{{ issue }}</p>
+      <ol v-if="(investigation.events || []).length" class="investigation-events">
+        <li v-for="(event, index) in investigation.events" :key="index">
+          <strong>完成 {{ event.step }} 步后 · {{ mechanismLabels[event.kind] || event.kind }}</strong>
+          <div>候选：{{ investigationCandidateName(event.hypothesis_id) }}</div>
+          <div v-if="event.previous_leader_id">此前方向：{{ investigationCandidateName(event.previous_leader_id) }}</div>
+          <div v-if="event.condition">此前必要预期：{{ observationCondition(event.condition) }}</div>
+          <div v-if="event.reason">{{ event.reason }}</div>
+          <div v-if="event.next_check">安排检查：{{ event.next_check }}</div>
+          <el-button v-for="id in event.evidence_ids || []" :key="id" text size="small" type="primary" @click="focusEvidence(id)">{{ id }}</el-button>
+        </li>
+      </ol>
+      <p v-else class="diagnosis-item-meta">当前记录中没有保护或改向事件。</p>
+    </el-card>
+
     <!-- 最终报告 -->
     <el-card v-if="report" id="report-card" shadow="never" class="section-card report-card">
       <template #header>
@@ -199,6 +269,23 @@
             <ul class="diagnosis-list">
               <li v-for="(item, index) in diagnosis.validation_issues || []" :key="`issue-${index}`" class="diagnosis-item">
                 <span>判断校验：{{ item }}</span>
+              </li>
+            </ul>
+          </section>
+          <section v-if="(diagnosis.recommendations || []).length" class="diagnosis-section diagnosis-recommendations">
+            <h4 class="diagnosis-section-title"><el-icon><WarningFilled /></el-icon> 人工处理建议</h4>
+            <p>以下建议待人工核对，尚未执行；不作为根因证明。</p>
+            <ul class="diagnosis-list">
+              <li v-for="(item, index) in diagnosis.recommendations || []" :key="`recommendation-${index}`" class="diagnosis-item">
+                <span>处理对象：{{ JSON.stringify(item.scope || {}) }}</span>
+                <span>建议：{{ item.action }}</span>
+                <span v-for="(text, i) in item.preconditions || []" :key="`precondition-${i}`">操作前提：{{ text }}</span>
+                <span v-for="(text, i) in item.risks || []" :key="`risk-${i}`">风险：{{ text }}</span>
+                <span v-for="(text, i) in item.verification_steps || []" :key="`verify-${i}`">处理后验证：{{ text }}</span>
+                <el-button v-for="(ref, i) in item.evidence || []" :key="`advice-ref-${i}`"
+                  text size="small" type="primary" @click="focusEvidence(ref.evidence_id)">
+                  建议依据：{{ ref.evidence_id }}
+                </el-button>
               </li>
             </ul>
           </section>
@@ -299,13 +386,14 @@
         目标 {{ id }}：{{ target.status === 'online' ? '在线' : target.status === 'offline' ? '离线' : target.status === 'stale' ? '状态过期' : '状态不可用' }}
         · 最近连接消息：{{ target.last_seen || '未知' }}
       </div>
-      <el-collapse class="evidence-collapse">
+      <el-collapse v-model="expandedEvidence" class="evidence-collapse" @transitionend="finishEvidenceExpansion">
         <el-collapse-item name="records" :title="`采集记录（${evidenceTimeline.length}）`">
           <el-timeline>
             <el-timeline-item
               v-for="item in evidenceTimeline"
               :key="item.evidence_id"
               :id="'evidence-' + item.evidence_id"
+              tabindex="-1"
               :type="item.fresh ? 'success' : 'warning'"
               :timestamp="item.collected_at || '采集时间未知'"
             >
@@ -368,12 +456,34 @@ const termcpUiUrl = ref('http://127.0.0.1:18765')
 const steps = ref([])        // [{ text, done, parallel }]
 const report = ref('')
 const diagnosis = ref(null)
+const investigation = ref(null)
+const candidateStatus = { active: '待核查', protected: '保护期内', excluded: '已排除', unavailable: '无法核查', dropped: '已停止保留' }
+const relationLabels = { support: '观察符合必要预期', contradict: '观察反驳必要预期', neutral: '尚无可判定观察' }
+const mechanismLabels = { hypothesis_protected: '保留候选', protection_expired: '保护到期', protection_check_selected: '安排保护候选核查', contradiction_triggered: '反证触发改向', contradiction_blocked: '反证后无可执行替代检查' }
+const investigationCandidateName = (id) => investigation.value?.candidates?.find(c => c.id === id)?.explanation || id
+const observationCondition = (condition) => `${condition.object_name} · ${condition.operation} · ${condition.field} = ${JSON.stringify(condition.expected)}`
 const diagnosisLabels = { confirmed_cause: '原因已确认', localized_fault: '故障层已定位，深层原因未明', healthy_within_scope: '检查范围内未见异常', unlocated: '尚未定位' }
 const sourceLabels = { registered: '已注册（未核验）', callable: '实际调用成功', offline: '目标离线', authentication_failed: '认证失败', permission_denied: '权限不足', stale: '数据陈旧', unavailable: '不可用' }
 const focusEvidence = async (id) => {
+  if (!evidenceTimeline.value.some(item => item.evidence_id === id)) {
+    ElMessage.info('当前证据账本中未找到该引用，无法定位；请先刷新证据状态。')
+    return
+  }
+  expandedEvidence.value = ['records']
+  await nextTick()
   const element = document.getElementById('evidence-' + id)
-  if (element) element.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-  else ElMessage.info('该历史引用无法映射到当前证据账本，不能回读')
+  if (element) {
+    element.focus?.({ preventScroll: true })
+    element.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  } else ElMessage.info('当前证据账本中未找到该引用，无法定位；请先刷新证据状态。')
+}
+const finishEvidenceExpansion = (event) => {
+  // Expansion changes the scroll range after nextTick; align the focused record again.
+  const focused = document.activeElement
+  if (event.propertyName === 'max-height' && expandedEvidence.value.includes('records')
+      && focused?.id?.startsWith('evidence-') && event.target.contains(focused)) {
+    focused.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  }
 }
 const statusText = ref('')
 const errorMsg = ref('')
@@ -383,6 +493,7 @@ const sidebarBranches = ref([])   // 旁开支线 [{ target_hypothesis_name, sta
 const beliefHistory = ref([])     // 信念演进 [{ step, probabilities: { id: prob } }]
 const evidenceSources = ref([])   // 证据源可用性 [{ source, label, available, tools }]
 const evidenceTimeline = ref([])  // Windows Probe/其他现场证据事件
+const expandedEvidence = ref([])
 const currentThreadId = ref('')
 const targetStatuses = ref({})
 const canReadRaw = ref(false)
@@ -542,6 +653,7 @@ const resetState = () => {
   steps.value = []
   report.value = ''
   diagnosis.value = null
+  investigation.value = null
   statusText.value = ''
   errorMsg.value = ''
   hypotheses.value = []
@@ -549,6 +661,7 @@ const resetState = () => {
   beliefHistory.value = []
   evidenceSources.value = []
   evidenceTimeline.value = []
+  expandedEvidence.value = []
   currentThreadId.value = ''
   targetStatuses.value = {}
   canReadRaw.value = false
@@ -583,6 +696,7 @@ const copyReport = async () => {
 
 // 按 type 分发单条 SSE 事件到本地状态
 const handleEvent = (evt) => {
+  if (evt.investigation) investigation.value = evt.investigation
   switch (evt.type) {
     case 'plan':
       steps.value = (evt.plan || []).map((raw) => {
@@ -635,6 +749,12 @@ const handleEvent = (evt) => {
       statusText.value = `已采集现场证据：${evt.kind || 'unknown'}`
       break
     case 'error':
+      diagnosis.value = evt.diagnosis || diagnosis.value
+      if (evt.response) report.value = evt.response
+      if (evt.thread_id) {
+        localStorage.setItem('aiops_last_thread', evt.thread_id)
+        loadEvidence(evt.thread_id)
+      }
       if (pendingApproval.value && !['resume_conflict', 'terminal_approval_invalid'].includes(evt.stage)) {
         pendingApproval.value = null
         localStorage.removeItem('aiops_pending_thread')
@@ -731,6 +851,7 @@ const restorePendingRun = async () => {
       return
     }
     const run = await response.json()
+    investigation.value = run.investigation || null
     await loadEvidence(threadId)
     if (run.status === 'pending_terminal' && run.terminal_approval) {
       pendingApproval.value = { ...run.terminal_approval, thread_id: run.thread_id }
@@ -741,6 +862,10 @@ const restorePendingRun = async () => {
       localStorage.removeItem('aiops_pending_thread')
       if (run.report) report.value = run.report
       diagnosis.value = run.diagnosis || null
+      if (run.status === 'failed') {
+        errorMsg.value = run.investigation_failure?.message || '上次诊断失败，调查未完成'
+        statusText.value = errorMsg.value
+      }
     }
   } catch (_) {
     statusText.value = '无法恢复待审批诊断状态'
@@ -842,6 +967,15 @@ onUnmounted(() => {
 .evidence-collapse {
   border-top: none;
   --el-collapse-border-color: var(--el-border-color-lighter);
+}
+.evidence-collapse :deep(.el-timeline-item:focus) {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 4px;
+}
+.investigation-evidence-warning {
+  flex-basis: 100%;
+  color: var(--el-color-warning-dark-2);
+  overflow-wrap: anywhere;
 }
 .report-header {
   display: flex;
@@ -950,6 +1084,10 @@ onUnmounted(() => {
 .diagnosis-item-meta {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+.diagnosis-recommendations .diagnosis-item {
+  display: grid;
+  overflow-wrap: anywhere;
 }
 .diagnosis-ref {
   padding: 0;
@@ -1105,6 +1243,14 @@ onUnmounted(() => {
 .belief-chart {
   width: 100%;
   height: 280px;
+}
+.investigation-events {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+.investigation-events li {
+  margin: 12px 0;
+  line-height: 1.7;
 }
 /* ── 空状态示例卡（容器由 EmptyState 提供） ── */
 .empty-examples {
