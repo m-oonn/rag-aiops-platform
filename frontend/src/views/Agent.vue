@@ -320,11 +320,9 @@ const fetchModels = async () => {
   } catch (error) {
     console.error('Failed to fetch models:', error)
     availableModels.value = [
-      { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' },
-      { id: 'deepseek-v4-flash-0731', name: 'DeepSeek-V4-Flash-0731' },
-      { id: 'deepseek-v4-pro-0813', name: 'DeepSeek-V4-Pro-0813' },
+      { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash' },
     ]
-    defaultModel.value = 'deepseek-v4.1-flash'
+    defaultModel.value = 'glm-5.3-flash'
   }
 }
 

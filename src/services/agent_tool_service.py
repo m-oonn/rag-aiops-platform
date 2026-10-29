@@ -20,6 +20,7 @@ from src.database.models import Agent
 from src.llm.llm_client import LLMClient
 from src.agent.aiops_llm import create_agent_llm
 from src.utils.logger import logger
+from src.settings import settings
 from src.utils.tracing import trace_span
 from src.services.execution_log_service import write_agent_execution
 
@@ -62,6 +63,10 @@ def _get_agent_llm(agent: Agent):
     if agent.llm_config and isinstance(agent.llm_config, dict):
         model = agent.llm_config.get("model")
         temperature = agent.llm_config.get("temperature", 0.0)
+
+    allowed = {name.strip() for name in settings.AVAILABLE_MODELS.split(",") if name.strip()}
+    if model not in allowed:
+        model = settings.AGENT_MODEL
 
     try:
         return create_agent_llm(model=model, temperature=temperature)

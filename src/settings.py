@@ -26,22 +26,21 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: str = "*"  # TrustedHostMiddleware 白名单(仅生产启用)
 
     DASHSCOPE_API_KEY: Optional[str] = None
-    # LLM 底座地址(单一事实来源): 将来 Agent 侧的 ChatQwen 从这里读,显式指向国内
-    # compatible-mode 站点,避免默认走新加坡站点导致与现有 ChatTongyi 行为漂移。
-    # 注意: 现有 ChatTongyi 不接受此参数(走 dashscope 原生 SDK),故仅 Agent 侧消费。
+    # 未显式指定LLM_API_BASE时的兼容接口回退地址；Agent与非Qwen RAG均可消费。
+    # ChatTongyi使用原生SDK，不从这里选择接口地址。
     DASHSCOPE_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # —— LLM 供应商切换(2026-10-09 新增,支持 DeepSeek 官方 API)——
-    # 目的: 把"换模型供应商"收敛成纯配置切换,代码零改动(.env 改 2 行即可)。
+    # 基础工厂可配置切换；实验入口的供应商白名单、费率与工具兼容性须另行核验。
     #   LLM_API_BASE: 显式指定时优先于各供应商默认地址(DASHSCOPE_API_BASE / deepseek 默认)
     #   LLM_API_KEY : 显式指定时优先;否则依次回退 DEEPSEEK_API_KEY → DASHSCOPE_API_KEY
     # 兼容性: 两者都不设置时,行为与旧版完全一致(走 DASHSCOPE_API_BASE + DASHSCOPE_API_KEY)。
-    LLM_API_BASE: Optional[str] = None     # 例: "https://api.deepseek.com"
-    LLM_API_KEY: Optional[str] = None      # DeepSeek 官方 API Key(sk-xxx)
+    LLM_API_BASE: Optional[str] = "https://www.rightapi.ai/v1"  # 当前默认兼容服务；凭据只从私有配置读取
+    LLM_API_KEY: Optional[str] = None      # OpenAI兼容服务凭据，只保存于私有配置
     DEEPSEEK_API_KEY: Optional[str] = None # 备选变量名(给只认这个名字的场景)
 
-    # 2026-10-10 切换: text-embedding-v1 已欠费(Arrearage),换免费的 qwen3.7-text-embedding(1024维)。
-    # 换模型必须同步 MILVUS_DIMENSION 与 index_runbooks.py 的维度校验。
+    # 模型与向量维度必须匹配现有索引；价格、额度及供应商可用性需单独核实。
+    # 换embedding必须核对MILVUS_DIMENSION及现有索引；不自动重建。
     EMBEDDING_MODEL: str = "qwen3.7-text-embedding"
     EMBEDDING_BATCH_SIZE: int = 20
     EMBEDDING_MAX_BATCH_SIZE: int = 25
@@ -49,55 +48,32 @@ class Settings(BaseSettings):
     # 与 EMBEDDING_API_KEY 同时配置时优先启用, 否则回退 DashScope(见 src/embedding/__init__.py)
     EMBEDDING_API_BASE: Optional[str] = None
     EMBEDDING_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "glm-5.3"  # RAG 路径默认模型(2026-09-23 复测: qwen3.8-max-0902 已耗尽,切 glm-5.3)
-    # —— Agent 路径模型(新增 ChatOpenAI,走 compatible-mode,可调 Qwen 或阿里托管的 DeepSeek)——
-    # 免费额度探针结论(2026-09-10, 脚本 scripts/_tmp_probe_new_models.py / probe_more_models.py):
-    #   ⚠️ 免费额度纪律: 只使用有免费额度的模型;额度耗尽(403 FreeTierOnly)即重新探测,
-    #      绝不切换计费模型。探测用最小请求("你好"),403 不计费。
-    #   2026-09-10 实测免费可用(对话 OK):
-    #     - qwen3.8-max / qwen3.8-flash / qwen3.8-27b (宽松 function calling OK)
-    #     - qwen3.7-flash / kimi-k3 / glm-5.2 (tool_choice=required OK, Agent 首选)
-    #   2026-09-14 复测: qwen3.7-flash 免费额度已耗尽(403 FreeTierOnly), 切 qwen3.8-flash;
-    #   同日盲测后 qwen3.8-flash 亦耗尽, 再切 qwen3.8-max(免费)。
-    #   2026-09-15 复测: qwen3.8-max/qwen3.8-flash/glm-5.2 全部耗尽(403),
-    #     仅 qwen3.8-27b / kimi-k3 可用, 切 qwen3.8-27b(对话+function calling OK)。
-    #   2026-09-15 全量重跑后 qwen3.8-27b 亦耗尽(403), 仅剩 kimi-k3 可用, 再切 kimi-k3。
-    #   2026-09-16 复测: kimi-k3 / qwen3.8-27b / max / flash / glm-5.2 全部 403 耗尽。
-    #   2026-09-16 起「无可用免费模型」阻塞真实 LLM 任务(A/B 补测 / 707 复验 / 12 场景复测)。
-    #   2026-09-23 全量探测(scripts/_tmp_probe_all.py, compatible-mode /models + 原生 OpenAPI):
-    #     发现: 带日期后缀的版本型号是**独立免费额度主体**,主型号耗尽但日期版仍免费可用,
-    #     且全部支持 function calling(实测 FC-OK):
-    #       - qwen3.8-max-0902          (qwen3.8-max 系日期版,行为最接近已验证配置 → 主推理)
-    #       - qwen3.7-flash-2026-07-15  (flash 档,更快更省 → AGENT_MODEL_SIMPLE/降本)
-    #       - glm-5.3 / glm-5.3-prime / glm-5.2-fast-preview
-    #       - deepseek-v4.1-flash / deepseek-v4-flash-0731 / deepseek-v4-pro-0813
-    #       - qwen3.8-2.4t-a95b / qwen3.8-omni-flash / qwen3.5-omni-plus 等
-    AGENT_MODEL: str = "glm-5.3"        # Agent 主推理模型(2026-09-23 复测: qwen3.8-max-0902 已 403 耗尽,切 glm-5.3; function calling OK)
-    AGENT_MODEL_SIMPLE: str = "qwen3.7-flash-2026-07-15"  # 简单意图(闲聊/分类/路由)降本用,flash 档更快
+    LLM_MODEL: str = "glm-5.3-flash"  # RAG默认模型；可用性以所选供应商实测为准
+    # Agent使用OpenAI兼容工厂；默认值不代表供应商当前提供该模型或存在免费额度。
+    # 普通问答与Agent默认统一GLM；实验profile仍可独立覆盖。
+    AGENT_MODEL: str = "glm-5.3-flash"  # Agent主推理；实际兼容性需按供应商验证
+    AGENT_MODEL_SIMPLE: str = "glm-5.3-flash"  # 简单意图、分类与路由
 
     # —— Agent 是否关闭模型 thinking 模式(2026-10-10 新增)——
     # 背景: DeepSeek thinking 模型拒绝"强制 tool_choice",导致 with_structured_output
     # (method="function_calling") 400 报错并降级成正则抠 JSON。实测关闭 thinking 后
     # 原生强制工具调用直接可用(见 scripts/_probe_structured_fix2.py 结论)。
     # 仅对支持的供应商(DeepSeek)生效;换回保留推理能力的模型时置 False 即可。
-    AGENT_DISABLE_THINKING: bool = True
+    AGENT_DISABLE_THINKING: bool = False
 
     # —— 证据裁判 LLM（动态分类策略用）——
     # 开启后 EvidenceJudge 用 LLM 语义判断观测对假设的支持/矛盾关系，
     # 可理解同义词、否定句与隐含证据（修复对抗测试 synonym_blind / negation_trap）。
     # 默认关闭：保证单测确定性；开启后 LLM 不可用/失败会自动降级到规则关键词。
     ENABLE_LLM_EVIDENCE_JUDGE: bool = False
-    EVIDENCE_LLM_MODEL: str = "qwen3.7-flash-2026-07-15"  # 证据裁判用模型(2026-09-23; 裁判任务质量要求低于主推理, 用 flash 档降本)
+    EVIDENCE_LLM_MODEL: str = "glm-5.3-flash"  # 仅裁判开关启用时使用
 
-    # —— 前端模型选择器可用列表(display_name, model_id) ——
-    # 只列 2026-09-23 免费额度实测可用的模型(日期版为主;非 Qwen 系自动走 ChatOpenAI)。
-    # 额度耗尽时重新运行 scripts/probe_available_models.py 探测(含 compatible-mode /models 全量拉取),
-    # 并把新可用模型更新到这里(严禁加入计费模型)。
+    # 前端RAG模型白名单与显示名逐项对应；不表示当前供应商可用性或免费额度。
     AVAILABLE_MODELS: str = (
-        "glm-5.3,qwen3.7-flash-2026-07-15,deepseek-v4.1-flash"
+        "glm-5.3-flash"
     )
     MODEL_DISPLAY_NAMES: str = (
-        "GLM-5.3 (免费),Qwen3.7-Flash-0715 (免费),DeepSeek-V4.1-Flash (免费)"
+        "GLM-5.3-Flash"
     )
 
     MILVUS_HOST: str = "localhost"
@@ -130,7 +106,7 @@ class Settings(BaseSettings):
     
     # Rerank Config
     ENABLE_RERANK: bool = True
-    RERANK_MODEL: str = "qwen3.7-text-rerank"  # 2026-10-10: gte-rerank-v2 已欠费,换免费的 qwen3.7-text-rerank
+    RERANK_MODEL: str = "qwen3.7-text-rerank"  # 在线重排；额度与价格须独立核对
     RERANK_TOP_N: int = 5
 
     # —— 诊断经验注入(AIOps planner) ——
@@ -187,13 +163,9 @@ class Settings(BaseSettings):
     ENABLE_CONFIDENCE_CALIBRATION: bool = False
     BELIEF_SOFTMAX_TEMPERATURE: float = 3.0
 
-    # —— 论文消融开关（仅实验用；生产保持全 False）——
-    # 对齐开题报告"消融分析：逐项关闭 假设保护 / 证据门控 / 降级标注"。
-    # 每个开关只关闭**一个**机制，用于量化该机制对诊断准确率与诚实性的贡献；
-    # 关闭只影响该机制，不改变其余链路，保证消融结果可归因。
-    #   假设保护: 弱信号保护(_incubate_weak_signals) + 深度回溯复活(_maybe_reactivate_hypotheses)
-    #   证据门控: 证据充分性门控(_evidence_sufficiency_problem) → 关后不再把结论降级为"推测"
-    #   降级标注: 报告的证据来源小节与降级来源 caveat → 关后不再披露来源降级/缺席
+    # —— 历史策略消融开关（仅实验用；生产保持全 False）——
+    # 仅用于旧动态分类实现。保护开关同时影响弱信号与复活，不能作为当前四组主实验开关。
+    # 当前四组沿用同一InvestigationStrategy，仅切换下方两个INVESTIGATION_*机制。
     ABLATION_DISABLE_HYPOTHESIS_PROTECTION: bool = False
     ABLATION_DISABLE_EVIDENCE_GATE: bool = False
     ABLATION_DISABLE_DEGRADATION_LABEL: bool = False

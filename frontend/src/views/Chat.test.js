@@ -37,6 +37,17 @@ async function mountChat() {
 }
 
 describe('Chat.vue', () => {
+  it('uses GLM when the model-list endpoint is unavailable', async () => {
+    api.get.mockImplementation((url) => url === '/health/models'
+      ? Promise.reject(new Error('offline model list'))
+      : Promise.resolve({ data: [] }))
+    const wrapper = await mountChat()
+    await flushPromises()
+    expect(wrapper.vm.selectedModel).toBe('glm-5.3-flash')
+    expect(wrapper.vm.availableModels).toEqual([{ id: 'glm-5.3-flash', name: 'GLM-5.3-Flash' }])
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('localStorage', {

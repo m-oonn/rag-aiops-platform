@@ -72,6 +72,10 @@ class LLMClient:
         """
         temp = _DEFAULT_TEMPERATURE if temperature is None else temperature
         target_model = model or self.model_name
+        # Saved assistants can retain models from a previous provider; do not send them to the new endpoint.
+        allowed = {name.strip() for name in settings.AVAILABLE_MODELS.split(",") if name.strip()}
+        if target_model not in allowed:
+            target_model = self.model_name
 
         # 默认模型 + 默认温度 → 复用初始化实例
         if target_model == self.model_name and temp == _DEFAULT_TEMPERATURE:
