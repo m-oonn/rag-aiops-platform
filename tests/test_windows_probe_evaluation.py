@@ -295,6 +295,36 @@ def test_mechanism_audit_uses_actual_state_and_fails_closed(mutation):
     assert not result['mechanism_effectiveness_verified']
 
 
+@pytest.mark.parametrize('mutation', ['none', 'legacy', 'config', 'event', 'condition', 'candidate', 'proposal'])
+def test_mechanism_audit_compares_public_projection_without_accepting_tampering(mutation):
+    import copy
+    from scripts.evaluate_windows_probe import audit_mechanisms
+    from src.agent.aiops.strategies import investigation as inv
+
+    config = {'hypothesis_protection': False, 'contradiction_trigger': False, 'protection_steps': 2}
+    tracking = {'config': dict(config), 'events': [], 'candidates': [{
+        'id': 'h-causal', 'explanation': '根因已确认是进程崩溃', 'status': 'active',
+        'condition': {'operation': 'dependency_probe', 'object_name': 'db', 'field': 'tcp', 'expected': 'failed'},
+        'proposal': {'explanation': '根因已确认是进程崩溃', 'status': 'unresolved',
+                     'verification': 'causal_claim_unverified'}}]}
+    public = copy.deepcopy(tracking) if mutation == 'legacy' else inv._public_tracking(tracking)
+    if mutation == 'config': public['config']['protection_steps'] = 99
+    if mutation == 'event': public['events'].append({'kind': 'invented'})
+    if mutation == 'condition': public['candidates'][0]['condition']['expected'] = 'ok'
+    if mutation == 'candidate': public['candidates'][0]['id'] = 'h-other'
+    if mutation == 'proposal': public['candidates'][0]['proposal']['verification'] = 'predicate_verified'
+    values = {'investigation_config': dict(config), 'investigation_memory': {'hypothesis_tracking': tracking},
+              'diagnosis': {'mechanism_config': dict(config), 'mechanisms': public}}
+    before = copy.deepcopy(values)
+
+    result = audit_mechanisms(config, values, [{'tracking': copy.deepcopy(tracking)}])
+
+    assert result['checks']['diagnosis_tracking'] is (mutation in {'none', 'legacy'})
+    assert result['passed'] is (mutation in {'none', 'legacy'})
+    assert values == before
+    assert not result['mechanism_effectiveness_verified']
+
+
 @pytest.mark.parametrize('gateway, expected', [
     ('ws://127.0.0.1:2040/probe/ws', 'http://127.0.0.1:2040/mcp'),
     ('wss://127.0.0.1:2040/probe/ws', 'https://127.0.0.1:2040/mcp'),

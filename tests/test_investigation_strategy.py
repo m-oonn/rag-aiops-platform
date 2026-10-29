@@ -458,6 +458,22 @@ async def test_unverified_causal_alternative_is_sanitized_from_user_output(monke
     assert result['diagnosis']['alternatives'][0]['verification'] == 'causal_claim_unverified'
 
 
+def test_public_unresolved_questions_preserve_distinct_stable_candidate_ids():
+    claims = ['根因确认是数据库崩溃', '已排除应用逻辑故障']
+    answer = decision(alternatives=[module.Alternative(
+        explanation=claim, hypothesis_id=f'h-{index}', status='unresolved',
+        verification='causal_claim_unverified') for index, claim in enumerate(claims)])
+    original = answer.model_dump()
+
+    questions = module.unresolved_questions(answer)
+    reordered = module.unresolved_questions(answer.model_copy(update={'alternatives': list(reversed(answer.alternatives))}))
+
+    assert len({question['id'] for question in questions}) == 2
+    assert {q['id'] for q in questions} == {q['id'] for q in reordered}
+    assert all(claim not in str(questions) for claim in claims)
+    assert answer.model_dump() == original
+
+
 @pytest.mark.asyncio
 async def test_unlocated_report_exposes_resource_facts_despite_bad_model_quote(monkeypatch):
     from src.probe.protocol import evidence

@@ -104,6 +104,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
     monkeypatch.setattr(graph_module, 'planner', planner)
     monkeypatch.setattr(inv, 'create_agent_llm', lambda **kw: object())
     cause = '下游进程崩溃导致入口503'  # Deliberately excessive proposal, never an injected observation.
+    unverified_claim = '已排除进程缺失，根因确认是数据库崩溃'
 
     async def decision(*args, **kwargs):
         context = json.loads(args[3]['evidence'])
@@ -122,7 +123,10 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             supporting_evidence=citations, alternatives=[inv.Alternative(explanation='入口TCP失败',
                 status='excluded', claim_type='observed_condition',
                 condition=inv.ObservationCondition(operation='dependency_probe', object_name='localapp', field='tcp', expected='failed'),
-                evidence=[inv.Citation(evidence_id=next(iter(context)), quote='ok')])])
+                evidence=[inv.Citation(evidence_id=next(iter(context)), quote='ok')]),
+                inv.Alternative(explanation=unverified_claim, status='excluded', claim_type='causal_explanation',
+                    condition=inv.ObservationCondition(operation='dependency_probe', object_name='localapp', field='tcp', expected='failed'),
+                    evidence=[inv.Citation(evidence_id=next(iter(context)), quote='ok')])])
 
     fixed_decisions = AsyncMock(side_effect=decision)
     monkeypatch.setattr(inv, 'ainvoke_structured', fixed_decisions)
@@ -157,6 +161,9 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             assert report['diagnosis'] == diagnosis and report['report'] == complete['response']
             assert report['investigation'] == complete['investigation']
             assert cause not in diagnosis['conclusion'] and cause not in complete['response']
+            assert unverified_claim not in json.dumps({'diagnosis': diagnosis, 'report': complete['response'],
+                'investigation': complete['investigation']}, ensure_ascii=False)
+            assert diagnosis['alternatives'][1]['verification'] == 'causal_claim_unverified'
             assert '更深原因尚未确认' in complete['response']
             assert 'model_suggestion' not in complete['investigation']
             emitted = [event for event in events if event['type'] == 'evidence']
@@ -212,6 +219,13 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             assert snapshot.next == () and len(snapshot.values['past_steps']) == evidence_count
             assert snapshot.values['investigation_memory']['root_cause'] == ''
             assert snapshot.values['investigation_memory']['model_suggestion']['root_cause'] == cause
+            assert snapshot.values['investigation_memory']['model_suggestion']['alternatives'][1]['explanation'] == unverified_claim
+            internal_tracking = snapshot.values['investigation_memory']['hypothesis_tracking']
+            assert unverified_claim in json.dumps(internal_tracking, ensure_ascii=False)
+            from scripts.evaluate_windows_probe import save_mechanism_audit
+            mechanism_audit = await save_mechanism_audit(service, tid,
+                snapshot.values['investigation_config'], tmp_path)
+            assert mechanism_audit['passed'], mechanism_audit
     finally:
         await service.close()
     reopened = graph_module.AIOpsService()

@@ -19,26 +19,19 @@ from src.probe.protocol import redact
 
 def investigation_summary(state: dict) -> dict | None:
     """Project saved decisions, excluding model proposals and raw tool payloads."""
+    from src.agent.aiops.strategies.investigation import (
+        _is_unverified_causal_claim, _public_claim_text, _public_tracking,
+    )
     memory = state.get('investigation_memory') or {}
     tracking = memory.get('hypothesis_tracking') or (state.get('diagnosis') or {}).get('mechanisms')
     if not tracking:
         return None
-    unsafe_claims = []
-    for candidate in tracking.get('candidates', []):
-        proposal = candidate.get('proposal') or {}
-        if (proposal.get('verification') == 'causal_claim_unverified'
-                or (proposal.get('claim_type') == 'causal_explanation'
-                    and proposal.get('original_status') in {'excluded', 'supported'}
-                    and proposal.get('condition') is not None
-                    and proposal.get('verification') != 'predicate_verified')):
-            unsafe_claims.append(candidate.get('explanation', ''))
+    unsafe_claims = [candidate.get('explanation', '') for candidate in tracking.get('candidates', [])
+                     if _is_unverified_causal_claim(candidate.get('proposal') or {})]
+    tracking = _public_tracking(tracking)
 
     def public_text(value):
-        text = str(value or '')
-        for claim in unsafe_claims:
-            if claim and claim in text:
-                text = text.replace(claim, '该因果解释尚无可验证的现场条件。')
-        return text
+        return _public_claim_text(value, unsafe_claims)
 
     candidate_fields = ('id', 'explanation', 'status', 'relation', 'birth_step', 'condition',
                         'evidence_ids', 'evidence_history')
@@ -46,11 +39,9 @@ def investigation_summary(state: dict) -> dict | None:
                     'previous_leader_id', 'evidence_ids', 'condition')
     return redact({
         'config': tracking.get('config', {}), 'leading_id': tracking.get('leading_id', ''),
-        'candidates': [{k: (public_text(c[k]) if k == 'explanation' else c[k])
-                        for k in candidate_fields if k in c}
+        'candidates': [{k: c[k] for k in candidate_fields if k in c}
                        for c in tracking.get('candidates', [])],
-        'events': [{k: (public_text(e[k]) if k in {'reason', 'from_check', 'next_check'} else e[k])
-                    for k in event_fields if k in e} for e in tracking.get('events', [])],
+        'events': [{k: e[k] for k in event_fields if k in e} for e in tracking.get('events', [])],
         'identity_issues': tracking.get('identity_issues', []),
         # Keep the decision trail visible without exposing raw tool payloads.
         'observed_findings': memory.get('observed_findings', []),

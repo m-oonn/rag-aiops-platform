@@ -249,15 +249,24 @@ def _public_alternative(alternative):
 
 def _public_tracking(tracking):
     """Sanitize candidate text in the public diagnosis; retain full audit memory."""
+    claims = [candidate.get('explanation', '') for candidate in tracking.get('candidates', [])
+              if _is_unverified_causal_claim(candidate.get('proposal') or {})]
     public = deepcopy(tracking)
     for candidate in public.get('candidates', []):
+        candidate['explanation'] = _public_claim_text(candidate.get('explanation', ''), claims)
+        for field in ('next_check', 'discriminating_question', 'expected_observation'):
+            if field in (candidate.get('check') or {}):
+                candidate['check'][field] = _public_claim_text(candidate['check'][field], claims)
         proposal = candidate.get('proposal') or {}
         if not isinstance(proposal, dict) or not _is_unverified_causal_claim(proposal):
             continue
         safe_explanation = '该因果解释尚无可验证的现场条件。'
-        candidate['explanation'] = safe_explanation
         candidate['proposal'] = {'explanation': safe_explanation, 'status': 'unresolved',
                                  'verification': 'causal_claim_unverified'}
+    for event in public.get('events', []):
+        for field in ('reason', 'from_check', 'next_check'):
+            if field in event:
+                event[field] = _public_claim_text(event[field], claims)
     return public
 
 
@@ -279,9 +288,13 @@ def _unverified_causal_claims(decision):
 
 
 def _public_text(value, decision):
+    return _public_claim_text(value, _unverified_causal_claims(decision))
+
+
+def _public_claim_text(value, claims):
     text = str(value or '')
-    for claim in _unverified_causal_claims(decision):
-        if claim in text:
+    for claim in claims:
+        if claim and claim in text:
             text = text.replace(claim, '该因果解释尚无可验证的现场条件。')
     return text
 
@@ -300,7 +313,8 @@ def unresolved_questions(decision):
                     if _is_unverified_causal_claim(alternative.model_dump())
                     else alternative.explanation.strip())
             if text:
-                ident = 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]
+                identity = alternative.hypothesis_id or alternative.explanation.strip()
+                ident = 'q-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
                 questions.append({'id': ident, 'question': text,
                                   'limitation': (_public_alternative(alternative)['limitation'])})
     return questions

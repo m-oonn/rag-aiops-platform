@@ -85,6 +85,30 @@ def test_live_investigation_summary_hides_unverified_causal_candidate_text():
     assert state['investigation_memory']['hypothesis_tracking']['events'][0]['reason'] == claim
 
 
+@pytest.mark.parametrize('verification', ['causal_claim_unverified', 'unverified'])
+def test_public_diagnosis_tracking_and_sse_share_sanitized_events(verification):
+    from copy import deepcopy
+    from src.agent.aiops.strategies.investigation import _public_tracking
+
+    claim = '根因已确认是进程崩溃'
+    tracking = {'config': {}, 'candidates': [{
+        'id': 'h1', 'explanation': claim, 'condition': {'field': 'tcp', 'expected': 'ok'},
+        'check': {'next_check': f'核查{claim}', 'next_tools': ['probe_dependency_probe']},
+        'proposal': {'verification': verification, 'original_status': 'excluded',
+                     'claim_type': 'causal_explanation', 'condition': {'field': 'tcp'}}}],
+        'events': [{'kind': 'hypothesis_protected', 'step': 1, 'hypothesis_id': 'h1',
+                    'reason': claim, 'from_check': claim, 'next_check': claim}]}
+    before = deepcopy(tracking)
+
+    public = _public_tracking(tracking)
+    summary = investigation_summary({'diagnosis': {'mechanisms': public}})
+
+    assert claim not in str(public)
+    assert public['events'] == summary['events']
+    assert public['candidates'][0]['check']['next_tools'] == ['probe_dependency_probe']
+    assert tracking == before
+
+
 @pytest.mark.parametrize(('operation', 'payload', 'truncated', 'status', 'parts'), [
     ('services', {'service': 'localapp', 'state': 'not_applicable',
                   'reason': 'process application; use process observations'},

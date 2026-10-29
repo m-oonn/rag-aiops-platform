@@ -35,12 +35,15 @@ def configure_mechanisms(group):
 
 def audit_mechanisms(expected, values, snapshots, *, executed_steps=None, execution_records=None):
     """Check actual checkpoint data, never infer switches from a group label."""
+    from src.agent.aiops.strategies.investigation import _public_tracking
     diagnosis = values.get('diagnosis') or {}
     tracking = (values.get('investigation_memory') or {}).get('hypothesis_tracking') or {}
     checks = {'initial_config': values.get('investigation_config') == expected,
         'diagnosis_config': diagnosis.get('mechanism_config') == expected,
         'tracking_config': tracking.get('config') == expected,
-        'diagnosis_tracking': bool(tracking) and diagnosis.get('mechanisms') == tracking,
+        # Old checkpoints store full tracking; new diagnoses store its public projection.
+        'diagnosis_tracking': bool(tracking) and diagnosis.get('mechanisms') in (
+            tracking, _public_tracking(tracking)),
         'has_decision_trace': bool(snapshots),
         'trace_configs': bool(snapshots) and all(row['tracking'].get('config') == expected for row in snapshots)}
     events = tracking.get('events', [])
