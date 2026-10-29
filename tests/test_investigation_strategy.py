@@ -624,6 +624,28 @@ async def test_unverified_causal_alternative_is_sanitized_from_user_output(monke
     assert result['diagnosis']['alternatives'][0]['verification'] == 'causal_claim_unverified'
 
 
+@pytest.mark.parametrize('completed,failed', [(False, False), (True, False), (True, True)])
+def test_followup_question_explains_execution_without_claiming_answer(completed, failed):
+    check = '读取下游允许日志'
+    answer = decision(next_check=check, next_tools=['probe_text_log'],
+        discriminating_question='下游为何不可用', expected_observation='本轮退出或启动失败日志')
+    current = {'past_steps': [(check, 'summary')] if completed else [], 'raw_evidence': []}
+    if failed:
+        current['raw_evidence'] = [(check, json.dumps({'data_source': 'tool_execution',
+            'tool': 'probe_text_log', 'status': 'failed', 'reason': 'AccessDenied'}))]
+    question = module.unresolved_questions(answer, current, {})[0]
+    assert question['expected_observation'] == answer.expected_observation
+    if failed:
+        assert 'AccessDenied' in question['limitation']
+        assert '尚未取得有效结果' in question['limitation']
+    elif completed:
+        assert '检查已执行' in question['limitation']
+        assert '不代表问题已查清' in question['limitation']
+    else:
+        assert '尚未执行' in question['limitation']
+    assert answer.next_check == check
+
+
 def test_public_unresolved_questions_preserve_distinct_stable_candidate_ids():
     claims = ['根因确认是数据库崩溃', '已排除应用逻辑故障']
     answer = decision(alternatives=[module.Alternative(

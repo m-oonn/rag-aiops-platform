@@ -315,6 +315,13 @@ def unresolved_questions(decision, state=None, records=None):
         ident = decision.next_question_id.strip() or 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]
         questions.append({'id': ident, 'question': _public_text(text, decision),
                           'expected_observation': _public_text(decision.expected_observation.strip(), decision)})
+        if state is not None:
+            failure = next((reason for tool in decision.next_tools
+                if (reason := _failed_check_reason(state, tool, step=decision.next_check))), '')
+            completed = {step.strip() for step, _ in state.get('past_steps', [])}
+            questions[-1]['limitation'] = failure or (
+                '该检查已执行；执行完成不代表问题已查清，现有结果仍需核验。'
+                if decision.next_check.strip() in completed else '该鉴别检查尚未执行。')
     for alternative in decision.alternatives:
         if alternative.status in {'unresolved', 'unavailable'}:
             text = ('该因果解释是否有独立现场证据支持？'

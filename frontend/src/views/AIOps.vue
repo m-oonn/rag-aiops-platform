@@ -238,12 +238,17 @@
             </ul>
           </section>
 
-          <section v-if="(diagnosis.unresolved_questions || []).length" class="diagnosis-section">
+          <section v-if="(diagnosis.unresolved_questions || []).length" class="diagnosis-section diagnosis-questions">
             <h4 class="diagnosis-section-title"><el-icon><QuestionFilled /></el-icon> 未决问题</h4>
             <ul class="diagnosis-list">
               <li v-for="(item, index) in diagnosis.unresolved_questions || []" :key="`question-${index}`" class="diagnosis-item">
                 <span>未决问题：{{ item.question }}</span>
                 <span v-if="item.limitation" class="diagnosis-item-meta">{{ item.limitation }}</span>
+                <span v-if="item.expected_observation" class="diagnosis-item-meta">预期观察：{{ item.expected_observation }}</span>
+                <el-button v-for="id in item.evidence_ids || []" :key="id"
+                  text size="small" type="primary" @click="focusEvidence(id)">
+                  问题依据：{{ id }}
+                </el-button>
               </li>
             </ul>
           </section>
@@ -482,7 +487,12 @@ const finishEvidenceExpansion = (event) => {
   const focused = document.activeElement
   if (event.propertyName === 'max-height' && expandedEvidence.value.includes('records')
       && focused?.id?.startsWith('evidence-') && event.target.contains(focused)) {
-    focused.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    // The collapse removes its height constraint after transitionend. Align after that cleanup.
+    requestAnimationFrame(() => {
+      if (document.activeElement === focused && expandedEvidence.value.includes('records')) {
+        focused.scrollIntoView?.({ behavior: 'instant', block: 'center' })
+      }
+    })
   }
 }
 const statusText = ref('')

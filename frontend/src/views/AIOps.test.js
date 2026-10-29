@@ -46,9 +46,18 @@ describe('AIOps.vue', () => {
       expect(document.activeElement).toBe(wrapper.find('#evidence-ev-123').element)
     }
     expect(scroll).toHaveBeenCalledTimes(2)
+    let afterFrame
+    vi.stubGlobal('requestAnimationFrame', vi.fn(callback => { afterFrame = callback; return 1 }))
     await wrapper.find('.el-collapse-item__wrap').trigger('transitionend', { propertyName: 'max-height' })
+    expect(scroll).toHaveBeenCalledTimes(2)
+    afterFrame()
     expect(scroll).toHaveBeenCalledTimes(3)
+    expect(scroll).toHaveBeenLastCalledWith({ behavior: 'instant', block: 'center' })
     await wrapper.find('.el-collapse-item__wrap').trigger('transitionend', { propertyName: 'padding-top' })
+    expect(scroll).toHaveBeenCalledTimes(3)
+    await wrapper.find('.el-collapse-item__wrap').trigger('transitionend', { propertyName: 'max-height' })
+    wrapper.find('textarea').element.focus()
+    afterFrame()
     expect(scroll).toHaveBeenCalledTimes(3)
     expect(fetchSpy.mock.calls.some(([url]) => url.endsWith('/evidence/ev-123'))).toBe(false)
     expect(wrapper.text()).not.toContain('查看现场证据')
@@ -162,7 +171,8 @@ describe('AIOps.vue', () => {
   it.each([null, { version: 1, kind: 'localized_fault', scope: 'orders entry', target_id: 'windows-local-01',
     conclusion: '入口返回503，原因未明', stop_reason: '缺少下游证据',
     observed_findings: [{ evidence_id: 'ev-123', summary: '依赖 TCP 探测失败', collected_at: '2026-10-18T01:00:00Z' }],
-    unresolved_questions: [{ id: 'q-1', question: '下游是否恢复', limitation: '6989监听采集失败：timeout' }],
+    unresolved_questions: [{ id: 'q-1', question: '下游是否恢复', limitation: '6989监听采集失败：timeout',
+      expected_observation: '同端口监听与进程归属', evidence_ids: ['ev-123'] }],
     limitations: ['downstream未提供允许服务/进程及日志映射'], validation_issues: ['因果解释未验证'],
     evidence: [{ evidence_id: 'ev-123', quote: '503' }], alternatives: [{ explanation: '下游网络', status: 'unresolved', limitation: '未登记' }] }])(
     'restores structured diagnosis or labels historical reports: %s', async (diagnosis) => {
@@ -182,6 +192,8 @@ describe('AIOps.vue', () => {
         expect(wrapper.text()).toContain('已观察到：依赖 TCP 探测失败')
         expect(wrapper.text()).toContain('未决问题：下游是否恢复')
         expect(wrapper.text()).toContain('6989监听采集失败：timeout')
+        expect(wrapper.text()).toContain('预期观察：同端口监听与进程归属')
+        expect(wrapper.find('.diagnosis-questions button').text()).toContain('ev-123')
         expect(wrapper.text()).toContain('限制/矛盾：downstream未提供允许服务/进程及日志映射')
         expect(wrapper.text()).toContain('判断校验：因果解释未验证')
         expect(wrapper.findAll('button').some(b => b.text().includes('ev-123'))).toBe(true)

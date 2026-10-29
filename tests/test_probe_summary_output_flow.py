@@ -100,6 +100,9 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
                 discriminating_question='对象不适用、查询不可用还是现场异常',
                 expected_observation='适用检查返回的有限事实')
         return inv.InvestigationDecision(hypothesis='原因尚未核实', scope='专用测试对象',
+            next_check='继续覆盖检查5', next_tools=['probe_dependency_probe'],
+            discriminating_question='TCP失败的更深原因是否已核实',
+            expected_observation='能独立验证连接失败原因的现场证据',
             blocked_reason='构造检查结束，更深原因未验证')
 
     decisions = AsyncMock(side_effect=decide)
@@ -136,6 +139,11 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
             assert 'TCP failed' in summaries[-1]['summary'] and not summaries[-1]['error']
             assert {f['code'] for f in complete['diagnosis']['observed_findings']} == {'dependency_tcp_failed'}
             assert complete['diagnosis']['kind'] == 'localized_fault'
+            question = complete['diagnosis']['unresolved_questions'][0]
+            assert question['question'] == 'TCP失败的更深原因是否已核实'
+            assert '检查已执行' in question['limitation']
+            assert '不代表问题已查清' in question['limitation']
+            assert question['expected_observation'] == '能独立验证连接失败原因的现场证据'
             assert next(e for e in events if e['type'] == 'usage')['llm_calls'] == 0
             tid = complete['thread_id']
     finally:
