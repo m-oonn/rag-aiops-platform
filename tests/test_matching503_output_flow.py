@@ -111,6 +111,14 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
         count = len(context)
         if count < evidence_count:
             next_name, _ = step_calls[count]
+            if count == 2 and case == 'application_config_error':
+                # The model stops but leaves an unexecuted log check on its current candidate.
+                return inv.InvestigationDecision(hypothesis='入口503原因尚未查清',
+                    blocked_reason='入口和下游探测完成', alternatives=[inv.Alternative(
+                        explanation='入口应用配置解析异常', status='unresolved', check=inv.CandidateCheck(
+                            next_check='检查入口日志', next_tools=[next_name],
+                            discriminating_question='下游正常时入口是否发生配置解析错误',
+                            expected_observation='本次窗口的入口配置解析错误原文'))])
             return inv.InvestigationDecision(hypothesis='入口503原因尚未查清',
                 next_check='检查下游独立探测' if count == 1 else '检查入口日志', next_tools=[next_name],
                 discriminating_question='下游连通异常还是应用自身异常', expected_observation='下游状态或应用错误原文')
@@ -165,6 +173,14 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
                 'investigation': complete['investigation']}, ensure_ascii=False)
             assert diagnosis['alternatives'][1]['verification'] == 'causal_claim_unverified'
             assert '更深原因尚未确认' in complete['response']
+            if evidence_count >= 2 and case == 'downstream_unreachable':
+                gap = next(q for q in diagnosis['unresolved_questions']
+                           if q['id'].startswith('gap-dependency-'))
+                assert 'downstream' in gap['question']
+                assert 'probe_port_snapshot' in gap['limitation'] and '未加载' in gap['limitation']
+                assert '映射' in gap['limitation']
+                assert gap['limitation'] in complete['response']
+                assert gap['limitation'] in diagnosis['limitations']
             assert 'model_suggestion' not in complete['investigation']
             emitted = [event for event in events if event['type'] == 'evidence']
             assert len(emitted) == evidence_count
@@ -191,7 +207,8 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
                     if len(event.get('investigation', {}).get('evidence_summaries', [])) == 2)
                 if evidence_count == 3:
                     assert middle['next_check'] == '检查入口日志'
-                    assert middle['discriminating_question'] == '下游连通异常还是应用自身异常'
+                    assert middle['discriminating_question'] == '下游正常时入口是否发生配置解析错误'
+                    assert middle['expected_observation'] == '本次窗口的入口配置解析错误原文'
             advice = diagnosis['recommendations']
             assert advice and all(item['status'] == 'manual_review_required' for item in advice)
             assert all(item['evidence'] and item['preconditions'] and item['risks']
@@ -220,6 +237,10 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             assert snapshot.values['investigation_memory']['root_cause'] == ''
             assert snapshot.values['investigation_memory']['model_suggestion']['root_cause'] == cause
             assert snapshot.values['investigation_memory']['model_suggestion']['alternatives'][1]['explanation'] == unverified_claim
+            if evidence_count == 3 and case == 'application_config_error':
+                assert calls[-1] == ('probe_text_log', 'localapp')
+                assert any(event.get('investigation', {}).get('next_check') == '检查入口日志'
+                           for event in events)
             internal_tracking = snapshot.values['investigation_memory']['hypothesis_tracking']
             assert unverified_claim in json.dumps(internal_tracking, ensure_ascii=False)
             from scripts.evaluate_windows_probe import save_mechanism_audit

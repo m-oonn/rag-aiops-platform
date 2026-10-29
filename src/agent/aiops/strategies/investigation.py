@@ -90,6 +90,11 @@ condition 只表达现场条件，例如 dependency_probe/downstream/tcp/failed�
 继续检查时填写 next_question_id，使用此前记忆中未决问题的稳定 ID；没有旧问题时可留空。
 localized_fault 只填写已被证据直接确认的故障现象。healthy_within_scope 只描述核查的具体对象及窗口，
 故障层有直接证据时，即使更深原因 unavailable/unresolved，也可报告 localized_fault，并保留这些限制；
+定位故障层不是停止条件：关键未决问题仍有当前允许、未执行的鉴别检查时继续检查。
+停止时逐项说明未查清的对象、问题和实际阻碍：工具未加载、对象未授权、通道/日志未配置、
+采集失败、结果截断或无法映射进程。未执行不等于不能执行；没有提出检查不等于检查穷尽。
+不要把程序不能验证自由文本因果解释当作不采集现场证据的理由。已有现场条件可继续核实，
+深层原因确无对应数据时说明缺少什么；失败请求不得原样无限重试。
 例如依赖 TCP 失败只定位到该依赖的连通层，不表示数据库崩溃。进程应用的服务查询 not_applicable
 表示 Windows 服务口径不适用，不是采集失败或服务故障；应核查入口、进程、端口等适用数据。
 不能用 inventory、截断快照或两次资源采样宣称全局健康。每项因果结论仍需直接支持证据，不能只因引用存在就认定成立。
@@ -223,12 +228,13 @@ def diagnosis_result(state, decision, kind, records, reason='', *, tracking=None
             'evidence': citations, 'alternatives': [_public_alternative(a) for a in decision.alternatives],
             'observed_findings': findings,
             'recommendations': recommendations,
-            'unresolved_questions': unresolved_questions(decision),
+            'unresolved_questions': unresolved_questions(decision, state, records),
             'validation_issues': _public_validation_issues(decision),
             'contradictions': [_public_text(item, decision) for item in decision.contradictions],
-            'limitations': [item['limitation'] for a in decision.alternatives
+            'limitations': list(dict.fromkeys([item['limitation'] for a in decision.alternatives
                             if a.status != 'excluded'
-                            for item in [_public_alternative(a)] if item['limitation']],
+                            for item in [_public_alternative(a)] if item['limitation']]
+                            + [item['limitation'] for item in investigation_gaps(state, decision, records)])),
             'stop_reason': _public_text(reason, decision)}
     if tracking is not None:
         result['mechanisms'] = _public_tracking(tracking)
@@ -241,7 +247,8 @@ def _public_alternative(alternative):
     if _is_unverified_causal_claim(item):
         safe_explanation = '该因果解释尚无可验证的现场条件。'
         item['explanation'] = safe_explanation
-        item['limitation'] = '当前现场检查不能确认该因果解释。'
+        limitation = _public_claim_text(alternative.limitation, [alternative.explanation]).strip()
+        item['limitation'] = '当前现场检查不能确认该因果解释。' + (f' 具体限制：{limitation}' if limitation else '')
         if isinstance(item.get('proposal'), dict):
             item['proposal'] = {'explanation': safe_explanation, 'status': 'unresolved'}
     return item
@@ -299,9 +306,10 @@ def _public_claim_text(value, claims):
     return text
 
 
-def unresolved_questions(decision):
+def unresolved_questions(decision, state=None, records=None):
     """Expose stable, human-readable questions without inventing observations."""
     questions = []
+    gaps = investigation_gaps(state, decision, records or {}) if state is not None else []
     if decision.next_check.strip():
         text = decision.discriminating_question.strip() or decision.next_check.strip()
         ident = decision.next_question_id.strip() or 'q-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]
@@ -316,7 +324,10 @@ def unresolved_questions(decision):
                 identity = alternative.hypothesis_id or alternative.explanation.strip()
                 ident = 'q-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
                 questions.append({'id': ident, 'question': text,
-                                  'limitation': (_public_alternative(alternative)['limitation'])})
+                                  'limitation': next((g['limitation'] for g in gaps
+                                      if g['id'] == 'gap-' + hashlib.sha256(identity.encode()).hexdigest()[:12]),
+                                      _public_alternative(alternative)['limitation'])})
+    questions.extend(g for g in gaps if g['id'].startswith('gap-dependency-'))
     return questions
 
 
@@ -326,7 +337,7 @@ def _decision_memory(decision, model_suggestion, records, state, tracking):
             'policy_selected_check': tracking.get('policy_selected_check'),
             'observed_findings': _localized_findings(records, state),
             'evidence_summaries': _evidence_summaries(records, state),
-            'unresolved_questions': unresolved_questions(decision)}
+            'unresolved_questions': unresolved_questions(decision, state, records)}
 
 
 def _unverified_loopback_dependency_check(state, records):
@@ -352,6 +363,8 @@ def _unverified_loopback_dependency_check(state, records):
                 or type(port) is not int or not 1 <= port <= 65535):
             continue
         if any((snapshot.get('payload') or {}).get('local_port') == port for snapshot in snapshots):
+            continue
+        if _failed_check_reason(state, 'probe_port_snapshot', {'local_port': port, 'listening_only': True}):
             continue
         return ({'next_check': f'核验 loopback 依赖 {body["dependency"]} 的 {port} 端口监听状态及进程归属',
             'next_tools': ['probe_port_snapshot'],
@@ -966,6 +979,117 @@ def investigation_stop_reason(decision, check_error=''):
     return '模型未提出下一项检查；系统未独立验证当前可用检查是否已穷尽。'
 
 
+def _failed_check_reason(state, tool, arguments=None, step=None):
+    checks = [item for item in execution_checks(state) if item.get('tool') == tool
+              and (step is None or item.get('step') == step)
+              and (arguments is None or all((item.get('arguments') or {}).get(k) == v
+                                           for k, v in arguments.items()))]
+    if checks and checks[-1].get('status') in {'failed', 'unavailable'}:
+        item = checks[-1]
+        return (f'{tool} 采集失败或请求被拒绝：{str(item.get("reason") or "未记录失败详情")[:240]}；'
+                '尚未取得有效结果，不原样自动重试。')
+    return ''
+
+
+def _candidate_scope_limit(state, alternative):
+    scope = state.get('target_resolution') or {}
+    if scope.get('status') in {'unmatched', 'ambiguous', 'invalid_catalog'}:
+        return '业务对象尚未解析或存在歧义，不能对该候选执行业务检查。'
+    condition = alternative.condition
+    if scope.get('status') == 'resolved' and condition:
+        if condition.operation == 'dependency_probe' and condition.object_name not in scope.get('allowed_dependencies', []):
+            return '候选依赖未列入本次业务允许对象，不能执行该依赖检查。'
+        if condition.operation in {'services', 'processes'} and condition.object_name not in scope.get('allowed_services', []):
+            return '候选服务/进程未列入本次业务允许对象，不能执行该对象检查。'
+    return ''
+
+
+def investigation_gaps(state, decision, records):
+    """Explain observed execution/data gaps, not an invented global exhaustion proof."""
+    gaps = []
+    available = {item.get('name') for item in state.get('investigation_tools', [])}
+    completed = {step.strip() for step, _ in state.get('past_steps', [])}
+    for alternative in decision.alternatives:
+        if alternative.status not in {'unresolved', 'unavailable'}:
+            continue
+        check = alternative.check
+        if check is None:
+            reason = ('模型未提供该问题的鉴别检查，系统不能据此声称无检查可做。'
+                      if not alternative.limitation.strip() else
+                      '模型说明的限制（未独立核验）：' + _public_alternative(alternative)['limitation'])
+        else:
+            missing = [tool for tool in check.next_tools if tool not in available]
+            failed = next((reason for tool in check.next_tools
+                if (reason := _failed_check_reason(state, tool, step=check.next_check))), '')
+            reason = (failed or _candidate_scope_limit(state, alternative)
+                      or ('本轮工具未加载：' + '、'.join(missing) if missing and 'investigation_tools' in state else '')
+                      or followup_check_error(check.model_dump(), state))
+            if not reason:
+                reason = ('该检查已执行，但现有结果尚未验证此解释；不把检查完成当作查清原因。'
+                          if check.next_check.strip() in completed else
+                          '该鉴别检查尚未执行：' + _public_text(check.next_check, decision))
+        identity = alternative.hypothesis_id or alternative.explanation
+        gaps.append({'id': 'gap-' + hashlib.sha256(identity.encode()).hexdigest()[:12],
+            'question': _public_alternative(alternative)['explanation'], 'limitation': reason})
+    current = current_probe_records(records)
+    scope = state.get('target_resolution') or {}
+    for evidence_id, record in current.items():
+        raw = json.loads(record['payload'])
+        body = raw.get('payload') or {}
+        if (raw.get('operation') != 'dependency_probe' or body.get('tcp') != 'failed'
+                or raw.get('truncated') or body.get('error')
+                or not in_business_scope(raw, scope, current)):
+            continue
+        dependency, port = body.get('dependency'), body.get('port')
+        if not dependency:
+            continue
+        reasons = []
+        if str(body.get('host', '')).lower() in {'localhost', '127.0.0.1', '::1'}:
+            snapshots = [json.loads(r['payload']) for r in current.values()
+                if r.get('provenance', {}).get('operation') == 'ports'
+                and json.loads(r['payload']).get('payload', {}).get('local_port') == port]
+            if not snapshots:
+                failure = _failed_check_reason(state, 'probe_port_snapshot',
+                                              {'local_port': port, 'listening_only': True})
+                reasons.append(failure or ('本轮 probe_port_snapshot 工具未加载，无法核查该端口监听。'
+                    if 'investigation_tools' in state and 'probe_port_snapshot' not in available else
+                    '该端口监听快照尚未取得；连接被拒不等于已确认无监听进程。'))
+            elif any(s.get('truncated') or s.get('payload', {}).get('error') for s in snapshots):
+                reasons.append('该端口快照采集失败或被截断，不能确认完整监听状态。')
+            elif any(row.get('pid') is None for s in snapshots for row in s['payload'].get('ports', [])
+                     if row.get('status') == 'LISTEN'):
+                reasons.append('监听记录未返回PID，无法确定监听进程归属。')
+        elif body.get('host'):
+            reasons.append('依赖在远端；本机端口快照不能核查远端监听与进程，当前未获得远端采集通道。')
+        else:
+            reasons.append('依赖探测未返回目标地址，无法判断应使用本机还是远端的监听检查。')
+        if dependency not in scope.get('allowed_services', []):
+            reasons.append('当前调查未获得该依赖对应的允许服务/进程及日志映射，无法核查退出或启动失败原因。')
+        if reasons:
+            gaps.append({'id': 'gap-dependency-' + hashlib.sha256(str(dependency).encode()).hexdigest()[:12],
+                'question': f'{dependency} 连接失败的更深原因是什么？',
+                'limitation': ' '.join(reasons), 'evidence_ids': [evidence_id]})
+    return gaps
+
+
+def _unfinished_alternative_check(state, decision, records, tracking):
+    # Current active proposals only: omitted/dropped candidates still depend on protection.
+    if decision.next_check.strip() or tracking['identity_issues'] or tracking['current_prediction_contradicted']:
+        return None
+    candidates = {candidate['id']: candidate for candidate in tracking['candidates']}
+    for alternative in decision.alternatives:
+        candidate = candidates.get(alternative.hypothesis_id, {})
+        if alternative.status != 'unresolved' or not alternative.critical or candidate.get('status') != 'active':
+            continue
+        if _candidate_scope_limit(state, alternative):
+            continue
+        check = _candidate_check(candidate, state, records)
+        if check and not any(_failed_check_reason(state, tool, step=check['next_check'])
+                             for tool in check['next_tools']):
+            return check
+    return None
+
+
 def _observation_scope(value):
     """Return the configured scope of one Probe observation.
 
@@ -1119,6 +1243,13 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         tracking['policy_selected_check'] = policy_selection
     else:
         tracking['policy_selected_check'] = None
+    unfinished = _unfinished_alternative_check(state, decision, scoped_records, tracking)
+    if unfinished:
+        for name, value in unfinished.items():
+            setattr(decision, name, value)
+        decision.next_question_id = ''
+        decision.root_cause, decision.outcome = '', 'investigating'
+        decision.validation_issues.append('模型建议停止，但本轮关键候选仍有未执行的鉴别检查，继续调查。')
     update = {"investigation_memory": _decision_memory(decision, model_suggestion, records, state, tracking)}
     sufficient = (
         (bool(decision.root_cause) or decision.outcome == "healthy")
@@ -1260,6 +1391,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
                      for public_alt in [_public_alternative(a)])
         lines.extend('判断校验：' + issue for issue in _public_validation_issues(decision))
         diagnosis = diagnosis_result(state, decision, 'localized_fault', records, reason, tracking=tracking)
+        lines.extend(f'未查清：{item["question"]}；原因：{item["limitation"]}'
+                     for item in investigation_gaps(state, decision, records))
         return {**update, 'plan': [], 'diagnosis': diagnosis,
                 'response': '\n'.join(lines) + format_manual_recommendations(diagnosis['recommendations'])
                 + format_knowledge_references(state.get('raw_evidence'))}
@@ -1288,6 +1421,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None):
         lines.append(incomplete_report(state, records, reason))
     lines.extend('待核实矛盾：' + _public_text(item, decision) for item in decision.contradictions)
     lines.extend('判断校验：' + item for item in _public_validation_issues(decision))
+    lines.extend(f'未查清：{item["question"]}；原因：{item["limitation"]}'
+                 for item in investigation_gaps(state, decision, records))
     return {**update, 'plan': [], 'diagnosis': diagnosis_result(state, decision, 'unlocated', records, reason, tracking=tracking), 'response': '\n'.join(lines)
             + format_manual_recommendations([])
             + format_knowledge_references(state.get('raw_evidence'))}

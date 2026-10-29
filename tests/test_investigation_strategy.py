@@ -371,6 +371,110 @@ async def test_failed_allowlisted_loopback_dependency_forces_exact_listener_chec
                    for event in memory['hypothesis_tracking']['events'])
 
 
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+def test_stop_runs_current_unresolved_check_without_claiming_a_mechanism(protection, trigger):
+    current = state()
+    current.update(investigation_tools=[{'name': 'probe_text_log'}],
+        investigation_config={'hypothesis_protection': protection, 'contradiction_trigger': trigger})
+    check = module.CandidateCheck(next_check='核对入口配置解析错误的日志', next_tools=['probe_text_log'],
+        discriminating_question='503是否伴随入口配置解析异常', expected_observation='本次请求对应的配置解析错误行')
+    answer = decision(blocked_reason='故障层已定位', alternatives=[module.Alternative(
+        explanation='入口配置解析异常', status='unresolved', check=check)])
+
+    result = module.decide_from_evidence(current, answer, module.evidence_index(current))
+
+    assert result['plan'] == [check.next_check]
+    assert 'response' not in result
+    assert result['investigation_memory']['model_suggestion']['next_check'] == ''
+    assert result['investigation_memory']['next_tools'] == ['probe_text_log']
+    assert not any(e['kind'] in {'protection_check_selected', 'contradiction_triggered'}
+                   for e in result['investigation_memory']['hypothesis_tracking']['events'])
+
+
+def test_stop_explains_missing_listener_tool_and_unmapped_downstream_process():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'})
+    current = state(raw)
+    current.update(target_resolution={'status': 'resolved', 'allowed_dependencies': ['downstream'],
+        'allowed_services': ['localapp'], 'services': {}}, investigation_tools=[])
+
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+
+    assert 'probe_port_snapshot' in result['response'] and '未加载' in result['response']
+    assert 'downstream' in result['response'] and '进程' in result['response'] and '映射' in result['response']
+    assert any('probe_port_snapshot' in reason for reason in result['diagnosis']['limitations'])
+
+
+def test_failed_exact_listener_attempt_stops_with_failure_reason_instead_of_rescheduling():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'})
+    current = state(raw)
+    current.update(target_resolution={'status': 'resolved', 'allowed_dependencies': ['downstream'],
+        'allowed_services': [], 'services': {}}, investigation_tools=[{'name': 'probe_port_snapshot'}])
+    current['raw_evidence'].append(('核查6989监听', json.dumps({'data_source': 'tool_execution',
+        'tool': 'probe_port_snapshot', 'arguments': {'local_port': 6989, 'listening_only': True},
+        'status': 'failed', 'reason': 'timeout'})))
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+    assert result['plan'] == []
+    assert 'timeout' in result['response'] and '采集失败' in result['response']
+
+
+def test_unverified_causal_display_preserves_the_specific_data_limit():
+    alternative = module.Alternative(explanation='下游崩溃', status='unresolved',
+        verification='causal_claim_unverified', limitation='Windows事件通道未配置，退出历史不可查')
+    public = module._public_alternative(alternative)
+    assert '事件通道未配置' in public['limitation']
+    assert public['explanation'] != alternative.explanation
+
+
+@pytest.mark.parametrize('boundary', ['completed', 'missing_tool', 'outside_scope', 'failed'])
+def test_stop_does_not_reschedule_unavailable_or_completed_candidate_checks(boundary):
+    check = module.CandidateCheck(next_check='核查database连接', next_tools=['probe_dependency_probe'],
+        discriminating_question='database是否可连接', expected_observation='连接状态')
+    alternative = module.Alternative(explanation='database连接异常', status='unresolved', check=check,
+        condition=module.ObservationCondition(operation='dependency_probe', object_name='database',
+                                             field='tcp', expected='failed'))
+    current = state()
+    current.update(investigation_tools=[{'name': 'probe_dependency_probe'}],
+        target_resolution={'status': 'resolved', 'allowed_dependencies': ['database']})
+    if boundary == 'completed':
+        current['past_steps'].append((check.next_check, 'result'))
+    elif boundary == 'missing_tool':
+        current['investigation_tools'] = []
+    elif boundary == 'outside_scope':
+        current['target_resolution']['allowed_dependencies'] = []
+    else:
+        current['raw_evidence'].append((check.next_check, json.dumps({'data_source': 'tool_execution',
+            'tool': 'probe_dependency_probe', 'status': 'failed', 'reason': 'timeout'})))
+    result = module.decide_from_evidence(current, decision(alternatives=[alternative]), module.evidence_index(current))
+    assert result['plan'] == []
+    expected = {'completed': '已执行', 'missing_tool': '未加载', 'outside_scope': '允许对象', 'failed': 'timeout'}
+    assert expected[boundary] in result['response']
+
+
+def test_stop_does_not_call_an_unchecked_candidate_unavailable_without_a_plan():
+    current = state()
+    current['investigation_tools'] = [{'name': 'probe_text_log'}]
+    result = module.decide_from_evidence(current, decision(alternatives=[module.Alternative(
+        explanation='入口配置错误', status='unresolved')]), module.evidence_index(current))
+    assert '模型未提供该问题的鉴别检查' in result['response']
+    assert '声称无检查可做' in result['diagnosis']['limitations'][0]
+
+
+def test_missing_dependency_address_is_not_reported_as_a_remote_target():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    current = state(evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'tcp': 'failed'}))
+    gaps = module.investigation_gaps(current, decision(), module.evidence_index(current))
+    assert '未返回目标地址' in gaps[0]['limitation']
+    assert '依赖在远端' not in gaps[0]['limitation']
+
+
 @pytest.mark.parametrize(('resolution', 'host', 'include_tool', 'prior_snapshot', 'expected'), [
     ({'status': 'unmatched', 'allowed_dependencies': ['downstream']}, '127.0.0.1', True, False, False),
     ({'status': 'resolved', 'allowed_dependencies': []}, '127.0.0.1', True, False, False),
