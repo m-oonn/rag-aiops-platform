@@ -185,6 +185,35 @@ def test_second_scenario_reservation_uses_remaining_shared_budget(tmp_path):
     assert read_cost_ledger(first_dir / 'cost.json') == saved
 
 
+@pytest.mark.parametrize(('reason_code', 'options', 'ledger', 'reserved'), [
+    ('unpriced_model', {}, [], 0),
+    ('max_requests', {'allow_unpriced_models': True, 'max_requests': 1},
+        [{'number': 1, 'reserved_cny': 0, 'model': 'glm-5.3-flash'}], 0),
+    ('per_run_cost_limit', {'run_limit_cny': 0.000001}, [], 0),
+    ('cumulative_cost_limit', {'limit_cny': 0.000001}, [], 0),
+])
+def test_budget_rejection_reasons_are_distinct_and_not_counted_as_sent(
+        tmp_path, reason_code, options, ledger, reserved):
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    budget = PaidRequestBudget(tmp_path, **options)
+    budget.ledger = list(ledger)
+    budget.reserved = reserved
+    before_requests = list(budget.ledger)
+    body = {'model': 'glm-5.3-flash' if reason_code in {'unpriced_model', 'max_requests'} else 'deepseek-flash',
+        'max_tokens': 64}
+
+    with pytest.raises(EvaluationBudgetExceeded) as caught:
+        budget.reserve(body)
+
+    assert caught.value.reason_code == reason_code
+    assert budget.ledger == before_requests
+    saved = json.loads((tmp_path / 'cost.json').read_text(encoding='utf-8'))
+    assert saved['requests'] == before_requests
+    assert saved['blocked_requests'][-1] == {
+        'request_number': len(before_requests) + 1, 'model': body['model'],
+        'reason_code': reason_code, 'reason': str(caught.value), 'sent': False}
+
+
 @pytest.mark.asyncio
 async def test_preflight_rejects_unexpected_tool_without_executing_it(tmp_path, monkeypatch):
     import src.agent.mcp_client as client

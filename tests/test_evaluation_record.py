@@ -216,10 +216,16 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
         assert calls == []
         cost = json.loads((tmp_path / 'cost.json').read_text())
         assert cost['requests'] == [old] and prior.read_bytes() == before
+        assert cost['blocked_requests'][-1]['sent'] is False
+        assert cost['blocked_requests'][-1]['reason_code'] == {
+            'blocked': 'unpriced_model', 'run_cap': 'per_run_cost_limit'}[mode]
         record = json.loads((tmp_path / 'evaluation-record.json').read_text())
         assert record['status'] == 'incomplete'
         assert record['blocked_requests'][0]['sent'] is False
+        assert record['blocked_requests'][0]['reason_code'] == cost['blocked_requests'][-1]['reason_code']
         assert (tmp_path / record['blocked_requests'][0]['input_file']).exists()
+        summary = json.loads((tmp_path / 'summary.json').read_text())
+        assert summary['budget_stop_reason'] == cost['blocked_requests'][-1]['reason_code']
         return
     assert len(calls) == 1 and calls[0]['max_tokens'] == 4096 and calls[0]['stream'] is False
     cost = json.loads((tmp_path / 'cost.json').read_text())

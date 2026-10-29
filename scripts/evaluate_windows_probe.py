@@ -500,7 +500,9 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         budget.reserved = previous['reserved_cny']
         budget.ledger = previous['requests']
         budget.inherited_reserved = previous['reserved_cny']
+        budget.blocked_requests = previous.get('blocked_requests', [])
     prior_requests = len(budget.ledger)
+    budget_stop_reason = None
     record.value['config'].update(mechanisms=expected_config, business_catalog=json.loads(settings.DIAGNOSTIC_TARGET_CATALOG),
         retry={'sdk_max_retries': 0, 'agent_retry_enabled': settings.ENABLE_LLM_RETRY,
             'structured_format_fallback': True, 'request_relation': 'not inferred; each HTTP attempt recorded separately'},
@@ -517,7 +519,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         def __init__(self):
             self.inner = httpx.AsyncHTTPTransport()
         async def handle_async_request(self, request):
-            nonlocal budget_stopped
+            nonlocal budget_stopped, budget_stop_reason
             allowed_host = 'api.deepseek.com'
             if allow_unpriced_model:
                 from urllib.parse import urlsplit
@@ -529,17 +531,18 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             input_dir.mkdir(exist_ok=True)
             try:
                 row = budget.reserve(body)
-            except EvaluationBudgetExceeded:
+            except EvaluationBudgetExceeded as error:
                 budget_stopped = True
+                budget_stop_reason = error.reason_code
                 blocked = input_dir / ('blocked-' + uuid4().hex + '.json')
                 blocked.write_text(json.dumps(redact(body), ensure_ascii=False, indent=2), encoding='utf-8')
                 record.value.setdefault('blocked_requests', []).append({
                     'input_file': blocked.relative_to(output).as_posix(), 'at': utc_now(),
-                    'sent': False, 'reason': 'budget_or_pricing_guard'})
+                    'sent': False, 'reason_code': error.reason_code, 'reason': str(error)})
                 record.save()
                 return httpx.Response(402, request=request, json={'error': {
-                    'message': f'Evaluation stopped before exceeding the cumulative {limit_cny:g} CNY reservation',
-                    'type': 'evaluation_budget_exceeded', 'code': 'evaluation_budget_exceeded'}})
+                    'message': str(error), 'type': 'evaluation_budget_exceeded',
+                    'code': error.reason_code}})
             input_path = input_dir / (str(row['number']) + '.json')
             input_path.write_text(json.dumps(redact(body), ensure_ascii=False, indent=2), encoding='utf-8')
             row.update(input_file=input_path.relative_to(output).as_posix(),
@@ -641,7 +644,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             'workflow_completed': workflow_completed, 'investigation_failure': failure,
             'error_events': sum(event.get('type') == 'error' for event in events),
             'requires_manual_review': bool(final), 'model_requests': len(budget.ledger),
-            'budget_stopped': budget_stopped,
+            'budget_stopped': budget_stopped, 'budget_stop_reason': budget_stop_reason,
             'mechanism_group': group, 'mechanism_audit': mechanism_audit,
             'knowledge_conditions': knowledge_audit,
             'execution_error': execution_error,

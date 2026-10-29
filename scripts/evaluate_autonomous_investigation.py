@@ -16,7 +16,9 @@ from scripts.verify_diagnostic_boundary import SETUP, docker
 
 
 class EvaluationBudgetExceeded(RuntimeError):
-    pass
+    def __init__(self, reason_code, message):
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 def model_usage_known(row):
@@ -45,14 +47,22 @@ class PaidRequestBudget:
         self.inherited_reserved = 0.0
         self.reserved = 0.0
         self.ledger = []
+        self.blocked_requests = []
+
+    def reject(self, body, reason_code, message):
+        self.blocked_requests.append({'request_number': len(self.ledger) + 1,
+            'model': body.get('model', ''), 'reason_code': reason_code, 'reason': message,
+            'sent': False})
+        self.save()
+        raise EvaluationBudgetExceeded(reason_code, message)
 
     def reserve(self, body):
         model = body.get('model', '')
         priced_model = model in {'deepseek-v4-flash', 'deepseek-flash'}
         if not priced_model and not self.allow_unpriced_models:
-            raise EvaluationBudgetExceeded('Pricing not verified for configured model')
+            self.reject(body, 'unpriced_model', 'Pricing not verified for configured model')
         if not priced_model and self.max_requests is not None and len(self.ledger) >= self.max_requests:
-            raise EvaluationBudgetExceeded('Unpriced model request cap reached')
+            self.reject(body, 'max_requests', 'Unpriced model request cap reached')
         input_upper = len(json.dumps(body, ensure_ascii=False).encode()) + 8192
         output_upper = min(int(body.get('max_tokens') or body.get('max_completion_tokens') or self.max_output_tokens), self.max_output_tokens)
         body.pop('max_completion_tokens', None)
@@ -61,9 +71,10 @@ class PaidRequestBudget:
         reserve = (input_upper * .30 + output_upper * 1.20) * 8 / 1_000_000 if priced_model else 0.0
         if (self.run_limit_cny is not None
                 and self.reserved - self.inherited_reserved + reserve > self.run_limit_cny):
-            raise EvaluationBudgetExceeded('Per-run reservation limit reached')
+            self.reject(body, 'per_run_cost_limit', 'Per-run reservation limit reached')
         if self.reserved + reserve > self.limit_cny:
-            raise EvaluationBudgetExceeded(f'{self.limit_cny:g} CNY request reservation limit reached')
+            self.reject(body, 'cumulative_cost_limit',
+                f'{self.limit_cny:g} CNY request reservation limit reached')
         self.reserved += reserve
         row = {'number':len(self.ledger)+1,'model':model,'input_token_upper':input_upper,
                'output_token_upper':output_upper,'reserved_cny':reserve,'status':'reserved',
@@ -75,6 +86,7 @@ class PaidRequestBudget:
     def save(self):
         (self.output / 'cost.json').write_text(json.dumps({
             'reserved_cny':self.reserved,'limit_cny':self.limit_cny,'requests':self.ledger,
+            'blocked_requests': self.blocked_requests,
             'rate_basis':'DeepSeek Flash peak USD0.30 input / USD1.20 output per million; 8 CNY/USD; other models are unpriced',
             'pricing_source':'https://api-docs.deepseek.com/quick_start/pricing',
         },ensure_ascii=False,indent=2),encoding='utf-8')
@@ -286,6 +298,7 @@ async def main():
         # 原有隔离评测仍保留四种场景。
         planned_cases=['dependency_stopped'] if joint_mcp else ['healthy','dependency_stopped','misconfigured_dependency','application_stopped']
         stop_reason='completed'
+        stop_reason_code=None
         for kind in planned_cases:
             for pidfile in ['/tmp/api.pid','/tmp/db.pid']:
                 command='import os,pathlib,signal;p=pathlib.Path('+repr(pidfile)+');\nif p.exists():\n try: os.kill(int(p.read_text()),signal.SIGTERM)\n except ProcessLookupError: pass\n p.unlink()'
@@ -307,6 +320,7 @@ async def main():
             except EvaluationBudgetExceeded as error:
                 case_status='budget_stopped'
                 stop_reason=str(error)
+                stop_reason_code=error.reason_code
             final=next((e.get('response') or e.get('report') for e in reversed(events)
                         if e.get('type') in {'complete','report','error'} and (e.get('response') or e.get('report'))),'')
             if case_status=='completed' and (not any(e.get('type')=='complete' for e in events)
@@ -332,6 +346,7 @@ async def main():
             'completed_cases': [row['fixture_truth'] for row in results if row.get('status')=='completed'],
             'attempted_cases': [row['fixture_truth'] for row in results],
             'stop_reason': stop_reason,
+            'stop_reason_code': stop_reason_code,
             'reserved_cny': budget.reserved,
             'actual_estimated_cny': budget.actual_cost_cny(),
         },ensure_ascii=False,indent=2),encoding='utf-8')
