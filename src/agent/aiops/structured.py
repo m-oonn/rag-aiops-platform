@@ -10,6 +10,7 @@ user prompt 中出现 "json" 关键词,否则 400 报错(InternalError.Algo.Inva
 """
 
 import json as _json
+import re
 from typing import Any, TypeVar
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -33,6 +34,42 @@ def _format_failure(error: Exception) -> bool:
     return (getattr(error, 'status_code', None) == 400
             and any(term in str(error).lower() for term in
                     ('tool_choice', 'function_call', 'response_format', 'structured_output')))
+
+
+def _failure_details(error: Exception, schema: type[BaseModel]) -> dict:
+    """Keep schema locations/codes; never log rejected inputs or parser text."""
+    definition = schema.model_json_schema()
+
+    def variants(node):
+        if '$ref' in node:
+            node = definition.get('$defs', {}).get(node['$ref'].rsplit('/', 1)[-1], {})
+        yield node
+        for branch in node.get('anyOf', []):
+            yield from variants(branch)
+
+    def safe_path(location):
+        nodes, path = [definition], []
+        for part in location:
+            expanded = [variant for node in nodes for variant in variants(node)]
+            if type(part) is int:
+                children = [node['items'] for node in expanded if isinstance(node.get('items'), dict)]
+                path.append(part if children and 0 <= part <= 10000 else '<field>')
+            else:
+                children = [node['properties'][part] for node in expanded
+                            if isinstance(part, str) and part in node.get('properties', {})]
+                path.append(part if children else '<field>')
+                if not children:
+                    children = [node['additionalProperties'] for node in expanded
+                                if isinstance(node.get('additionalProperties'), dict)]
+            nodes = children
+        return path
+
+    issues = []
+    if isinstance(error, ValidationError):
+        for item in error.errors(include_input=False, include_context=False, include_url=False)[:12]:
+            issues.append({'path': safe_path(item['loc']),
+                'code': item['type'] if re.fullmatch(r'[a-z_]{1,64}', item['type']) else 'validation_error'})
+    return {'error_type': type(error).__name__, 'issues': issues}
 
 _JSON_SYSTEM_HINT = (
     "你必须只输出一个合法的 JSON 对象。"
@@ -78,7 +115,7 @@ async def ainvoke_structured(
         if not _format_failure(e):
             raise
         logger.warning(
-            f"[structured] function_calling 格式失败,降级: {type(e).__name__}"
+            f"[structured] schema={schema.__name__} stage=function_calling 格式失败,降级: {_failure_details(e, schema)}"
         )
 
     # ── 策略2: 降级——纯 LLM + regex 抠 JSON ──
@@ -97,7 +134,10 @@ async def ainvoke_structured(
         obj = _extract_json_object(content)
         return schema.model_validate(obj)
     except (ValueError, ValidationError) as exc:
-        raise StructuredOutputError('Model output did not match the required schema') from exc
+        logger.warning(
+            f"[structured] schema={schema.__name__} stage=json_fallback 校验失败: {_failure_details(exc, schema)}"
+        )
+        raise StructuredOutputError('Model output did not match the required schema') from None
 
 
 def _format_fields_for_prompt(schema: type[BaseModel]) -> str:
