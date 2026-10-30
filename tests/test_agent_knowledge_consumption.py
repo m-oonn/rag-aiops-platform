@@ -65,6 +65,28 @@ def test_local_mode_ignores_global_online_rerank_switch(runbooks, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scoped_search_reads_actual_pdf_and_rejects_other_library_without_online_path(runbooks):
+    from langchain_core.tools import StructuredTool
+    from src.agent.aiops.tools import scope_knowledge_tools
+    import mcp_servers.rag_server as rag
+
+    def search(query: str, kb_id: int):
+        """Search actual in-memory SQL and local PDF chunks."""
+        return rag.search_knowledge_base.fn(query, kb_id)
+
+    tool = scope_knowledge_tools([
+        StructuredTool.from_function(search, name='search_knowledge_base')], [901])[0]
+    for kb_id in (0, 1, 902):
+        with pytest.raises(PermissionError):
+            await tool.ainvoke({'query': '应用内部异常', 'kb_id': kb_id})
+    result = await tool.ainvoke({'query': '应用内部异常'})
+    assert result['kb_id'] == 901 and result['results']
+    assert result['results'][0]['source'] == '02-application-errors.pdf'
+    assert result['results'][0]['page'] == 2
+    runbooks.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_preflight_consumes_real_pdf_with_explicit_library(runbooks, monkeypatch, tmp_path):
     from contextlib import asynccontextmanager
     from langchain_core.tools import StructuredTool
@@ -78,7 +100,7 @@ async def test_preflight_consumes_real_pdf_with_explicit_library(runbooks, monke
         """Fixed Probe inventory for free orchestration testing."""
         return evidence(target_id='test-target', operation='inventory', payload={'hostname': 'fixture'})
     @asynccontextmanager
-    async def tools(cfg, url):
+    async def tools(cfg, url, knowledge_kb_id=14):
         yield [StructuredTool.from_function(search, name='search_knowledge_base'),
             StructuredTool.from_function(coroutine=inventory, name='probe_inventory')]
     monkeypatch.setattr(evaluation, 'load_evaluation_tools', tools)

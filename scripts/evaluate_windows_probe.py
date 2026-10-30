@@ -136,7 +136,7 @@ def parse_args(argv=None):
         help='Isolated local runbook retrieval; no embedding/rerank calls, not vector RAG validation')
     parser.add_argument('--knowledge-mcp-url', type=local_knowledge_url,
         help='Loopback knowledge MCP; only search_knowledge_base is used')
-    parser.add_argument('--knowledge-kb-id', type=int, default=14, help='Free preflight library scope (legacy fixture: 14)')
+    parser.add_argument('--knowledge-kb-id', type=int, default=14, help='Knowledge tool library scope (controller fixture: 14; custom ids only in free preflight)')
     parser.add_argument('--knowledge-query', default='localapp availability', help='Free preflight retrieval query')
     parser.add_argument('--knowledge-source', help='Free preflight expected source filename')
     parser.add_argument('--knowledge-manifest', type=Path, help='Controller-owned fixture baseline to verify before/after execution')
@@ -199,7 +199,7 @@ def local_knowledge_url(value):
 
 
 @asynccontextmanager
-async def load_evaluation_tools(cfg, knowledge_url=None):
+async def load_evaluation_tools(cfg, knowledge_url=None, knowledge_kb_id=14):
     from src.agent.mcp_client import load_tools_for_config, close_client_for_config
     from src.probe.evidence import PROBE_TOOL_OPERATIONS
     configs = []
@@ -219,7 +219,11 @@ async def load_evaluation_tools(cfg, knowledge_url=None):
             if error or names.count('search_knowledge_base') != 1 or not set(names) <= {
                     'search_knowledge_base', 'list_knowledge_bases', 'get_document_info'}:
                 raise RuntimeError('Unexpected or unavailable local knowledge MCP tools')
-            tools = [*tools, *[tool for tool in knowledge if tool.name == 'search_knowledge_base']]
+            from src.agent.aiops.tools import scope_knowledge_tools
+            scoped = scope_knowledge_tools(
+                [tool for tool in knowledge if tool.name == 'search_knowledge_base'],
+                [knowledge_kb_id])
+            tools = [*tools, *scoped]
         yield tools
     finally:
         for config in reversed(configs):
@@ -341,7 +345,7 @@ async def knowledge_preflight(tool, output, *, kb_id=14, query='localapp availab
 async def preflight(cfg, output, knowledge_url=None, *, kb_id=14, query='localapp availability', expected_source=None):
     from src.probe.evidence import validate_tool_evidence
     rows = []
-    async with load_evaluation_tools(cfg, knowledge_url) as tools:
+    async with load_evaluation_tools(cfg, knowledge_url, knowledge_kb_id=kb_id) as tools:
         trace = []
         tools = trace_evaluation_tools(tools, cfg.target_id, output, trace)
         by_name = {tool.name: tool for tool in tools}
@@ -373,6 +377,10 @@ def trace_evaluation_tools(tools, target_id, output, trace, observation_not_befo
     from langchain_core.tools import StructuredTool
     def traced(tool):
         async def invoke(**kwargs):
+            if tool.name == 'search_knowledge_base' and 'kb_id' not in kwargs:
+                kb_default = tool.args.get('kb_id', {}).get('default')
+                if type(kb_default) is int:
+                    kwargs = {**kwargs, 'kb_id': kb_default}
             started = time.perf_counter()
             row = {'tool': tool.name, 'arguments': redact(kwargs), 'status': 'started',
                 'started_at': utc_now(), 'ended_at': None, 'elapsed_ms': None,
@@ -443,7 +451,7 @@ async def main():
         if args.knowledge_manifest:
             check_knowledge_conditions(args.knowledge_manifest, args.local_runbooks, output, args.knowledge_mcp_url, 'after')
         return
-    async with load_evaluation_tools(cfg, args.knowledge_mcp_url) as tools:
+    async with load_evaluation_tools(cfg, args.knowledge_mcp_url, args.knowledge_kb_id) as tools:
         await run_model(args, cfg, output, tools, symptom_override)
 
 
@@ -484,6 +492,11 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         tools = [t for t in tools if t.name not in {'search_knowledge_base', 'list_knowledge_bases', 'get_document_info'}]
     if getattr(args, 'isolate_history', False):
         tools = [t for t in tools if t.name != 'probe_list_evidence']
+    from src.agent.aiops.tools import scope_knowledge_tools
+    knowledge_kb_ids = ([getattr(args, 'knowledge_kb_id', 14)]
+        if any(tool.name == 'search_knowledge_base' for tool in tools) else [])
+    if knowledge_kb_ids:
+        tools = scope_knowledge_tools(tools, knowledge_kb_ids)
 
     settings.PROBE_ENABLED = True
     settings.PROBE_TARGET_ID = cfg.target_id
@@ -516,6 +529,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             'dependencies': {key: asdict(value) for key, value in cfg.dependencies.items()}},
         tool_names=[tool.name for tool in tools], limited_evidence=getattr(args, 'limited_evidence', False),
         knowledge_disabled=getattr(args, 'knowledge_disabled', False), max_output_tokens=max_output_tokens)
+    record.value['config']['knowledge_kb_ids'] = knowledge_kb_ids
     record.value['config'].update(run_budget_cny=run_limit, http_timeout_seconds=60,
         observation_not_before=getattr(args, 'observation_not_before', None),
         shared_history_enabled=not getattr(args, 'isolate_history', False))

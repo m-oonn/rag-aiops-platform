@@ -116,6 +116,53 @@ def test_integrity_rejects_incomplete_or_changed_artifacts(artifacts, mutation):
         assert result['legacy'] is True
 
 
+@pytest.mark.parametrize('mutation', ['none', 'scope_empty', 'scope_bool', 'wrong_call',
+    'missing_call_id', 'wrong_schema', 'missing_schema_enum'])
+def test_integrity_verifies_recorded_and_advertised_knowledge_scope(artifacts, mutation):
+    root, _, build = artifacts
+    directory = build()
+    record = json.loads((directory / 'evaluation-record.json').read_text(encoding='utf-8'))
+    summary = json.loads((directory / 'summary.json').read_text(encoding='utf-8'))
+    timing = {key: record[key] for key in ('started_at', 'ended_at', 'elapsed_ms')}
+    record['config']['knowledge_kb_ids'] = [14]
+    record['config']['tool_names'].append('search_knowledge_base')
+    kb_schema = {'type': 'integer', 'enum': [14], 'default': 14}
+    arguments = {'query': 'x', 'kb_id': 14}
+    if mutation == 'scope_empty':
+        record['config']['knowledge_kb_ids'] = []
+    elif mutation == 'scope_bool':
+        record['config']['knowledge_kb_ids'] = [True]
+    elif mutation == 'wrong_call':
+        arguments['kb_id'] = 1
+    elif mutation == 'missing_call_id':
+        arguments.pop('kb_id')
+    elif mutation == 'wrong_schema':
+        kb_schema['enum'] = [1]
+    elif mutation == 'missing_schema_enum':
+        kb_schema.pop('enum')
+    summary['knowledge_mode'] = 'local_bm25_mcp'
+    summary['tool_calls'].append('search_knowledge_base')
+    knowledge = {'passed': True, 'actual_sha256': 'fixture', 'expected_sha256': 'fixture'}
+    for phase in ('before', 'after'):
+        save(directory / ('knowledge-conditions-' + phase + '.json'), {**knowledge, 'phase': phase})
+    summary['knowledge_conditions'] = {**knowledge, 'phase': 'after'}
+    trace = json.loads((directory / 'tool_trace.json').read_text(encoding='utf-8'))
+    trace.append({'tool': 'search_knowledge_base', 'arguments': arguments, 'status': 'returned', **timing})
+    save(directory / 'tool_trace.json', trace)
+    body = json.loads((directory / 'model-inputs/1.json').read_text(encoding='utf-8'))
+    body['tools'] = [{'type': 'function', 'function': {'name': 'search_knowledge_base',
+        'parameters': {'properties': {'kb_id': kb_schema}}}}]
+    save(directory / 'model-inputs/1.json', body)
+    cost = json.loads((directory / 'cost.json').read_text(encoding='utf-8'))
+    cost['requests'][0]['input_sha256'] = hashlib.sha256((directory / 'model-inputs/1.json').read_bytes()).hexdigest()
+    save(directory / 'cost.json', cost)
+    record['config_sha256'] = hashlib.sha256(json.dumps(record['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    save(directory / 'evaluation-record.json', record)
+    save(directory / 'summary.json', summary)
+    result = audit_evaluation(directory, expected_root=root)
+    assert result['passed'] is (mutation == 'none'), result
+
+
 @pytest.mark.parametrize('mutation', ['none', 'missing_group', 'different_source', 'different_config', 'legacy',
     'missing_controller', 'malformed_controller', 'missing_controller_time', 'failed_suite', 'unrecovered_suite'])
 def test_summary_only_compares_complete_matching_four_groups(artifacts, mutation):
@@ -163,22 +210,46 @@ def test_summary_only_compares_complete_matching_four_groups(artifacts, mutation
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('isolation', ['legacy', 'isolated', 'lost_history', 'wrong_boundary'])
 @pytest.mark.parametrize('missing', [False, True])
-async def test_controller_uses_real_record_gate_and_rejects_missing_record(artifacts, monkeypatch, missing):
+async def test_controller_uses_real_record_gate_and_rejects_missing_record(artifacts, monkeypatch, missing, isolation):
     from scripts import verify_windows_local_faults as controller
     root, source, build = artifacts
     monkeypatch.setattr(controller, 'ROOT', root)
+    options = {} if isolation == 'legacy' else {'isolate_history': True,
+        'observation_not_before': '2026-10-01T00:00:00+00:00'}
     def launch(args, name):
         output = Path(args[args.index('--output-dir') + 1])
         build(None, output)
+        if options:
+            assert '--isolate-history' in args
+            assert args[args.index('--observation-not-before') + 1] == options['observation_not_before']
+            path = output / 'evaluation-record.json'
+            record = json.loads(path.read_text())
+            record['config'].update(shared_history_enabled=isolation == 'lost_history', target_id='windows-local-01',
+                observation_not_before=('2026-10-02T00:00:00+00:00' if isolation == 'wrong_boundary'
+                    else options['observation_not_before']))
+            record['config_sha256'] = hashlib.sha256(json.dumps(record['config'],
+                ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+            save(path, record)
+            trace_path = output / 'tool_trace.json'
+            trace = json.loads(trace_path.read_text())
+            trace[0]['validated_live_evidence'] = True
+            from src.probe.protocol import evidence
+            trace[0]['result'] = evidence(target_id='windows-local-01', operation='dependency_probe',
+                payload={'dependency': 'localapp'}, collected_at=trace[0]['ended_at'])
+            save(trace_path, trace)
         if missing:
             (output / 'evaluation-record.json').unlink()
         return SimpleNamespace(wait=lambda: 0)
     if missing:
         with pytest.raises(RuntimeError, match='record integrity failed'):
-            await controller.evaluate_model_case(source, 'normal', launch)
+            await controller.evaluate_model_case(source, 'normal', launch, **options)
+    elif isolation in {'lost_history', 'wrong_boundary'}:
+        with pytest.raises(RuntimeError, match='did not preserve observation isolation'):
+            await controller.evaluate_model_case(source, 'normal', launch, **options)
     else:
-        result = await controller.evaluate_model_case(source, 'normal', launch)
+        result = await controller.evaluate_model_case(source, 'normal', launch, **options)
         assert result['record_integrity']['passed']
         assert result['diagnostic_correctness_verified'] is False
     result = json.loads(next(source.glob('model-*/record-integrity.json')).read_text())

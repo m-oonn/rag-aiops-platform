@@ -174,7 +174,7 @@ def test_listener_check_excludes_time_wait_and_unrelated_ports(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('failure', ['none', 'process', 'budget', 'unknown_cost', 'lost_previous', 'missing_complete'])
+@pytest.mark.parametrize('failure', ['none', 'process', 'budget', 'unknown_cost', 'lost_previous', 'missing_complete', 'isolation_lost'])
 @pytest.mark.parametrize('group', [None, 'G00', 'G10', 'G01', 'G11'])
 @pytest.mark.parametrize('limit', [5, 10])
 async def test_model_runner_inherits_budget_and_fails_closed(tmp_path, monkeypatch, failure, group, limit):
@@ -230,7 +230,8 @@ async def test_model_runner_inherits_budget_and_fails_closed(tmp_path, monkeypat
     else:
         with pytest.raises((RuntimeError, ValueError)):
             await module.evaluate_model_case(tmp_path, 'downstream_unreachable', launch, prior,
-                knowledge_url='http://127.0.0.1:9200/mcp', mechanism_group=group, budget_limit_cny=limit)
+                knowledge_url='http://127.0.0.1:9200/mcp', mechanism_group=group, budget_limit_cny=limit,
+                isolate_history=failure == 'isolation_lost')
     assert len(launches) == 1
 
 
@@ -269,18 +270,28 @@ async def test_controller_rejects_mislabeled_or_unverified_mechanism_result(tmp_
 @pytest.mark.parametrize('limit', [5, 10])
 async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp_path, monkeypatch, reverse, limit):
     changes, seen = [], []
+    reset_times = []
     class Shuffle:
         def shuffle(self, rows):
             if reverse:
                 rows.reverse()
     monkeypatch.setattr(module.secrets, 'SystemRandom', Shuffle)
     async def set_case(case):
+        from scripts.evaluation_record import utc_now
+        reset_times.append(utc_now())
         changes.append(case)
-    async def run(out, case, launch, previous, knowledge_url=None, budget_limit_cny=5):
+    async def run(out, case, launch, previous, knowledge_url=None, budget_limit_cny=5,
+                  isolate_history=False, observation_not_before=None):
         assert knowledge_url == 'http://127.0.0.1:9200/mcp'
         assert budget_limit_cny == limit
+        injection = json.loads((tmp_path / 'blind-controller.json').read_text())['injections'][-1]
+        assert isolate_history is True
+        assert observation_not_before == injection['observation_not_before']
+        assert observation_not_before <= injection['injected_at']
+        assert observation_not_before <= reset_times[-1]
         seen.append((case, previous))
-        return {'cost_file': str(tmp_path / (str(len(seen)) + '.json'))}
+        return {'status': 'passed', 'workflow_completed': True,
+            'cost_file': str(tmp_path / (str(len(seen)) + '.json'))}
     monkeypatch.setattr(module, 'evaluate_model_case', run)
     await module.evaluate_blind_cases(tmp_path, Mock(), set_case, knowledge_url='http://127.0.0.1:9200/mcp',
         budget_limit_cny=limit)
@@ -288,6 +299,44 @@ async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp
     assert {row[0] for row in seen} == {'normal', 'downstream_unreachable'}
     assert seen[0][1] is None and seen[1][1] == tmp_path / '1.json'
     assert changes == [seen[0][0], seen[1][0], 'normal']
+    assert reset_times[0] <= reset_times[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('isolate,cap', [(False, None), (True, None), (False, 0.1)])
+async def test_model_child_history_isolation_is_independent_of_money_cap(tmp_path, isolate, cap):
+    boundary = '2026-10-29T00:00:00+00:00'
+    captured = []
+    def launch(args, name):
+        captured.append(args)
+        assert ('--isolate-history' in args) is (isolate or cap is not None)
+        assert args[args.index('--observation-not-before') + 1] == boundary
+        assert ('--run-budget-cny' in args) is (cap is not None)
+        raise RuntimeError('offline launch intercepted')
+    with pytest.raises(RuntimeError, match='offline launch intercepted'):
+        await module.evaluate_model_case(tmp_path, 'downstream_unreachable', launch,
+            isolate_history=isolate, run_budget_cny=cap, observation_not_before=boundary)
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status,completed', [('failed', True), ('passed', False)])
+async def test_blind_controller_stops_on_returned_failed_gates_and_keeps_result(tmp_path, monkeypatch, status, completed):
+    changes, calls = [], []
+    async def set_case(case):
+        changes.append(case)
+    async def run(*args, **kwargs):
+        calls.append(kwargs)
+        return {'status': status, 'workflow_completed': completed, 'cost_file': 'unused'}
+    monkeypatch.setattr(module, 'evaluate_model_case', run)
+    with pytest.raises(RuntimeError, match='failed mechanical gates'):
+        await module.evaluate_blind_cases(tmp_path, Mock(), set_case)
+    saved = json.loads((tmp_path / 'blind-controller.json').read_text())
+    assert len(calls) == len(saved['results']) == 1
+    assert len(changes) == 2 and changes[-1] == 'normal'
+    assert saved['results'][0]['status'] == status
+    assert saved['failure']['exception_type'] == 'RuntimeError'
+    assert saved['recovery'] == 'normal_restored'
 
 
 @pytest.mark.asyncio
@@ -295,7 +344,7 @@ async def test_blind_controller_failure_stops_later_cases_and_restores(tmp_path,
     changes, calls = [], []
     async def set_case(case):
         changes.append(case)
-    async def fail(out, case, launch, previous, knowledge_url=None):
+    async def fail(out, case, launch, previous, knowledge_url=None, **options):
         calls.append(case)
         raise RuntimeError('uncertain cost')
     monkeypatch.setattr(module, 'evaluate_model_case', fail)

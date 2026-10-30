@@ -213,7 +213,7 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
     return snapshot
 
 
-async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_url=None, knowledge_disabled=False, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, observation_not_before=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096):
+async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_url=None, knowledge_disabled=False, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, observation_not_before=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, isolate_history=False):
     """Only the caller's explicit paid mode may invoke this serial runner."""
     from scripts.evaluate_windows_probe import read_cost_ledger, MECHANISM_GROUPS
     sample_id = uuid.uuid4().hex
@@ -229,7 +229,9 @@ async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_u
     before = read_cost_ledger(previous_cost, for_resume=True, limit_cny=budget_limit_cny) if previous_cost else None
     args += ['--budget-limit-cny', str(budget_limit_cny)]
     if run_budget_cny is not None:
-        args += ['--run-budget-cny', str(run_budget_cny), '--isolate-history']
+        args += ['--run-budget-cny', str(run_budget_cny)]
+    if isolate_history or run_budget_cny is not None:
+        args += ['--isolate-history']
     if observation_not_before is not None:
         args += ['--observation-not-before', observation_not_before]
     if mechanism_group is not None:
@@ -308,6 +310,11 @@ async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_u
     (result_dir / 'record-integrity.json').write_text(json.dumps(integrity, ensure_ascii=False, indent=2), encoding='utf-8')
     if not integrity['passed']:
         raise RuntimeError('model scenario record integrity failed; artifacts preserved')
+    if (((isolate_history or run_budget_cny is not None)
+            and integrity.get('comparison_config', {}).get('shared_history_enabled') is not False)
+            or (observation_not_before is not None
+            and integrity.get('observation_not_before') != observation_not_before)):
+        raise RuntimeError('model scenario did not preserve observation isolation')
     checks = review_model_artifacts(result_dir, case, summary)
     (result_dir / 'mechanical-review.json').write_text(json.dumps(checks, ensure_ascii=False, indent=2), encoding='utf-8')
     workflow_completed = checks['workflow_status'] == 'completed'
@@ -466,10 +473,14 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
         'answer_visibility': 'not_in_model_context_or_probe_allowlist'}
     try:
         for case in order:
+            observation_boundary = datetime.now(timezone.utc).isoformat()
             await set_case(case)
-            controller['injections'].append({'case': case, 'injected_at': datetime.now(timezone.utc).isoformat()})
+            controller['injections'].append({'case': case, 'injected_at': datetime.now(timezone.utc).isoformat(),
+                'observation_not_before': observation_boundary})
             (out / 'blind-controller.json').write_text(json.dumps(controller, ensure_ascii=False, indent=2), encoding='utf-8')
-            options = {'mechanism_group': mechanism_group} if mechanism_group is not None else {}
+            options = {'isolate_history': True, 'observation_not_before': observation_boundary}
+            if mechanism_group is not None:
+                options['mechanism_group'] = mechanism_group
             if allow_unpriced_model:
                 options.update(allow_unpriced_model=True, max_model_requests=max_model_requests,
                     max_output_tokens=max_output_tokens)
@@ -477,8 +488,10 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
                 options['budget_limit_cny'] = budget_limit_cny
             result = await evaluate_model_case(out, case, launch, previous, knowledge_url=knowledge_url, **options)
             results.append(result)
-            previous = Path(result['cost_file'])
             (out / 'blind-controller.json').write_text(json.dumps(controller, ensure_ascii=False, indent=2), encoding='utf-8')
+            if result.get('status') != 'passed' or result.get('workflow_completed') is not True:
+                raise RuntimeError('blind model child failed mechanical gates')
+            previous = Path(result['cost_file'])
     except Exception as exc:
         controller['failure'] = {'case': case, 'status': 'incomplete', 'exception_type': type(exc).__name__,
             'failed_at': datetime.now(timezone.utc).isoformat()}

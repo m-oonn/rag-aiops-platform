@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.aiops.skills import SKILLS, render_skills_block, route_skills
 from src.agent.aiops.state import PlanExecuteState
-from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog
+from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog, config_file_read_unavailable
 from src.agent.aiops.structured import ainvoke_structured
 from src.agent.aiops_llm import create_agent_llm
 from src.agent.aiops.local_retrieval import retrieve_local
@@ -37,6 +37,22 @@ _EXPERIENCE_TOP_K = 2  # 少 tokens(2026-09-23): 3→2, 2 条相关经验足够�
 # 计划步数硬上限：与 DynamicClassificationStrategy._MAX_STEPS 匹配，
 # 防止 LLM 生成超长计划导致"步数上限强制 respond"时 Top1 尚未收敛。
 _MAX_PLAN_STEPS = 6
+
+def _sanitize_plan_steps(steps: list[str], tools: list) -> list[str]:
+    """有日志工具时换为相关日志核对，否则移除不能执行的文件读取。"""
+    names = {str(getattr(tool, "name", "")) for tool in tools}
+    sanitized = []
+    for step in steps:
+        text = str(step).strip()
+        if config_file_read_unavailable(text, tools):
+            logger.warning("[planner] 拦截不可执行的配置文件读取计划；原配置内容仍未核实")
+            if 'probe_text_log' in names:
+                replacement = "检查已登记服务的应用日志，查找与当前症状有关的记录"
+                if replacement not in sanitized:
+                    sanitized.append(replacement)
+        else:
+            sanitized.append(text)
+    return sanitized
 
 
 def _format_tools(tools: list) -> str:
@@ -246,6 +262,9 @@ planner_prompt = ChatPromptTemplate.from_messages(
 
                 执行要求:
                 - 整个计划不超过 6 步,聚焦关键排查路径,不用覆盖全部工具;
+                - 只读 Probe 没有任意配置文件读取能力；没有实际文件读取能力时，禁止规划
+                  “打开/读取/查看配置文件”或猜测路径。只能通过已登记日志等工具核对可见信息，
+                  日志不能替代原配置内容的核实；终端操作仍遵守已有审批与命令权限;
                 - **严禁臆造规划阶段无法得知的标识符值**(如日志主题 id、具体时间戳)。
                   这类值只能在实际执行时从前序步骤的结果里拿到,要用前后衔接的话表达
                   (例:"先找到该服务的日志主题,再查看它最近的错误日志"),**不要写死**
@@ -364,7 +383,10 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             "experience_context": experience_context,
             "skills_block": _build_skills_block(input_text),
         })
-        steps = result.steps
+        steps = _sanitize_plan_steps(result.steps, tools)
+        if any(config_file_read_unavailable(step, tools) for step in result.steps):
+            reference_context += ('\n规划能力限制：文件读取计划未被执行；仅在有已登记日志工具时改查日志。'
+                                  '原配置文件内容仍未核实，日志不能替代配置文件原文。')
         # 硬截断，防止 LLM 输出超长计划（超长计划会撞上策略的步数上限，
         # 在 Top1 未收敛时就强制 respond）
         if len(steps) > _MAX_PLAN_STEPS:

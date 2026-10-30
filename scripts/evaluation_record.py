@@ -181,6 +181,28 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
                 'stream', 'thinking', 'reasoning_effort', 'seed', 'presence_penalty', 'frequency_penalty')})
             models[-1]['served_model'] = row['served_model']
         trace = load('tool_trace.json')
+        # Older records lack this field and remain read-only compatible.
+        if 'knowledge_kb_ids' in config:
+            allowed = config['knowledge_kb_ids']
+            search_enabled = 'search_knowledge_base' in config.get('tool_names', [])
+            if (not isinstance(allowed, list)
+                    or any(type(value) is not int or value <= 0 for value in allowed)
+                    or len(set(allowed)) != len(allowed)
+                    or bool(allowed) != search_enabled):
+                fail('knowledge tool scope missing or invalid')
+            else:
+                for row in trace:
+                    if row.get('tool') == 'search_knowledge_base' and row.get('status') == 'returned':
+                        kb_id = row.get('arguments', {}).get('kb_id')
+                        if type(kb_id) is not int or kb_id not in allowed:
+                            fail('knowledge tool returned outside configured scope')
+                for name in inputs:
+                    for tool in load(name).get('tools', []):
+                        function = tool.get('function', {})
+                        if function.get('name') == 'search_knowledge_base':
+                            kb = function.get('parameters', {}).get('properties', {}).get('kb_id', {})
+                            if kb.get('enum') != allowed or ('default' in kb and kb['default'] not in allowed):
+                                fail('advertised knowledge tool scope differs from runtime')
         boundary = config.get('observation_not_before')
         if config.get('shared_history_enabled') is False and not boundary:
             fail('isolated run missing observation boundary')

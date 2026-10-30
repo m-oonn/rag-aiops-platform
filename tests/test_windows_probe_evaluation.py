@@ -403,11 +403,15 @@ async def test_evaluation_loads_both_tool_sets_and_closes_clients(tmp_path, monk
     import src.agent.mcp_client as client
     from src.probe.evidence import PROBE_TOOL_OPERATIONS
     from scripts.evaluate_windows_probe import load_evaluation_tools
+    from langchain_core.tools import StructuredTool
     token = tmp_path / 'token'
     token.write_text('test-token')
     cfg = SimpleNamespace(token_file=token, gateway_url='ws://127.0.0.1:2040/probe/ws')
     probe = [SimpleNamespace(name=name) for name in [*PROBE_TOOL_OPERATIONS, 'probe_list_evidence']]
-    knowledge = SimpleNamespace(name='search_knowledge_base')
+    async def search(query: str, kb_id: int):
+        """Isolated search endpoint with the real input contract."""
+        return kb_id
+    knowledge = StructuredTool.from_function(coroutine=search, name='search_knowledge_base')
     catalog = [knowledge, *([SimpleNamespace(name='list_knowledge_bases'),
         SimpleNamespace(name='get_document_info')] if full_catalog else [])]
     load = AsyncMock(side_effect=[(probe, None), (catalog, None)])
@@ -415,7 +419,12 @@ async def test_evaluation_loads_both_tool_sets_and_closes_clients(tmp_path, monk
     monkeypatch.setattr(client, 'load_tools_for_config', load)
     monkeypatch.setattr(client, 'close_client_for_config', close)
     async with load_evaluation_tools(cfg, 'http://127.0.0.1:9200/mcp') as tools:
-        assert tools == [*probe, knowledge]
+        assert tools[:-1] == probe
+        assert tools[-1].name == knowledge.name
+        assert tools[-1].args['kb_id']['enum'] == [14]
+        with pytest.raises(PermissionError):
+            await tools[-1].ainvoke({'query': 'x', 'kb_id': 1})
+        assert await tools[-1].ainvoke({'query': 'x'}) == 14
     assert close.call_count == 2
     knowledge_config = load.call_args_list[1].args[0]
     assert knowledge_config == {'knowledge': {'transport': 'streamable_http',
@@ -507,6 +516,7 @@ async def test_model_mode_wires_knowledge_without_sending_paid_requests(tmp_path
                 yield {'type': 'complete', 'response': '未定位根因：knowledge disabled'}
                 return
             assert error is None and tools[0].name == 'search_knowledge_base'
+            assert tools[0].args['kb_id']['enum'] == [14]
             await tools[0].ainvoke({'query': 'localapp'})
             yield {'type': 'complete', 'response': '未定位根因：offline orchestration only'}
         async def close(self):
@@ -544,4 +554,8 @@ async def test_model_mode_wires_knowledge_without_sending_paid_requests(tmp_path
     assert summary['mechanism_audit']['passed'] is (audit_passed is not False)
     if not disabled:
         assert summary['knowledge_conditions']['passed'] and summary['knowledge_conditions']['phase'] == 'after'
+        trace = json.loads((tmp_path / 'tool_trace.json').read_text(encoding='utf-8'))
+        assert trace[0]['arguments'] == {'query': 'localapp', 'kb_id': 14}
+    record = json.loads((tmp_path / 'evaluation-record.json').read_text(encoding='utf-8'))
+    assert record['config']['knowledge_kb_ids'] == ([] if disabled else [14])
     audit.assert_awaited_once()

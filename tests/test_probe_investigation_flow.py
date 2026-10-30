@@ -262,6 +262,78 @@ def test_policy_selected_listener_check_rejects_model_changed_arguments():
         'listening_only': True}}, state)
 
 
+def test_planner_rewrites_unavailable_config_file_read_to_allowed_log_check():
+    from src.agent.aiops import planner as planner_module
+
+    tools = [SimpleNamespace(name='probe_text_log')]
+    result = planner_module._sanitize_plan_steps(
+        ['打开配置文件，找到入口服务的重试参数', '检查入口日志'], tools)
+
+    assert '应用日志' in result[0]
+    assert result[1] == '检查入口日志'
+    assert all('配置文件' not in step for step in result)
+
+
+def test_planner_keeps_config_log_check_but_does_not_invent_file_read():
+    from src.agent.aiops import planner as planner_module
+
+    tools = [SimpleNamespace(name='probe_text_log')]
+    result = planner_module._sanitize_plan_steps(
+        ['检查入口日志中的配置解析错误'], tools)
+
+    assert result == ['检查入口日志中的配置解析错误']
+
+
+@pytest.mark.parametrize('step_text', [
+    '打开配置文件，找到localapp这一项，看入口写的是什么',
+    '读取 localapp 的配置文件内容',
+    'Open the configuration file for localapp',
+])
+def test_unavailable_file_plan_does_not_invent_tools_when_no_logs(step_text):
+    from src.agent.aiops.planner import _sanitize_plan_steps
+    assert _sanitize_plan_steps([step_text, '核对入口进程'],
+        [SimpleNamespace(name='probe_process_snapshot')]) == ['核对入口进程']
+
+
+def test_existing_approved_terminal_path_is_not_disabled_by_file_plan_check():
+    from src.agent.aiops.tools import config_file_read_unavailable
+    assert not config_file_read_unavailable('读取配置文件',
+        [SimpleNamespace(name=name) for name in ('shell_input', 'shell_key')])
+
+
+@pytest.mark.asyncio
+async def test_unsupported_file_step_cannot_be_executed_or_claimed_as_probe_evidence(monkeypatch):
+    from src.agent.aiops import executor as executor_module
+    tools = [SimpleNamespace(name='probe_text_log', ainvoke=AsyncMock())]
+    monkeypatch.setattr(executor_module, '_get_tools_for_state', AsyncMock(return_value=(tools, None)))
+    create = MagicMock(side_effect=AssertionError('unavailable step must not send a model request'))
+    monkeypatch.setattr(executor_module, 'create_agent_llm', create)
+    result, raw = await executor_module._run_step('读取 localapp 的配置文件', {})
+    assert '尚未核实' in result
+    assert json.loads(raw)['reason'] == 'unsupported_config_file_read'
+    assert not executor_module._record_probe_evidence({'thread_id': 'no-observation'}, raw, 'file')
+    create.assert_not_called()
+    tools[0].ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_planner_replaces_real_failed_plan_and_retains_capability_limit(monkeypatch):
+    from src.agent.aiops import planner as planner_module
+    tools = [SimpleNamespace(name='probe_text_log', description='allowed logs', args={})]
+    monkeypatch.setattr(settings, 'PROBE_ENABLED', False)
+    monkeypatch.setattr(planner_module, '_retrieve_experience', lambda _: '')
+    monkeypatch.setattr(planner_module, 'load_agent_tools', AsyncMock(return_value=(tools, None)))
+    monkeypatch.setattr(planner_module, 'create_agent_llm', MagicMock())
+    proposal = AsyncMock(return_value=planner_module.Plan(steps=[
+        '打开配置文件，找到localapp这一项，看入口写的是什么', '核对入口进程']))
+    monkeypatch.setattr(planner_module, 'ainvoke_structured', proposal)
+    result = await planner_module.planner({'input': '入口503'})
+    assert result['plan'][1] == '核对入口进程'
+    assert '应用日志' in result['plan'][0]
+    assert '原配置文件内容仍未核实' in result['investigation_reference_context']
+    assert not result['raw_evidence']
+
+
 @pytest.mark.asyncio
 async def test_failed_loopback_dependency_listener_check_runs_and_pid_stays_observation(monkeypatch):
     from langchain_core.messages import AIMessage

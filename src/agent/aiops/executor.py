@@ -32,7 +32,7 @@ from src.probe.protocol import redact
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tool_guards import GuardContext, _pick_real_identifier, run_guards
 from src.agent.aiops.termcp_tools import TerminalApprovalPending, TerminalProtocolError, register_shell_session
-from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog
+from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog, config_file_read_unavailable
 from src.agent.aiops_llm import ainvoke_with_retry, create_agent_llm
 from src.settings import settings
 from src.utils.logger import logger
@@ -493,6 +493,12 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
             if memory.get('next_check'):
                 allowed_names = set(memory['next_tools']) | {'read_run_evidence'}
                 tools = [tool for tool in tools if tool.name in allowed_names]
+
+        if config_file_read_unavailable(raw_task, tools):
+            message = '本步无法执行：当前工具不能直接读取配置文件，原配置内容尚未核实；请重新选择已允许的现场检查。'
+            return message, json.dumps({'data_source': 'tool_execution',
+                'action': 'plan_validation', 'status': 'unavailable',
+                'reason': 'unsupported_config_file_read', 'message': message}, ensure_ascii=False)
 
         tool_map = _build_tool_map(tools)
         llm = create_agent_llm(temperature=0)
