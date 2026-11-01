@@ -26,12 +26,14 @@ def artifacts(tmp_path):
         path.write_text('# source fixture\n')
     def build(group='G00', directory=None):
         from scripts.evaluate_windows_probe import MECHANISM_GROUPS
+        from scripts.verify_windows_local_faults import symptom_text
         directory = directory or source / group
         directory.mkdir()
         switches = MECHANISM_GROUPS.get(group, (False, False))
         config = {'mechanism_group': group, 'mechanisms': {'hypothesis_protection': switches[0],
             'contradiction_trigger': switches[1], 'protection_steps': 2},
-            'budget_limit_cny': 5, 'tool_names': ['probe_dependency_probe']}
+            'budget_limit_cny': 5, 'tool_names': ['probe_dependency_probe'],
+            'symptom_sha256': hashlib.sha256(symptom_text('neutral').encode('utf-8')).hexdigest()}
         record = EvaluationRecord(root, directory, config)
         record.finish('completed')
         timing = {k: record.value[k] for k in ['started_at', 'ended_at', 'elapsed_ms']}
@@ -304,7 +306,7 @@ async def test_controller_uses_real_record_gate_and_rejects_missing_record(artif
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1'])
+@pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1', 'e2-fault-pair-v1'])
 @pytest.mark.parametrize('unpriced', [False, True, 'priced_requests'])
 async def test_four_group_orchestration_consumes_real_child_gate_and_summary(artifacts, monkeypatch, suite, unpriced):
     request_caps = bool(unpriced)
@@ -313,6 +315,7 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
     from scripts import verify_windows_local_faults as controller, knowledge_conditions
     root, source, build = artifacts
     monkeypatch.setattr(controller, 'ROOT', root)
+    expected_runs = len(controller.four_group_cases(suite)) * 4
     (source / 'runbooks').mkdir()
     (source / 'runbooks/guide.md').write_text('fixed fixture guide')
     (source / 'config.toml').write_text('fixed fixture allowlist')
@@ -395,11 +398,11 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
     options = dict(allow_unpriced_model=unpriced, max_model_requests=76, run_max_model_requests=2) if request_caps else {}
     results = await controller.evaluate_four_groups(source, launch, reset, knowledge['endpoint'], prior, 5,
         None if request_caps else 0.25, suite=suite, **options)
-    assert len(results) == len(set(launches)) == 12
+    assert len(results) == len(set(launches)) == expected_runs
     assert resets[-1] == 'normal'
     report = summarize(source, source.parent / 'joined-summary')
     assert report['passed'], report['issues']
-    assert len(report['runs']) == 12 and all(r['vs_G00'] is not None for r in report['runs'])
+    assert len(report['runs']) == expected_runs and all(r['vs_G00'] is not None for r in report['runs'])
     assert all(r['audit']['this_run_cost']['requests'] == 1 for r in report['runs'])
     assert report['human_reviewed'] == 0 and report['diagnostic_accuracy'] is None
     assert prior.read_bytes() == prior_bytes
@@ -420,6 +423,11 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
     rejected_suite = summarize(source, source.parent / 'wrong-scenario-suite')
     assert rejected_suite['passed'] is False
     assert all(row['vs_G00'] is None for row in rejected_suite['runs'])
+    changed_symptom = {**original_suite, 'symptom_sha256': 'wrong-symptom-hash'}
+    save(suite_path, changed_symptom)
+    rejected_symptom = summarize(source, source.parent / 'wrong-symptom-suite')
+    assert rejected_symptom['passed'] is False
+    assert all(row['vs_G00'] is None for row in rejected_symptom['runs'])
     save(suite_path, original_suite)
     first = launches[0]
     trace_path = first / 'tool_trace.json'

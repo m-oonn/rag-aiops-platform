@@ -263,11 +263,13 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
 
 async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_url=None, knowledge_disabled=False, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, observation_not_before=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, isolate_history=False, run_max_model_requests=None, symptom_profile='neutral'):
     """Only the caller's explicit paid mode may invoke this serial runner."""
+    import hashlib
     from scripts.evaluate_windows_probe import read_cost_ledger, MECHANISM_GROUPS
     sample_id = uuid.uuid4().hex
     result_dir = out / ('model-' + sample_id)
     symptom_file = out / ('symptom-' + sample_id + '.txt')
     symptom_file.write_text(symptom_text(symptom_profile), encoding='utf-8')
+    symptom_sha256 = hashlib.sha256(symptom_file.read_bytes()).hexdigest()
     args = [str(ROOT / 'scripts/evaluate_windows_probe.py'), '--run-model',
         '--probe-config', str(out / 'config.toml'), '--symptom-file', str(symptom_file),
         '--output-dir', str(result_dir), '--local-runbooks', str(out / 'runbooks'),
@@ -362,6 +364,8 @@ async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_u
     (result_dir / 'record-integrity.json').write_text(json.dumps(integrity, ensure_ascii=False, indent=2), encoding='utf-8')
     if not integrity['passed']:
         raise RuntimeError('model scenario record integrity failed; artifacts preserved')
+    if integrity.get('comparison_config', {}).get('symptom_sha256') != symptom_sha256:
+        raise ValueError('model scenario symptom input was not bound to evaluation record')
     if (((isolate_history or run_budget_cny is not None)
             and integrity.get('comparison_config', {}).get('shared_history_enabled') is not False)
             or (observation_not_before is not None
@@ -567,6 +571,7 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
 
 async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_cost, budget_limit_cny, run_budget_cny, suite='baseline-v1', *, allow_unpriced_model=False, max_model_requests=None, run_max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral'):
     """Same controller-owned environment, serial fresh children; no implicit paid entry."""
+    import hashlib
     import math
     from scripts.evaluate_windows_probe import read_cost_ledger
     from scripts.evaluation_record import utc_now
@@ -582,6 +587,7 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
     previous = read_cost_ledger(previous_cost, for_resume=True, limit_cny=budget_limit_cny)
     # Reserve the same opportunity for every group before touching the business.
     cases = four_group_cases(suite)
+    symptom_sha256 = hashlib.sha256(symptom_text(symptom_profile).encode('utf-8')).hexdigest()
     if run_budget_cny is not None and (type(run_budget_cny) not in (int, float)
             or not math.isfinite(run_budget_cny) or run_budget_cny <= 0):
         raise ValueError('invalid per-run reservation cap')
@@ -594,12 +600,13 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
         return four_group_conditions(out)
     fixed = conditions()
     order = four_group_order(suite)
-    record = {'version': 3, 'suite': suite, 'scenario_cases': list(cases),
+    record = {'version': 4, 'suite': suite, 'scenario_cases': list(cases),
         'order': order, 'conditions_sha256': fixed, 'results': [],
         'started_at': utc_now(), 'ended_at': None, 'recovery': 'pending', 'status': 'started',
         'run_budget_cny': run_budget_cny, 'budget_limit_cny': budget_limit_cny,
         'allow_unpriced_model': allow_unpriced_model, 'max_model_requests': max_model_requests,
         'run_max_model_requests': run_max_model_requests, 'max_output_tokens': max_output_tokens,
+        'symptom_profile': symptom_profile, 'symptom_sha256': symptom_sha256,
         'previous_cost': str(Path(previous_cost).resolve()), 'inherited_requests': len(previous['requests']),
         'answer_visibility': 'controller only; neutral symptom and fixed Probe allowlist', 'resets': []}
     path = out / 'four-group-controller.json'
@@ -627,12 +634,10 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
                     isolate_history=True)
             elif max_output_tokens != 4096:
                 options['max_output_tokens'] = max_output_tokens
-            if symptom_profile != 'neutral':
-                options['symptom_profile'] = symptom_profile
             result = await evaluate_model_case(out, item['case'], launch, previous_path,
                 knowledge_url=knowledge_url, mechanism_group=item['group'],
                 budget_limit_cny=budget_limit_cny, run_budget_cny=run_budget_cny,
-                observation_not_before=observation_boundary, **options)
+                observation_not_before=observation_boundary, symptom_profile=symptom_profile, **options)
             record['results'].append(result)
             save()
             if result.get('status') != 'passed' or result.get('workflow_completed') is not True:
@@ -655,8 +660,9 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
                 raise ValueError('four-group child request limits or pricing mode differ')
             if (integrity['comparison_config'].get('run_budget_cny') != run_budget_cny
                     or integrity['comparison_config'].get('shared_history_enabled') is not False
+                    or integrity['comparison_config'].get('symptom_sha256') != symptom_sha256
                     or integrity.get('observation_not_before') != observation_boundary):
-                raise ValueError('four-group child did not preserve per-run cap or history isolation')
+                raise ValueError('four-group child did not preserve per-run cap, symptom input or history isolation')
             signature = (integrity['source_signature'], integrity['comparison_config'])
             if not integrity['passed'] or (baseline is not None and signature != baseline):
                 raise ValueError('four-group runtime source or fixed conditions differ')

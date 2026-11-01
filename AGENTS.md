@@ -1,6 +1,6 @@
 # ragPdfSystem 项目约定
 
-当前入口（2026-11-01）：用户已放行 E2 两故障四组候选机会预实验，并新增最多 5 CNY；准备记录见 `docs/e2-fault-pair-preflight-20261101.md`。新增 `e2-fault-pair-v1` 覆盖 `downstream_unreachable` / `application_config_error` × G00/G10/G01/G11，共 8 场。免费现场预检 8 轮/32 条 Probe 观测通过、`model_calls=0`，恢复 healthy、临时进程停止、端口释放、清理错误为 0；相关控制器/汇总回归 113 passed，仅既有 PyMilvus 弃用警告。批次准备采用 DeepSeek 已核价 profile；每场 12 请求/0.60 CNY，最多新增 96 请求/4.80 CNY，另留 0.20 CNY 不执行，累计硬上限 298 请求/14.922880 CNY；继承 202 条、峰值预留 5.250858 CNY，历史未知费用不回填。待绑定本批授权记录和提交版本后串行执行；任何失败、缺 usage、审计或恢复异常即停止，不补跑。
+当前入口（2026-11-01）：用户已放行 E2 两故障四组最多新增 5 CNY，准备和执行记录分别见 `docs/e2-fault-pair-preflight-20261101.md` 与 `docs/e2-fault-pair-result-20261101.md`。`e2-fault-pair-v1` 覆盖 `downstream_unreachable` / `application_config_error` × G00/G10/G01/G11，共 8 场；免费预检 8 轮/32 条 Probe 观测通过。真实批次仅完成随机首场 `downstream_unreachable/G01`：新增 8 个 HTTP 200 且 usage 完整请求，峰值估算 0.280856 CNY，账本累计 210 条/预留 5.531714 CNY，旧 202 条逐条不变。子场机械审计通过、报告有限定位为 `localized_fault`，机制机会均为 0；外层控制器因未留存 `candidate-opportunity` 输入 hash 而审计失败，整批停止，剩余 7 场未运行。现场 `normal_restored`，端口释放、临时进程停止、清理错误 0。已免费修复提示 hash 的记录和汇总校验；相关定向 264 项通过。原失败材料和账本不回填，剩余额度不自动续跑；需用户重新明确授权后才能继续。
 
 以下按时间倒序保留各次执行时的状态记录；其中旧的 `pending` 和“下一步”只反映当时状态。
 

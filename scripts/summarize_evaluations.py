@@ -11,6 +11,12 @@ from scripts.evaluation_record import audit_evaluation, validate_timing
 def audit_suite_budget(suite, rows):
     """Verify the ordered ledger chain and equal caps, independently of child success labels."""
     from scripts.evaluate_windows_probe import read_cost_ledger
+    if suite.get('version', 1) >= 4:
+        import hashlib
+        from scripts.verify_windows_local_faults import symptom_text
+        expected_symptom = hashlib.sha256(symptom_text(suite['symptom_profile']).encode('utf-8')).hexdigest()
+        if suite.get('symptom_sha256') != expected_symptom:
+            raise ValueError('suite symptom profile hash differs')
     previous_path = Path(suite['previous_cost']).resolve()
     previous = read_cost_ledger(previous_path)
     if suite['inherited_requests'] != len(previous['requests']):
@@ -40,6 +46,8 @@ def audit_suite_budget(suite, rows):
             raise ValueError('suite execution order differs')
         record = json.loads((directory / 'evaluation-record.json').read_text(encoding='utf-8'))
         config = record['config']
+        if suite.get('version', 1) >= 4 and config.get('symptom_sha256') != suite['symptom_sha256']:
+            raise ValueError('suite child symptom differs')
         if Path(config['previous_cost']).resolve() != previous_path:
             raise ValueError('suite ledger chain skipped or reused a child')
         current = read_cost_ledger(directory / 'cost.json')

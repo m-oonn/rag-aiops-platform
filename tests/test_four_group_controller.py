@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +26,8 @@ def environment(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1', 'e2-fault-pair-v1'])
 @pytest.mark.parametrize('mutation', ['none', 'failed_child', 'exception', 'config_change',
-    'source_change', 'reused_directory', 'reused_thread', 'missing_db', 'reset_failure', 'recovery_failure', 'boundary_mismatch'])
+    'source_change', 'reused_directory', 'reused_thread', 'missing_db', 'reset_failure', 'recovery_failure',
+    'boundary_mismatch', 'symptom_mismatch'])
 async def test_four_group_order_fixed_environment_isolation_and_failure(environment, monkeypatch, mutation, suite):
     out, prior = environment
     calls, resets = [], []
@@ -42,9 +44,15 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
             raise ValueError('reset verification failed')
         if mutation == 'recovery_failure' and len(calls) == expected_runs:
             raise RuntimeError('recovery failed')
-    async def run(directory, case, launch, previous, *, knowledge_url, mechanism_group, budget_limit_cny, run_budget_cny, observation_not_before):
+    async def run(directory, case, launch, previous, *, knowledge_url, mechanism_group, budget_limit_cny, run_budget_cny, observation_not_before, symptom_profile):
         assert directory == out and knowledge_url == 'http://127.0.0.1:9200/mcp'
         assert budget_limit_cny == 5 and run_budget_cny == 0.1
+        expected_profile = ('candidate-opportunity'
+            if suite == 'e2-fault-pair-v1' and mutation == 'none' else 'neutral')
+        assert symptom_profile == expected_profile
+        symptom_sha256 = hashlib.sha256(controller.symptom_text(symptom_profile).encode('utf-8')).hexdigest()
+        if mutation == 'symptom_mismatch':
+            symptom_sha256 = 'wrong-symptom-hash'
         assert observation_not_before == json.loads((out / 'four-group-controller.json').read_text())['resets'][-1]['observation_not_before']
         assert observation_not_before <= reset_times[-2]
         assert previous == (prior if not calls else out / f'cost-{len(calls)}.json')
@@ -66,12 +74,15 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
             'result_dir': str(child), 'cost_file': str(out / f'cost-{index}.json'),
             'record_integrity': {'passed': True, 'observation_not_before': 'wrong' if mutation == 'boundary_mismatch' else observation_not_before, 'source_signature': 'changed' if mutation == 'source_change' and index == 2 else 'fixed',
                 'comparison_config': {'objects': ['fixed ports'], 'knowledge': 'same',
-                    'run_budget_cny': run_budget_cny, 'shared_history_enabled': False}}}
+                    'run_budget_cny': run_budget_cny, 'shared_history_enabled': False,
+                    'symptom_sha256': symptom_sha256}}}
     reset_times = []
     monkeypatch.setattr(controller, 'evaluate_model_case', run)
     before = prior.read_bytes()
     kwargs = dict(knowledge_url='http://127.0.0.1:9200/mcp', previous_cost=prior, budget_limit_cny=5, run_budget_cny=0.1,
         suite=suite)
+    if suite == 'e2-fault-pair-v1' and mutation == 'none':
+        kwargs['symptom_profile'] = 'candidate-opportunity'
     if mutation == 'none':
         result = await controller.evaluate_four_groups(out, Mock(), set_case, **kwargs)
         assert len(result) == expected_runs
@@ -85,6 +96,9 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
         assert len(calls) <= (expected_runs if mutation == 'recovery_failure' else 2)
     saved = json.loads((out / 'four-group-controller.json').read_text())
     assert saved['suite'] == suite
+    expected_profile = kwargs.get('symptom_profile', 'neutral')
+    assert saved['symptom_profile'] == expected_profile
+    assert saved['symptom_sha256'] == hashlib.sha256(controller.symptom_text(expected_profile).encode('utf-8')).hexdigest()
     assert saved['scenario_cases'] == list(controller.four_group_cases(suite))
     assert len(saved['order']) == expected_runs
     assert saved['status'] == ('completed' if mutation == 'none' else 'failed')

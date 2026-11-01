@@ -465,6 +465,9 @@ async def run_model(args, cfg, output, tools, symptom_override=None):
         'target_id': getattr(cfg, 'target_id', None),
         'previous_cost': str(args.previous_cost) if args.previous_cost else None,
         'budget_limit_cny': getattr(args, 'budget_limit_cny', 5)})
+    symptom_file = getattr(args, 'symptom_file', None)
+    if symptom_file and Path(symptom_file).is_file():
+        record.value['config']['symptom_sha256'] = hashlib.sha256(Path(symptom_file).read_bytes()).hexdigest()
     try:
         await _run_model(args, cfg, output, tools, symptom_override, record)
     except BaseException as exc:

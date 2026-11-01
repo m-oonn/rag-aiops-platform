@@ -89,7 +89,9 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
             pass
 
     monkeypatch.setattr(graph, 'AIOpsService', Service)
-    args = SimpleNamespace(previous_cost=None, local_runbooks=None, knowledge_mcp_url=None, symptom_file=None,
+    symptom_file = tmp_path / 'symptom.txt'
+    symptom_file.write_text('fixed test symptom', encoding='utf-8')
+    args = SimpleNamespace(previous_cost=None, local_runbooks=None, knowledge_mcp_url=None, symptom_file=symptom_file,
         mechanism_group=None, knowledge_disabled=False, allow_unpriced_model=True, max_model_requests=2)
     cfg = ProbeConfig('test-target', 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token')
     await evaluation.run_model(args, cfg, tmp_path, [])
@@ -99,8 +101,9 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
     summary = json.loads((tmp_path / 'summary.json').read_text())
     assert summary['cost_scope']['this_run']['estimated_cny_peak'] is None
     assert summary['workflow_completed'] is (kind != 'invalid_decision')
-    assert json.loads((tmp_path / 'evaluation-record.json').read_text())['status'] == (
-        'incomplete' if kind == 'invalid_decision' else 'completed')
+    record = json.loads((tmp_path / 'evaluation-record.json').read_text())
+    assert record['status'] == ('incomplete' if kind == 'invalid_decision' else 'completed')
+    assert record['config']['symptom_sha256'] == hashlib.sha256(symptom_file.read_bytes()).hexdigest()
 
 
 def test_source_snapshot_preserves_dirty_source_and_excludes_credentials(tmp_path):

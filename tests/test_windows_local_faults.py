@@ -209,8 +209,12 @@ def test_listener_check_excludes_time_wait_and_unrelated_ports(monkeypatch):
 @pytest.mark.parametrize('limit', [5, 10])
 async def test_model_runner_inherits_budget_and_fails_closed(tmp_path, monkeypatch, failure, group, limit):
     from scripts import evaluation_record
-    monkeypatch.setattr(evaluation_record, 'audit_evaluation', lambda *args, **kwargs:
-        {'passed': True, 'this_run_cost': {'requests': 1}})
+    def audit(*args, **kwargs):
+        import hashlib
+        symptom_file = next(Path(args[0]).parent.glob('symptom-*.txt'))
+        return {'passed': True, 'this_run_cost': {'requests': 1}, 'comparison_config': {
+            'symptom_sha256': hashlib.sha256(symptom_file.read_bytes()).hexdigest()}}
+    monkeypatch.setattr(evaluation_record, 'audit_evaluation', audit)
     previous = {'limit_cny': 5, 'reserved_cny': 0.4, 'requests': [
         {'number': 1, 'reserved_cny': 0.4, 'http_status': 200, 'usage': {'prompt_tokens': 3, 'completion_tokens': 1}}]}
     prior = tmp_path / 'prior.json'
