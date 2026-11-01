@@ -166,6 +166,7 @@
       <p v-if="investigation.expected_observation">预期观察：{{ investigation.expected_observation }}</p>
       <p v-if="investigation.blocked_reason">停止或阻塞：{{ investigation.blocked_reason }}</p>
       <p v-for="issue in investigation.identity_issues || []" :key="issue">候选校验：{{ issue }}</p>
+      <p v-for="issue in investigation.validation_issues || []" :key="`validation-${issue}`">判断校验：{{ issue }}</p>
       <ol v-if="(investigation.events || []).length" class="investigation-events">
         <li v-for="(event, index) in investigation.events" :key="index">
           <strong>完成 {{ event.step }} 步后 · {{ mechanismLabels[event.kind] || event.kind }}</strong>
@@ -257,14 +258,14 @@
             v-if="(diagnosis.limitations || []).length || (diagnosis.contradictions || []).length"
             class="diagnosis-section"
           >
-            <h4 class="diagnosis-section-title"><el-icon><WarningFilled /></el-icon> 限制与矛盾</h4>
+            <h4 class="diagnosis-section-title"><el-icon><WarningFilled /></el-icon> 限制与待核实说明</h4>
             <ul class="diagnosis-list">
               <li
                 v-for="(item, index) in [...(diagnosis.limitations || []), ...(diagnosis.contradictions || [])]"
                 :key="index"
                 class="diagnosis-item"
               >
-                <span>限制/矛盾：{{ item }}</span>
+                <span>限制/待核实说明：{{ item }}</span>
               </li>
             </ul>
           </section>

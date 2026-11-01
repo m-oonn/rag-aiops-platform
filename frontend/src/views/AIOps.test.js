@@ -5,6 +5,7 @@ import AIOps from './AIOps.vue'
 
 describe('AIOps.vue', () => {
   const investigation = { leading_id: 'h1', next_check: '检查下游监听',
+    validation_issues: ['有限预期无效，保留原值且不参与假设保护或矛盾改向'],
     discriminating_question: '连接故障还是应用自身错误', expected_observation: '独立下游探测结果',
     observed_findings: [{ evidence_id: 'ev-123', summary: '入口返回503' }],
     evidence_summaries: [{ evidence_id: 'ev-123', summary: 'dependency_probe downstream: TCP ok, HTTP 200', collected_at: '2026-10-26T02:21:41Z' }],
@@ -34,6 +35,7 @@ describe('AIOps.vue', () => {
     expect(panel.text()).not.toContain('证据已截断')
     expect(panel.text()).not.toContain('采集返回错误')
     expect(panel.text()).toContain('候选仍可核查')
+    expect(panel.text()).toContain('判断校验：有限预期无效，保留原值且不参与假设保护或矛盾改向')
     expect(wrapper.find('.el-collapse-item__header').attributes('aria-expanded')).toBe('false')
     const scroll = vi.fn()
     wrapper.find('#evidence-ev-123').element.scrollIntoView = scroll
@@ -174,6 +176,7 @@ describe('AIOps.vue', () => {
     unresolved_questions: [{ id: 'q-1', question: '下游是否恢复', limitation: '6989监听采集失败：timeout',
       expected_observation: '同端口监听与进程归属', evidence_ids: ['ev-123'] }],
     limitations: ['downstream未提供允许服务/进程及日志映射'], validation_issues: ['因果解释未验证'],
+    contradictions: ['日志为空，退出原因未知'],
     evidence: [{ evidence_id: 'ev-123', quote: '503' }], alternatives: [{ explanation: '下游网络', status: 'unresolved', limitation: '未登记' }] }])(
     'restores structured diagnosis or labels historical reports: %s', async (diagnosis) => {
       localStorage.getItem.mockImplementation((key) => ({ token: 'test-token', aiops_last_thread: 'diagnosis-run' })[key] || null)
@@ -194,7 +197,9 @@ describe('AIOps.vue', () => {
         expect(wrapper.text()).toContain('6989监听采集失败：timeout')
         expect(wrapper.text()).toContain('预期观察：同端口监听与进程归属')
         expect(wrapper.find('.diagnosis-questions button').text()).toContain('ev-123')
-        expect(wrapper.text()).toContain('限制/矛盾：downstream未提供允许服务/进程及日志映射')
+        expect(wrapper.text()).toContain('限制/待核实说明：downstream未提供允许服务/进程及日志映射')
+        expect(wrapper.text()).toContain('限制/待核实说明：日志为空，退出原因未知')
+        expect(wrapper.text()).not.toContain('限制/矛盾：')
         expect(wrapper.text()).toContain('判断校验：因果解释未验证')
         expect(wrapper.findAll('button').some(b => b.text().includes('ev-123'))).toBe(true)
       } else expect(wrapper.text()).toContain('历史格式')
