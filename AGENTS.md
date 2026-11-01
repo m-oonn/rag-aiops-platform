@@ -1,6 +1,6 @@
 # ragPdfSystem 项目约定
 
-当前入口（2026-11-01）：E1 免费收尾已完成。G11 三维人工判断已登记为 `correct_localization / supported / appropriate`，用户未补充理由；审核状态为 `recorded`，不是因果正确性的自动证明。免费机制现场预检 `mechanism-v1` 为 12 轮/48 条 Probe 观测、`model_calls=0`，现场恢复和端口清理通过；后端全量 `1590 passed, 99 deselected`，前端 `110 passed`、构建通过。离线 AIOps 浏览器回放的保护/反证两场、刷新恢复和 390px 无横向溢出通过；修正了浏览器固定输入夹具未按当前契约提供 `next_arguments` 的问题，两场均 `model_calls=0`。记录见 `docs/targeted-mechanism-live-preflight-20261101.md` 与 `docs/targeted-g11-retest-result-20261101.md`。E2 四组自主预实验仍未授权，累计请求上限仅余 4 次，预算余量不构成授权；下一步需先另行明确请求上限和费用范围，不自动续跑。
+当前入口（2026-11-01）：用户已放行 E2 两故障四组候选机会预实验，并新增最多 5 CNY；准备记录见 `docs/e2-fault-pair-preflight-20261101.md`。新增 `e2-fault-pair-v1` 覆盖 `downstream_unreachable` / `application_config_error` × G00/G10/G01/G11，共 8 场。免费现场预检 8 轮/32 条 Probe 观测通过、`model_calls=0`，恢复 healthy、临时进程停止、端口释放、清理错误为 0；相关控制器/汇总回归 113 passed，仅既有 PyMilvus 弃用警告。批次准备采用 DeepSeek 已核价 profile；每场 12 请求/0.60 CNY，最多新增 96 请求/4.80 CNY，另留 0.20 CNY 不执行，累计硬上限 298 请求/14.922880 CNY；继承 202 条、峰值预留 5.250858 CNY，历史未知费用不回填。待绑定本批授权记录和提交版本后串行执行；任何失败、缺 usage、审计或恢复异常即停止，不补跑。
 
 以下按时间倒序保留各次执行时的状态记录；其中旧的 `pending` 和“下一步”只反映当时状态。
 

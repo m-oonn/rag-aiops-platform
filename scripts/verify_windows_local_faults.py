@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 FOUR_GROUP_SUITES = {
     'baseline-v1': ('normal', 'downstream_unreachable', 'application_error'),
     'mechanism-v1': ('normal', 'downstream_unreachable', 'application_config_error'),
+    'e2-fault-pair-v1': ('downstream_unreachable', 'application_config_error'),
 }
 
 SYMPTOM_PROFILES = {
@@ -1268,7 +1269,7 @@ def main():
     parser.add_argument('--scenario-preflight', action='store_true',
         help='Free mode: real scenario resets and Probe isolation in the four-group schedule, no Agent decisions')
     parser.add_argument('--four-group-suite', choices=list(FOUR_GROUP_SUITES), default='baseline-v1',
-        help='Explicit versioned scenario suite; mechanism-v1 pairs two faults with the same entry 503')
+        help='Explicit versioned scenario suite; e2-fault-pair-v1 runs two same-entry-503 faults across four groups')
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; requires separate explicit authorization for cases and cumulative budget')
     parser.add_argument('--model-stage', choices=['smoke', 'extended', 'knowledge-control', 'four-groups'], default='smoke')

@@ -23,12 +23,13 @@ def environment(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1'])
+@pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1', 'e2-fault-pair-v1'])
 @pytest.mark.parametrize('mutation', ['none', 'failed_child', 'exception', 'config_change',
     'source_change', 'reused_directory', 'reused_thread', 'missing_db', 'reset_failure', 'recovery_failure', 'boundary_mismatch'])
 async def test_four_group_order_fixed_environment_isolation_and_failure(environment, monkeypatch, mutation, suite):
     out, prior = environment
     calls, resets = [], []
+    expected_runs = len(controller.four_group_cases(suite)) * 4
     class Reverse:
         def shuffle(self, rows):
             rows.reverse()
@@ -39,7 +40,7 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
         resets.append(case)
         if mutation == 'reset_failure' and len(resets) == 2:
             raise ValueError('reset verification failed')
-        if mutation == 'recovery_failure' and len(calls) == 12:
+        if mutation == 'recovery_failure' and len(calls) == expected_runs:
             raise RuntimeError('recovery failed')
     async def run(directory, case, launch, previous, *, knowledge_url, mechanism_group, budget_limit_cny, run_budget_cny, observation_not_before):
         assert directory == out and knowledge_url == 'http://127.0.0.1:9200/mcp'
@@ -73,7 +74,7 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
         suite=suite)
     if mutation == 'none':
         result = await controller.evaluate_four_groups(out, Mock(), set_case, **kwargs)
-        assert len(result) == 12
+        assert len(result) == expected_runs
         assert {case for case, group in calls} == set(controller.four_group_cases(suite))
         for case in {c for c, g in calls}:
             assert {g for c, g in calls if c == case} == {'G00', 'G10', 'G01', 'G11'}
@@ -81,10 +82,11 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
     else:
         with pytest.raises((ValueError, RuntimeError)):
             await controller.evaluate_four_groups(out, Mock(), set_case, **kwargs)
-        assert len(calls) <= (12 if mutation == 'recovery_failure' else 2)
+        assert len(calls) <= (expected_runs if mutation == 'recovery_failure' else 2)
     saved = json.loads((out / 'four-group-controller.json').read_text())
     assert saved['suite'] == suite
     assert saved['scenario_cases'] == list(controller.four_group_cases(suite))
+    assert len(saved['order']) == expected_runs
     assert saved['status'] == ('completed' if mutation == 'none' else 'failed')
     assert saved['recovery'] == ('failed' if mutation == 'recovery_failure' else 'normal_restored')
     assert saved['ended_at'] and resets[-1] == 'normal'

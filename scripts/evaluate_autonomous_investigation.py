@@ -16,7 +16,7 @@ from scripts.verify_diagnostic_boundary import SETUP, docker
 
 FLASH_PRICING = {
     'input_cny_per_million': 2, 'output_cny_per_million': 8,
-    'verified_on': '2026-10-30',
+    'verified_on': '2026-11-01',
     'source': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing',
     'basis': 'Flash peak, cache miss; official legacy v4-flash alias billed as Flash',
 }
