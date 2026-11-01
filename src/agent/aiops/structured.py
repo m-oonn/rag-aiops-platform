@@ -26,6 +26,10 @@ _T = TypeVar("_T", bound=BaseModel)
 class StructuredOutputError(ValueError):
     """Both structured and JSON output failed validation; contains no model text."""
 
+    def __init__(self, message: str, *, code: str = 'invalid_output'):
+        super().__init__(message)
+        self.code = code
+
 
 def _format_failure(error: Exception) -> bool:
     if isinstance(error, (ValidationError, OutputParserException, _json.JSONDecodeError, NotImplementedError)):
@@ -123,10 +127,15 @@ async def ainvoke_structured(
     hint_msg = f"{_JSON_SYSTEM_HINT}{fields_desc}"
     json_prompt = ChatPromptTemplate.from_messages(
         [*prompt.messages, ("system", hint_msg)]
-    )
+    ).partial(**prompt.partial_variables)
     raw = await ainvoke_with_retry(
         json_prompt | llm, prompt_input, label="structured.json_fallback"
     )
+    metadata = getattr(raw, 'response_metadata', {}) or {}
+    choices = metadata.get('choices') or []
+    finish_reason = choices[0].get('finish_reason') if choices else metadata.get('finish_reason')
+    if finish_reason == 'length':
+        raise StructuredOutputError('Model output was truncated at the token limit', code='output_truncated')
     content = getattr(raw, "content", "") or str(raw)
     content = content.strip()
 

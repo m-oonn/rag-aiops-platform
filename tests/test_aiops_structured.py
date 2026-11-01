@@ -58,6 +58,39 @@ async def test_invalid_json_has_distinct_safe_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_json_fallback_preserves_partial_prompt_variables(monkeypatch):
+    llm = RunnableLambda(lambda _: None)
+    llm.with_structured_output = Mock(return_value=RunnableLambda(lambda _: None))
+    invoke = AsyncMock(side_effect=[None, SimpleNamespace(content='{"value":"ok"}')])
+    monkeypatch.setattr(module, 'ainvoke_with_retry', invoke)
+    prompt = ChatPromptTemplate.from_messages([
+        ('system', 'Contract: {contract}'), ('user', '{input}')
+    ]).partial(contract='bound')
+
+    result = await module.ainvoke_structured(llm, Answer, prompt, {'input': 'check'})
+
+    assert result == Answer(value='ok')
+    fallback_chain = invoke.await_args_list[1].args[0]
+    rendered = fallback_chain.first.invoke({'input': 'check'})
+    assert 'Contract: bound' in rendered.to_string()
+
+
+@pytest.mark.asyncio
+async def test_json_fallback_classifies_truncated_response_before_parsing(monkeypatch):
+    llm = RunnableLambda(lambda _: None)
+    llm.with_structured_output = Mock(return_value=RunnableLambda(lambda _: None))
+    invoke = AsyncMock(side_effect=[None, SimpleNamespace(content='{"value":',
+        response_metadata={'choices': [{'finish_reason': 'length'}]})])
+    monkeypatch.setattr(module, 'ainvoke_with_retry', invoke)
+
+    with pytest.raises(module.StructuredOutputError) as raised:
+        await module.ainvoke_structured(llm, Answer, ChatPromptTemplate.from_template('{input}'), {'input': 'check'})
+
+    assert raised.value.code == 'output_truncated'
+    assert invoke.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_schema_failures_log_stage_and_field_without_model_values(monkeypatch):
     import json
     from src.utils.logger import logger

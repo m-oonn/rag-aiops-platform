@@ -147,6 +147,21 @@ def test_concrete_repeat_guard_keeps_an_unchecked_service_executable():
     assert _probe_request_limit({'name': 'probe_service_status', 'args': {'service': 'two'}}, state) == ''
 
 
+@pytest.mark.parametrize('change', ['same', 'path_spelling', 'more_lines', 'other_path', 'other_service'])
+def test_log_repeat_guard_uses_normalized_path_and_the_actual_line_limit(change):
+    from src.agent.aiops.executor import _probe_request_limit
+    payload = {'service': 'entry', 'path': 'D:\\demo\\app.log', 'line_limit': 100, 'lines': []}
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload=payload)
+    state = {'autonomous_investigation': True,
+        'raw_evidence': [('read', json.dumps(raw)), ('confirm', json.dumps(raw))]}
+    args = {'service': 'entry', 'path': 'D:\\demo\\app.log', 'lines': 100}
+    if change == 'path_spelling': args['path'] = 'd:/demo/./APP.log'
+    if change == 'more_lines': args['lines'] = 200
+    if change == 'other_path': args['path'] = 'D:/demo/other.log'
+    if change == 'other_service': args['service'] = 'downstream'
+    assert bool(_probe_request_limit({'name': 'probe_text_log', 'args': args}, state)) is (change in {'same', 'path_spelling'})
+
+
 @pytest.mark.asyncio
 async def test_newer_normal_observation_blocks_old_fault_conclusion(monkeypatch):
     stopped = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'service': 'svc', 'state': 'stopped'})
@@ -187,6 +202,64 @@ def test_dependency_timing_jitter_is_not_a_conflict_or_new_diagnostic_informatio
     assert bool(conflicts) is changed
     assert bool(repeated) is not changed
     assert samples[0]['raw_hash'] != samples[1]['raw_hash']
+
+
+@pytest.mark.parametrize('tool,operation,payload,changed', [
+    ('probe_event_log', 'event_logs', {'service': 'entry', 'events': []}, {'since_minutes': 120}),
+    ('probe_event_log', 'event_logs', {'service': 'entry', 'events': []}, {'limit': 100}),
+    ('probe_port_snapshot', 'ports', {'local_port': 8000, 'ports': []}, {'local_port': 8001}),
+    ('probe_port_snapshot', 'ports', {'local_port': 8000, 'ports': []}, {'listening_only': True}),
+    ('probe_process_snapshot', 'processes', {'service': 'entry', 'processes': []}, {'sort_by': 'cpu'}),
+])
+def test_repeat_guard_keeps_changed_query_filters_executable(tool, operation, payload, changed):
+    args = {key: payload[key] for key in ('service', 'local_port') if key in payload}
+    state = {'raw_evidence': [('sample', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+        operation=operation, payload=payload))) for _ in range(2)]}
+    assert inv.repeated_probe_arguments(tool, args, state)
+    assert not inv.repeated_probe_arguments(tool, {**args, **changed}, state)
+
+
+@pytest.mark.parametrize('invalid', ['single', 'expired', 'wrong_target', 'error'])
+def test_repeat_guard_requires_two_valid_returns(invalid):
+    payload = {'dependency': 'db', 'tcp': 'failed'}
+    if invalid == 'error': payload['error'] = 'unavailable'
+    state = {'raw_evidence': [('sample', json.dumps(evidence(
+        target_id='other' if invalid == 'wrong_target' else settings.PROBE_TARGET_ID,
+        collected_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat() if invalid == 'expired' else None,
+        operation='dependency_probe', payload=payload))) for _ in range(1 if invalid == 'single' else 2)]}
+    assert not inv.repeated_probe_arguments('probe_dependency_probe', {'dependency': 'db'}, state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('same_batch', [False, True])
+async def test_executor_blocks_third_unchanged_query_in_same_step_but_keeps_other_object(monkeypatch, same_batch):
+    import importlib
+    from types import SimpleNamespace
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import StructuredTool
+    ex = importlib.import_module('src.agent.aiops.executor')
+    called = []
+
+    async def probe(dependency: str):
+        """Construct an offline dependency observation."""
+        called.append(dependency)
+        return evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe',
+                        payload={'dependency': dependency, 'tcp': 'failed'})
+
+    tool = StructuredTool.from_function(coroutine=probe, name='probe_dependency_probe')
+    monkeypatch.setattr(ex, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(ex, 'create_agent_llm', lambda **kw: SimpleNamespace(bind_tools=lambda _: object()))
+    calls = [{'id': str(i), 'name': tool.name, 'args': {'dependency': dependency}}
+             for i, dependency in enumerate(['db', 'db', 'db', 'other'])]
+    responses = ([AIMessage(content='', tool_calls=calls)] if same_batch else [
+        AIMessage(content='', tool_calls=calls[:1]), AIMessage(content='', tool_calls=calls[1:])])
+    monkeypatch.setattr(ex, 'ainvoke_with_retry', AsyncMock(side_effect=[*responses, AIMessage(content='done')]))
+    result, raw = await ex._run_step('inspect dependencies', {'autonomous_investigation': True})
+    assert result == 'done'
+    assert called == ['db', 'db', 'other']
+    records = inv.execution_checks({'raw_evidence': [('step', raw)]})
+    assert [record['status'] for record in records] == ['success', 'success', 'unavailable', 'success']
+    assert records[2]['reason'] == 'repeated_identical_observation_for_same_arguments'
 
 
 @pytest.mark.asyncio
@@ -292,7 +365,7 @@ def test_explicit_predicates_validate_direction_without_rewriting_model(status, 
         payload={'dependency': 'db', 'tcp': 'failed'})
     current = {'input': 'symptom', 'raw_evidence': [('probe', json.dumps(raw))]}
     proposal = inv.InvestigationDecision(hypothesis='candidate', alternatives=[inv.Alternative(
-        explanation='configured TCP condition', status=status, claim_type=claim_type,
+        explanation=f'dependency_probe/db: tcp == {json.dumps(expected)}', status=status, claim_type=claim_type,
         condition=inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected=expected),
         evidence=[inv.Citation(evidence_id='e1.1', quote='failed')])])
     result = inv.decide_from_evidence(current, proposal, inv.evidence_index(current))

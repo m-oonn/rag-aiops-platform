@@ -17,13 +17,13 @@ def check():
 
 
 def alternative():
-    return inv.Alternative(explanation='入口服务停止', status='unresolved',
+    return inv.Alternative(explanation='services/entry: state == "stopped"', status='unresolved',
         condition=inv.ObservationCondition(operation='services', object_name='entry', field='state', expected='stopped'),
         claim_type='observed_condition', check=check())
 
 
 def proposal(*, include_alternative=True):
-    return inv.InvestigationDecision(hypothesis='下游 TCP 不可达',
+    return inv.InvestigationDecision(hypothesis='dependency_probe/db: tcp == "failed"',
         hypothesis_condition=inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='failed'),
         next_check='继续核查下游', next_tools=['probe_dependency_probe'],
         discriminating_question='下游是否不可达', expected_observation='TCP 成功会反驳连通失败预期',
@@ -34,6 +34,17 @@ def initial(protection=True, trigger=True):
     return {'input': '入口 503', 'plan': [], 'past_steps': [('初始检查', '未知')], 'raw_evidence': [],
         'investigation_tools': [{'name': 'probe_dependency_probe'}, {'name': 'probe_service_status'}],
         'investigation_config': {'hypothesis_protection': protection, 'contradiction_trigger': trigger, 'protection_steps': 2}}
+
+
+def concrete(answer):
+    """Fresh model fixtures bind queries; old replay fixtures stay unchanged."""
+    answer = answer.model_copy(deep=True)
+    for item in [answer, *[a.check for a in answer.alternatives if a.check]]:
+        if item.next_tools:
+            item.next_arguments = {tool: ({'dependency': 'db'} if tool == 'probe_dependency_probe'
+                                         else {'service': 'entry'}) for tool in item.next_tools}
+            item.repeat_reason, item.repeat_evidence_ids = '复核本轮状态', ['e1.1']
+    return answer
 
 
 def decide(state, answer):
@@ -367,7 +378,8 @@ def test_referenced_candidates_keep_identity_history_and_age_after_rephrasing(pr
         assert after['seen_observations'] == before['seen_observations']
         assert after['supporting_observations'] == before['supporting_observations']
         assert after['contradicting_observations'] == before['contradicting_observations']
-    assert tracking['candidates'][0]['explanation'] == answer.hypothesis
+    assert tracking['candidates'][0]['source_explanation'] == answer.hypothesis
+    assert tracking['candidates'][0]['explanation'] == inv.condition_statement(answer.hypothesis_condition)
     assert result['investigation_memory']['hypothesis_id'] == original[0]['id']
     assert result['investigation_memory']['alternatives'][0]['hypothesis_id'] == original[1]['id']
     # Rephrasing must not create another protection window on the next completed step.
@@ -452,6 +464,7 @@ def test_reference_keeps_evidence_history_when_a_new_snapshot_supersedes_the_old
     add_observation(state)
     answer = proposal()
     answer.hypothesis_condition.expected = 'ok'
+    answer.hypothesis = 'dependency_probe/db: tcp == "ok"'
     first = decide(state, answer)
     original = first['investigation_memory']['hypothesis_tracking']['candidates'][0]
     state['investigation_memory'] = first['investigation_memory']
@@ -589,7 +602,7 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
         second.alternatives[0].status = 'excluded'
         second.alternatives[0].check = None
     second.next_check = '再次核查下游'
-    model = AsyncMock(side_effect=[proposal(), second,
+    model = AsyncMock(side_effect=[concrete(proposal()), concrete(second),
         inv.InvestigationDecision(hypothesis='未查清', blocked_reason='没有更多可执行检查')])
     monkeypatch.setattr(inv, 'ainvoke_structured', model)
     service = graph_module.AIOpsService()
@@ -603,7 +616,7 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
     assert executed == ['初始检查', proposal().next_check, check().next_check if changed else second.next_check]
     assert model.await_count == 3
     assert final['investigation_config'] == current['investigation_config']
-    assert final['diagnosis']['mechanisms'] == final['investigation_memory']['hypothesis_tracking']
+    assert final['diagnosis']['mechanisms'] == inv._public_tracking(final['investigation_memory']['hypothesis_tracking'])
     assert final['diagnosis']['kind'] == 'unlocated'
     from scripts.evaluate_windows_probe import save_mechanism_audit
     monkeypatch.setattr(service, '_persistent_graph', AsyncMock(return_value=graph))
@@ -645,8 +658,8 @@ async def test_sqlite_reopen_preserves_candidates_and_run_switches(tmp_path, mon
     async def model(_llm, _schema, _prompt, context):
         memory = json.loads(context['memory'])
         if not memory:
-            return proposal()
-        answer = proposal(include_alternative=False)
+            return concrete(proposal())
+        answer = concrete(proposal(include_alternative=False))
         if explicit_identity:
             answer.hypothesis_id = memory['hypothesis_tracking']['leading_id']
             answer.hypothesis = '数据库连接失败'

@@ -22,7 +22,7 @@ from tests.test_matching503_output_flow import close_test_sse_watchers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('resume', [False, True])
-@pytest.mark.parametrize('failure_type', [httpx.ReadTimeout, StructuredOutputError])
+@pytest.mark.parametrize('failure_type', [httpx.ReadTimeout, StructuredOutputError, 'truncated', 'budget', 'per_run_budget'])
 async def test_failed_investigation_preserves_report_and_owned_refresh(
         tmp_path, monkeypatch, close_test_sse_watchers, resume, failure_type):
     graph_module = importlib.import_module('src.agent.aiops.graph')
@@ -59,7 +59,16 @@ async def test_failed_investigation_preserves_report_and_owned_refresh(
 
     monkeypatch.setattr(graph_module, 'planner', planner)
     monkeypatch.setattr(inv, 'create_agent_llm', lambda **kw: object())
-    failure = failure_type('private-provider-detail must not appear')
+    if failure_type in {'budget', 'per_run_budget'}:
+        from openai import APIStatusError
+        failure = APIStatusError('private-provider-detail must not appear',
+            response=httpx.Response(402, request=httpx.Request('POST', 'https://test.invalid')),
+            body={'error': {'type': 'evaluation_budget_exceeded',
+                'code': 'per_run_request_limit' if failure_type == 'per_run_budget' else 'max_requests'}})
+    elif failure_type == 'truncated':
+        failure = StructuredOutputError('Model output was truncated at the token limit', code='output_truncated')
+    else:
+        failure = failure_type('private-provider-detail must not appear')
     decisions = [inv.InvestigationDecision(hypothesis='', blocked_reason='no further check'), failure] if resume else [failure]
     invoke = AsyncMock(side_effect=decisions)
     monkeypatch.setattr(inv, 'ainvoke_structured', invoke)
@@ -83,6 +92,14 @@ async def test_failed_investigation_preserves_report_and_owned_refresh(
             tid = terminal['thread_id']
             assert terminal['stage'] == 'investigation_failed'
             assert terminal['diagnosis']['kind'] == 'unlocated'
+            if failure_type in {'budget', 'per_run_budget'}:
+                assert terminal['investigation_failure']['code'] == 'evaluation_budget_exceeded'
+                assert terminal['investigation_failure']['reason_code'] == (
+                    'per_run_request_limit' if failure_type == 'per_run_budget' else 'max_requests')
+                assert '预算' in terminal['response']
+            if failure_type == 'truncated':
+                assert terminal['investigation_failure']['code'] == 'model_output_truncated'
+                assert '被截断' in terminal['response'] and '保留证据' in terminal['response']
             assert '12.5' in terminal['response'] and raw['raw_hash'] in terminal['response']
             assert 'private-provider-detail' not in json.dumps(events)
             assert not any(e['type'] in {'complete', 'draft', 'pending_review'} for e in events)

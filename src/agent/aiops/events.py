@@ -26,8 +26,11 @@ def investigation_summary(state: dict) -> dict | None:
     tracking = memory.get('hypothesis_tracking') or (state.get('diagnosis') or {}).get('mechanisms')
     if not tracking:
         return None
-    unsafe_claims = [candidate.get('explanation', '') for candidate in tracking.get('candidates', [])
+    unsafe_claims = [text for candidate in tracking.get('candidates', [])
+                     for text in candidate.get('source_explanations', [candidate.get('source_explanation', candidate.get('explanation', ''))])
                      if _is_unverified_causal_claim(candidate.get('proposal') or {})]
+    unsafe_claims.extend(item.get('explanation', '') for item in memory.get('alternatives', [])
+                         if _is_unverified_causal_claim(item))
     tracking = _public_tracking(tracking)
 
     def public_text(value):
@@ -43,9 +46,13 @@ def investigation_summary(state: dict) -> dict | None:
                        for c in tracking.get('candidates', [])],
         'events': [{k: e[k] for k in event_fields if k in e} for e in tracking.get('events', [])],
         'identity_issues': tracking.get('identity_issues', []),
+        'validation_issues': [public_text(item) for item in memory.get('validation_issues', [])],
         # Keep the decision trail visible without exposing raw tool payloads.
         'observed_findings': memory.get('observed_findings', []),
         'evidence_summaries': memory.get('evidence_summaries', []),
+        'next_arguments': memory.get('next_arguments'),
+        'check_progress': [{**row, **{k: public_text(row.get(k, '')) for k in ('next_check', 'question', 'limitation')}}
+                           for row in memory.get('check_progress', [])],
         'next_check': public_text(next(iter(state.get('plan') or []), '')),
         'discriminating_question': public_text(memory.get('discriminating_question', '')),
         'expected_observation': public_text(memory.get('expected_observation', '')),

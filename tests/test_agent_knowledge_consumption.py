@@ -222,6 +222,7 @@ async def test_real_retrieval_consumed_by_graph_but_never_proves_handbook_cause(
     monkeypatch.setattr(inv, 'create_agent_llm', lambda **kw: object())
     followup = inv.InvestigationDecision(hypothesis='应用异常待核实',
         next_check='核对当前资源', next_tools=[observed.name],
+        next_arguments={observed.name: {}},
         discriminating_question='当前是否存在资源压力', expected_observation='资源正常会削弱资源压力解释')
     unsupported = inv.InvestigationDecision(hypothesis='仅从手册推断应用异常', root_cause='应用内部异常',
         conclusion_level='confirmed_cause', scope='本轮请求',
@@ -249,7 +250,7 @@ async def test_real_retrieval_consumed_by_graph_but_never_proves_handbook_cause(
     assert len(records) == int(with_observation)
     if with_observation:
         assert len(final['past_steps']) == 2
-        assert '02-application-errors.pdf' in execute.call_args_list[2].args[1][0].content
+        assert execute.await_count == 2  # Knowledge remains in investigator context; no executor model for concrete Probe.
         observed.ainvoke.assert_awaited_once()
     runbooks.assert_not_called()
     (tmp_path / 'knowledge-investigation-trace.json').write_text(json.dumps({
@@ -327,21 +328,31 @@ async def test_four_groups_share_real_knowledge_but_execute_independent_mechanis
             return AIMessage(content='', tool_calls=[{'id': 'fixed-check', 'name': name, 'args': args}])
         monkeypatch.setattr(executor, 'ainvoke_with_retry', fixed_executor)
         def proposal(include_alternative=True):
-            return inv.InvestigationDecision(hypothesis='下游 TCP 不可达',
+            return inv.InvestigationDecision(hypothesis='dependency_probe/db: tcp == "failed"',
                 hypothesis_condition=inv.ObservationCondition(operation='dependency_probe', object_name='db',
                     field='tcp', expected='failed'), next_check='核查资源' if case != 'contradiction' else '核查下游',
                 next_tools=['probe_resource_snapshot' if case != 'contradiction' else 'probe_dependency_probe'],
+                next_arguments={'probe_resource_snapshot': {}} if case != 'contradiction' else {'probe_dependency_probe': {'dependency': 'db'}},
                 discriminating_question='下游解释是否成立', expected_observation='TCP 成功会反驳不可达预期',
-                    alternatives=[inv.Alternative(explanation='入口服务停止', status='unresolved',
+                    alternatives=[inv.Alternative(explanation='services/entry: state == "stopped"', status='unresolved',
                     condition=inv.ObservationCondition(operation='services', object_name='entry', field='state', expected='stopped'),
                     check=inv.CandidateCheck(next_check='核查入口服务状态', next_tools=['probe_service_status'],
+                        next_arguments={'probe_service_status': {'service': 'entry'}},
                         discriminating_question='入口服务是否停止', expected_observation='running 反驳停止预期'))]
                     if include_alternative else [])
         second = proposal(include_alternative=case != 'protection')
         second.next_check = '再次核查下游'
         second.next_tools = ['probe_dependency_probe']
-        decide = AsyncMock(side_effect=[proposal(), second, inv.InvestigationDecision(
-            hypothesis='未查清', blocked_reason='固定决策检查结束，缺少根因证据')])
+        second.next_arguments = {'probe_dependency_probe': {'dependency': 'db'}}
+        second.repeat_reason, second.repeat_evidence_ids = '复核本轮连通变化', ['e1.1']
+        answers = [proposal(), second, inv.InvestigationDecision(
+            hypothesis='未查清', blocked_reason='固定决策检查结束，缺少根因证据')]
+        async def fixed_decision(_llm, _schema, _prompt, context):
+            answer = answers.pop(0)
+            if answer.repeat_reason:
+                answer.repeat_evidence_ids = list(json.loads(context['evidence']))[-1:]
+            return answer
+        decide = AsyncMock(side_effect=fixed_decision)
         monkeypatch.setattr(inv, 'ainvoke_structured', decide)
         service = graphs.AIOpsService()
         try:

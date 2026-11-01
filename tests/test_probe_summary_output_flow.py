@@ -97,10 +97,13 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
         if count < len(rows):
             return inv.InvestigationDecision(hypothesis='原因尚未核实',
                 next_check=f'继续覆盖检查{count}', next_tools=[definitions[count][0]],
+                next_arguments={definitions[count][0]: definitions[count][2]},
                 discriminating_question='对象不适用、查询不可用还是现场异常',
                 expected_observation='适用检查返回的有限事实')
         return inv.InvestigationDecision(hypothesis='原因尚未核实', scope='专用测试对象',
             next_check='继续覆盖检查5', next_tools=['probe_dependency_probe'],
+            next_arguments={'probe_dependency_probe': {'dependency': 'downstream'}},
+            repeat_reason='核实本轮连接失败是否持续', repeat_evidence_ids=list(context)[-1:],
             discriminating_question='TCP失败的更深原因是否已核实',
             expected_observation='能独立验证连接失败原因的现场证据',
             blocked_reason='构造检查结束，更深原因未验证')
@@ -141,7 +144,9 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
             assert complete['diagnosis']['kind'] == 'localized_fault'
             question = complete['diagnosis']['unresolved_questions'][0]
             assert question['question'] == 'TCP失败的更深原因是否已核实'
-            assert '检查已执行' in question['limitation']
+            assert ('检查已执行' in question['limitation']
+                    or '已有现场结果' in question['limitation'])
+            assert '尚未执行' not in question['limitation']
             assert '不代表问题已查清' in question['limitation']
             assert question['expected_observation'] == '能独立验证连接失败原因的现场证据'
             assert next(e for e in events if e['type'] == 'usage')['llm_calls'] == 0
@@ -162,7 +167,7 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
             assert ledger['can_read_raw'] is False
             assert (await client.get(f'/api/v1/aiops/runs/{tid}/evidence/{emitted[0]["evidence_id"]}')).json().get('raw') is None
             assert calls == [d[0] for d in definitions]
-            assert execution.await_count == 2 * len(rows) and decisions.await_count == len(rows)
+            assert execution.await_count == 2 and decisions.await_count == len(rows)
             persisted = await reopened._persistent_graph(reopened._create_run_strategy())
             config = {'configurable': {'thread_id': tid}}
             snapshot = await persisted.aget_state(config)

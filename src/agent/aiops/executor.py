@@ -390,26 +390,26 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
     if name == 'read_run_evidence':
         return ''
     if name in PROBE_TOOL_OPERATIONS:
-        from src.agent.aiops.strategies.investigation import evidence_index
-        from src.probe.evidence import diagnostic_fingerprint
-        observations = []
-        for record in evidence_index(state).values():
-            value = json.loads(record['payload'])
-            if value.get('operation') != PROBE_TOOL_OPERATIONS[name]:
-                continue
-            payload = value.get('payload') or {}
-            parameter_keys = {'service', 'dependency', 'path', 'sort_by', 'local_port', 'listening_only', 'since_minutes', 'limit'}
-            defaults = {'sort_by': 'memory', 'local_port': None, 'listening_only': False, 'since_minutes': 60, 'limit': 256}
-            if all(payload.get(k, defaults.get(k)) == args.get(k, defaults.get(k)) for k in parameter_keys
-                   if k in payload or k in args):
-                observations.append(value)
-        if len(observations) >= 2 and diagnostic_fingerprint(observations[-1]) == diagnostic_fingerprint(observations[-2]):
+        from src.agent.aiops.strategies.investigation import repeated_probe_arguments
+        if repeated_probe_arguments(name, args, state):
             return 'repeated_identical_observation_for_same_arguments'
     policy_check = ((state.get('investigation_memory') or {}).get('policy_selected_check') or {})
     if policy_check:
         policy_tool = next(iter((state.get('investigation_memory') or {}).get('next_tools') or []), '')
         if name == policy_tool and (tc.get('args') or {}) != policy_check.get('arguments'):
             return 'policy_selected_check_arguments_mismatch'
+    memory = state.get('investigation_memory') or {}
+    planned = memory.get('next_arguments')
+    if name in PROBE_TOOL_OPERATIONS and planned is not None:
+        from src.agent.aiops.strategies.investigation import probe_query_key, evidence_index
+        from src.agent.aiops.probe_checks import arguments_error, progress_error
+        if name not in planned or probe_query_key(name, args) != probe_query_key(name, planned[name]):
+            return 'planned_probe_arguments_mismatch'
+        records = evidence_index(state)
+        if arguments_error(name, args, state, records):
+            return 'invalid_planned_probe_arguments'
+        if progress_error({**memory, 'next_arguments': {name: args}}, state, records):
+            return 'planned_probe_query_already_observed_or_unavailable'
     resolution = state.get('target_resolution') or {}
     if resolution.get('status') in {'ambiguous', 'unmatched', 'invalid_catalog'} and name in PROBE_TOOL_OPERATIONS and name != 'probe_inventory':
         return 'business_target_not_resolved'
@@ -501,6 +501,31 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
                 'reason': 'unsupported_config_file_read', 'message': message}, ensure_ascii=False)
 
         tool_map = _build_tool_map(tools)
+        memory = state.get('investigation_memory') or {}
+        planned = memory.get('next_arguments')
+        if (state.get('autonomous_investigation') and memory.get('next_check') and planned is not None
+                and memory.get('next_tools') and all(name in PROBE_TOOL_OPERATIONS for name in memory['next_tools'])):
+            # The investigator already selected this query; no model is needed to reselect it.
+            summaries = []
+            for i, name in enumerate(dict.fromkeys(memory['next_tools'])):
+                args = planned.get(name, {})
+                current = {**state, 'raw_evidence': [*(state.get('raw_evidence') or []),
+                    (raw_task, '\n'.join(raw_evidence_parts))]}
+                refusal = _probe_request_limit({'name': name, 'args': args}, current)
+                if refusal:
+                    artifact = {'data_source': 'tool_execution', 'tool': name, 'arguments': redact(args),
+                        'status': 'unavailable', 'reason': refusal,
+                        'checked_at': datetime.now(timezone.utc).isoformat(), 'elapsed_ms': 0}
+                else:
+                    message = await _run_single_tool({'name': name, 'args': args, 'id': f'planned-{i}'}, tool_map)
+                    raw_evidence_parts.append(json.dumps(message.content, ensure_ascii=False))
+                    artifact = dict(message.artifact or {})
+                artifact.update(question=redact(memory.get('discriminating_question', '')),
+                    planned_arguments=redact(args), repeat_reason=redact(memory.get('repeat_reason', '')),
+                    repeat_evidence_ids=memory.get('repeat_evidence_ids') or [])
+                raw_evidence_parts.append(json.dumps(artifact, ensure_ascii=False))
+                summaries.append(f'{name}: {artifact.get("status", "unknown")}' + (f' ({refusal})' if refusal else ''))
+            return '已执行计划检查（返回状态不代表根因已确认）：' + '；'.join(summaries), '\n'.join(raw_evidence_parts)
         llm = create_agent_llm(temperature=0)
         llm_with_tools = llm.bind_tools(tools) if tools else llm
 
@@ -584,25 +609,29 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
                     break
                 for tc in tcs:
                     executed[tc.get("name", "")] = True
-                permitted = [tc for tc in tcs if not _probe_request_limit(tc, state)]
-                executed_messages = iter(await _run_tool_calls(permitted, tool_map, real_ids))
+                autonomous = state.get('autonomous_investigation')
+                permitted = [tc for tc in tcs if not _probe_request_limit(tc, state)] if not autonomous else []
+                executed_messages = None if autonomous else iter(await _run_tool_calls(permitted, tool_map, real_ids))
                 tool_msgs = []
                 for tc in tcs:
-                    limitation = _probe_request_limit(tc, state)
+                    # Include this step's prior returns; same-batch duplicates cannot bypass the guard.
+                    current = {**state, 'raw_evidence': [*(state.get('raw_evidence') or []),
+                        (raw_task, '\n'.join(raw_evidence_parts))]} if autonomous else state
+                    limitation = _probe_request_limit(tc, current)
                     if limitation:
                         record = {'data_source': 'tool_execution', 'tool': tc['name'],
                                   'arguments': redact(tc.get('args') or {}),
                                   'status': 'unavailable', 'reason': limitation,
                                   'checked_at': datetime.now(timezone.utc).isoformat(), 'elapsed_ms': 0}
-                        tool_msgs.append(ToolMessage(content=json.dumps({**record,
+                        tm = ToolMessage(content=json.dumps({**record,
                             'message': '该调用超出本次检查计划或主机允许范围；请记录限制并交由调查器重新规划。'}, ensure_ascii=False),
-                            tool_call_id=tc['id'], artifact=record))
+                            tool_call_id=tc['id'], artifact=record)
                     else:
-                        tool_msgs.append(next(executed_messages))
-                # 采集**原始工具返回**（未经 LLM 转述）：裁判层可据此绕过转述稀释。
-                for tm in tool_msgs:
+                        tm = (await _run_single_tool(tc, tool_map, real_ids)) if autonomous else next(executed_messages)
+                    tool_msgs.append(tm)
+                    # Save each return before validating the next proposed call.
                     _raw = getattr(tm, "content", "")
-                    if isinstance(_raw, str) and _raw.strip():
+                    if isinstance(_raw, str) and _raw.strip() and not limitation:
                         raw_evidence_parts.append(json.dumps(_raw, ensure_ascii=False))
                     if state.get('autonomous_investigation') and isinstance(tm.artifact, dict):
                         raw_evidence_parts.append(json.dumps(tm.artifact, ensure_ascii=False))

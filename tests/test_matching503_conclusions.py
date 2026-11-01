@@ -97,7 +97,7 @@ def test_scoped_normal_finding_still_passes_verified_health_gate():
     cited = inv.Citation(evidence_id='e1.1', quote='ok')
     proposed = inv.InvestigationDecision(hypothesis='入口正常', outcome='healthy',
         conclusion_level='healthy_within_scope', scope='本次localapp入口检查', supporting_evidence=[cited],
-        alternatives=[inv.Alternative(explanation='入口TCP失败', status='excluded', claim_type='observed_condition',
+        alternatives=[inv.Alternative(explanation='dependency_probe/localapp: tcp == "failed"', status='excluded', claim_type='observed_condition',
             condition=inv.ObservationCondition(operation='dependency_probe', object_name='localapp', field='tcp', expected='failed'),
             evidence=[cited])])
     result = inv.decide_from_evidence(state, proposed, inv.evidence_index(state))
@@ -136,6 +136,40 @@ def test_unknown_and_unlocated_findings_do_not_create_prescriptive_steps():
     report = format_manual_recommendations([])
     assert '暂不给出具体修复操作' in report
     assert '按模板重启' not in report
+
+
+@pytest.mark.parametrize('mapping,host,expected', [
+    ({'dep': 'svc'}, '127.0.0.1', 1), ({}, '127.0.0.1', 3), ({'dep': 'svc'}, 'remote.example', 3)])
+def test_same_business_advice_merges_only_explicit_local_mapping(mapping, host, expected):
+    findings = [{'code': code, 'scope': scope, 'target_id': 'host1', 'evidence_id': f'e{i}', 'quote': f'q{i}'}
+        for i, (code, scope) in enumerate([
+            ('dependency_tcp_failed', {'dependency': 'dep'}),
+            ('port_not_listening', {'local_port': 3141}),
+            ('configured_process_not_observed', {'service': 'svc'})])]
+    raw = evidence(target_id='host1', operation='dependency_probe',
+        payload={'dependency': 'dep', 'host': host, 'port': 3141, 'tcp': 'failed'})
+    records = {'dep': {'payload': json.dumps(raw)}}
+    result = manual_recommendations(findings, resolution={'status': 'resolved', 'allowed_services': ['svc'],
+        'allowed_dependencies': ['dep'], 'dependency_services': mapping}, records=records)
+    assert len(result) == expected
+    assert {ref['evidence_id'] for item in result for ref in item['evidence']} == {'e0', 'e1', 'e2'}
+    if expected == 1:
+        item, = result
+        assert item['related_scopes'] == [{'local_port': 3141}, {'service': 'svc'}]
+        assert len(item['finding_codes']) == 3
+        assert '关联检查' in format_manual_recommendations(result)
+        assert '确认' in item['action'] and '尚未执行' in format_manual_recommendations(result)
+
+
+def test_same_port_with_ambiguous_services_is_not_merged():
+    records = {name: {'payload': json.dumps(evidence(target_id='host1', operation='dependency_probe',
+        payload={'dependency': name, 'host': '127.0.0.1', 'port': 3141}))} for name in ('a', 'b')}
+    findings = [{'code': code, 'scope': scope, 'evidence_id': str(i), 'quote': 'fact'}
+        for i, (code, scope) in enumerate([('dependency_tcp_failed', {'dependency': 'a'}),
+            ('dependency_tcp_failed', {'dependency': 'b'}), ('port_not_listening', {'local_port': 3141})])]
+    result = manual_recommendations(findings, resolution={'status': 'resolved', 'allowed_services': ['sa', 'sb'],
+        'allowed_dependencies': ['a', 'b'], 'dependency_services': {'a': 'sa', 'b': 'sb'}}, records=records)
+    assert len(result) == 3
 
 
 @pytest.mark.parametrize('include_service', [False, True])

@@ -74,9 +74,10 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
         calls.append(('probe_dependency_probe', dependency))
         return next(row['raw'] for row in rows if row['raw']['payload'].get('dependency') == dependency)
 
-    async def logs(service: str):
+    async def logs(service: str, path: str, lines: int = 100):
         """Read the saved application log response."""
         assert service == 'localapp'
+        assert path == rows[2]['raw']['payload']['path']
         calls.append(('probe_text_log', service))
         return rows[2]['raw']
 
@@ -87,7 +88,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
     monkeypatch.setattr(ex, 'create_agent_llm', lambda **kw: SimpleNamespace(bind_tools=lambda _: object()))
     step_calls = [('probe_dependency_probe', {'dependency': 'localapp'}),
                   ('probe_dependency_probe', {'dependency': 'downstream'}),
-                  ('probe_text_log', {'service': 'localapp'})]
+                  ('probe_text_log', {'service': 'localapp', 'path': rows[2]['raw']['payload']['path']})]
     messages = []
     for i, (name, arguments) in enumerate(step_calls[:evidence_count]):
         messages.extend([AIMessage(content='', tool_calls=[{'id': f'call-{i}', 'name': name, 'args': arguments}]),
@@ -110,17 +111,19 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
         context = json.loads(args[3]['evidence'])
         count = len(context)
         if count < evidence_count:
-            next_name, _ = step_calls[count]
+            next_name, next_args = step_calls[count]
             if count == 2 and case == 'application_config_error':
                 # The model stops but leaves an unexecuted log check on its current candidate.
                 return inv.InvestigationDecision(hypothesis='入口503原因尚未查清',
                     blocked_reason='入口和下游探测完成', alternatives=[inv.Alternative(
                         explanation='入口应用配置解析异常', status='unresolved', check=inv.CandidateCheck(
                             next_check='检查入口日志', next_tools=[next_name],
+                            next_arguments={next_name: next_args},
                             discriminating_question='下游正常时入口是否发生配置解析错误',
                             expected_observation='本次窗口的入口配置解析错误原文'))])
             return inv.InvestigationDecision(hypothesis='入口503原因尚未查清',
                 next_check='检查下游独立探测' if count == 1 else '检查入口日志', next_tools=[next_name],
+                next_arguments={next_name: next_args},
                 discriminating_question='下游连通异常还是应用自身异常', expected_observation='下游状态或应用错误原文')
         citations = [inv.Citation(evidence_id=next(iter(context)), quote='temporarily unavailable')]
         if count == 3:
@@ -128,7 +131,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
                 quote='upstream connection failed' if case == 'downstream_unreachable' else 'invalid max_attempts configuration'))
         return inv.InvestigationDecision(hypothesis=cause, root_cause=cause,
             outcome='root_cause', conclusion_level='confirmed_cause', scope='localapp入口与下游',
-            supporting_evidence=citations, alternatives=[inv.Alternative(explanation='入口TCP失败',
+            supporting_evidence=citations, alternatives=[inv.Alternative(explanation='dependency_probe/localapp: tcp == "failed"',
                 status='excluded', claim_type='observed_condition',
                 condition=inv.ObservationCondition(operation='dependency_probe', object_name='localapp', field='tcp', expected='failed'),
                 evidence=[inv.Citation(evidence_id=next(iter(context)), quote='ok')]),
@@ -227,7 +230,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
                 assert all(item['finding_code'] == 'dependency_http_failed' for item in advice)
             assert [e['collected_at'] for e in emitted] == [r['raw']['collected_at'] for r in rows[:evidence_count]]
             assert calls == [(name, next(iter(args.values()))) for name, args in step_calls[:evidence_count]]
-            assert execution_decisions.await_count == evidence_count * 2
+            assert execution_decisions.await_count == 2  # Follow-ups run concrete checks without executor LLM calls.
             assert fixed_decisions.await_count == evidence_count
             assert next(event for event in events if event['type'] == 'usage')['llm_calls'] == 0
             assert run_store.get_run(tid).status == 'completed'

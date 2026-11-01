@@ -119,6 +119,7 @@ async def test_followup_with_catalog_requires_an_executable_discriminating_check
 @pytest.mark.asyncio
 async def test_discriminating_resample_remains_executable_with_catalog(monkeypatch):
     answer = decision(next_check='复核内存回落', next_tools=['probe_resource_snapshot'],
+        next_arguments={'probe_resource_snapshot': {}},
         discriminating_question='是否为瞬时占用', expected_observation='可用内存回升削弱持续耗尽解释')
     monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
     current = state()
@@ -269,7 +270,7 @@ async def test_final_decision_rechecks_evidence_freshness_after_model_wait(monke
     from src.probe.protocol import evidence
     from src.settings import settings
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='services',
-        payload={'state': 'stopped' if outcome == 'root_cause' else 'running'})
+        payload={'service': 'orders', 'state': 'stopped' if outcome == 'root_cause' else 'running'})
     start = datetime.now(timezone.utc)
     current = [start]
     validate = module.validate_evidence
@@ -286,9 +287,9 @@ async def test_final_decision_rechecks_evidence_freshness_after_model_wait(monke
             conclusion_level='localized_fault' if outcome == 'root_cause' else 'healthy_within_scope',
             localized_fault='service stopped' if outcome == 'root_cause' else '', scope='queried service',
             supporting_evidence=[citation],
-            alternatives=[module.Alternative(explanation='different observed state', status='excluded', evidence=[citation],
+            alternatives=[module.Alternative(explanation='services/orders: state == "stopped"', status='excluded', evidence=[citation],
                 claim_type='observed_condition',
-                condition=module.ObservationCondition(operation='services', object_name='', field='state', expected='stopped'))])
+                condition=module.ObservationCondition(operation='services', object_name='orders', field='state', expected='stopped'))])
     monkeypatch.setattr(module, 'ainvoke_structured', decide)
     result = await module.InvestigationStrategy().decide(state(raw))
     if expired_after_wait:
@@ -392,7 +393,9 @@ def test_stop_runs_current_unresolved_check_without_claiming_a_mechanism(protect
 
 
 @pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
-def test_failed_dependency_checks_mapped_process_then_log_before_stopping(protection, trigger):
+@pytest.mark.parametrize('observed_path', ['C:/demo/downstream.log',
+    r'C:\demo\downstream.log', r'c:\DEMO\.\downstream.log'])
+def test_failed_dependency_checks_mapped_process_then_log_before_stopping(protection, trigger, observed_path):
     from src.probe.protocol import evidence
     from src.settings import settings
     raw = [evidence(target_id=settings.PROBE_TARGET_ID, operation=op, payload=body) for op, body in [
@@ -411,7 +414,7 @@ def test_failed_dependency_checks_mapped_process_then_log_before_stopping(protec
         ('processes', 'probe_process_snapshot', {'service': 'worker'},
          {'service': 'worker', 'processes': [], 'skipped_count': 0}),
         ('text_logs', 'probe_text_log', {'service': 'worker', 'path': 'C:/demo/downstream.log', 'lines': 100},
-         {'service': 'worker', 'path': 'C:/demo/downstream.log', 'lines': []})]:
+         {'service': 'worker', 'path': observed_path, 'lines': []})]:
         result = module.decide_from_evidence(current, decision(blocked_reason='done'), module.evidence_index(current))
         assert result['plan'], result
         memory = result['investigation_memory']
@@ -424,10 +427,52 @@ def test_failed_dependency_checks_mapped_process_then_log_before_stopping(protec
         current['past_steps'].append((result['plan'][0], 'observed'))
         current['raw_evidence'].append((tool, json.dumps(evidence(
             target_id=settings.PROBE_TARGET_ID, operation=operation, payload=body))))
+    assert module._mapped_dependency_check(current, module.evidence_index(current)) is None
     result = module.decide_from_evidence(current, decision(blocked_reason='done'), module.evidence_index(current))
     assert result['plan'] == []
     assert '日志为空' in result['response'] and '事件通道未配置' in result['response']
     assert '当前调查未获得该依赖对应' not in result['response']
+
+
+@pytest.mark.parametrize('observed_service,observed_path', [
+    ('worker', r'C:\demo\other.log'), ('other', r'C:\demo\downstream.log'),
+    ('worker', None), ('worker', 42)])
+def test_windows_log_comparison_preserves_distinct_files_and_services(observed_service, observed_path):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    values = [('inventory', {'configured_services': {'worker': {
+        'text_logs_available': True, 'text_logs': ['C:/demo/downstream.log']}}}),
+        ('dependency_probe', {'dependency': 'db', 'host': '127.0.0.1', 'tcp': 'failed'}),
+        ('text_logs', {'service': observed_service, 'path': observed_path, 'lines': []})]
+    current = {'target_resolution': {'status': 'resolved', 'allowed_dependencies': ['db'],
+        'allowed_services': ['worker'], 'dependency_services': {'db': 'worker'}},
+        'investigation_tools': [{'name': 'probe_text_log'}],
+        'raw_evidence': [(op, json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation=op, payload=body))) for op, body in values]}
+
+    selected = module._mapped_dependency_check(current, module.evidence_index(current))
+    assert selected[1] == {'service': 'worker', 'path': 'C:/demo/downstream.log', 'lines': 100}
+
+
+@pytest.mark.parametrize('contradictions', [[], ['缺少退出原因，不能确认根因']])
+@pytest.mark.parametrize('blocked_reason', ['', '没有其他检查'])
+def test_completed_next_check_is_not_reported_as_missing_model_proposal(contradictions, blocked_reason):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989, 'tcp': 'failed'})
+    current = state(raw)
+    result = module.decide_from_evidence(current, decision(next_check='查日志',
+        blocked_reason=blocked_reason, contradictions=contradictions), module.evidence_index(current))
+
+    assert result['plan'] == []
+    reason = result['diagnosis']['stop_reason']
+    assert '计划检查已执行' in reason
+    assert '未独立验证' in reason
+    assert '模型未提出' not in result['response']
+    assert result['investigation_memory']['blocked_reason'] == reason
 
 
 @pytest.mark.parametrize('boundary', ['remote', 'no_mapping', 'not_allowed', 'no_inventory', 'missing_tool', 'failed'])
@@ -695,9 +740,9 @@ async def test_wait_expiry_preserves_fresh_conclusions_and_executable_resampling
     current = [now]
     validate = module.validate_evidence
     monkeypatch.setattr(module, 'validate_evidence', lambda item, **kwargs: validate(item, now=current[0], **kwargs))
-    old = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'state': 'stopped'},
+    old = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'service': 'orders', 'state': 'stopped'},
         collected_at=(now - timedelta(seconds=175)).isoformat())
-    fresh = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'state': 'running'},
+    fresh = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'service': 'orders', 'state': 'running'},
         collected_at=now.isoformat())
     current_state = state(old)
     current_state['raw_evidence'].append(('check again', json.dumps(fresh)))
@@ -706,14 +751,16 @@ async def test_wait_expiry_preserves_fresh_conclusions_and_executable_resampling
         current[0] = now + timedelta(seconds=10)
         if needs_resample:
             return decision(next_check='重新核实服务当前状态', next_tools=['probe_service_status'],
+                next_arguments={'probe_service_status': {'service': 'orders'}},
+                repeat_reason='旧停止证据过期，复核当前运行状态', repeat_evidence_ids=['e2.1'],
                 discriminating_question='旧停止状态是否仍然存在', expected_observation='新鲜状态确认停止或恢复',
                 supporting_evidence=[module.Citation(evidence_id='e1.1', quote='stopped')])
         citation = module.Citation(evidence_id='e2.1', quote='running')
         return decision(outcome='healthy', supporting_evidence=[citation],
             conclusion_level='healthy_within_scope', scope='queried service',
-            alternatives=[module.Alternative(explanation='service stopped', status='excluded', evidence=[citation],
+            alternatives=[module.Alternative(explanation='services/orders: state == "stopped"', status='excluded', evidence=[citation],
                 claim_type='observed_condition',
-                condition=module.ObservationCondition(operation='services', object_name='', field='state', expected='stopped'))])
+                condition=module.ObservationCondition(operation='services', object_name='orders', field='state', expected='stopped'))])
     monkeypatch.setattr(module, 'ainvoke_structured', answer)
     result = await module.InvestigationStrategy().decide(current_state)
     if needs_resample:
@@ -799,6 +846,7 @@ async def test_identical_probe_observation_is_not_treated_as_new_progress(monkey
     current['investigation_tools'] = [{'name': 'probe_dependency_probe'}]
     answer = decision(next_check='再次检查数据库连通性',
                       next_tools=['probe_dependency_probe'],
+                      next_arguments={'probe_dependency_probe': {'dependency': 'database'}},
                       discriminating_question='数据库是否恢复可达',
                       expected_observation='TCP 成功才会削弱依赖不可达解释')
     monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
@@ -826,6 +874,8 @@ async def test_changed_probe_observation_remains_an_executable_followup(monkeypa
     current['investigation_tools'] = [{'name': 'probe_dependency_probe'}]
     answer = decision(next_check='再次核对数据库连通性',
                       next_tools=['probe_dependency_probe'],
+                      next_arguments={'probe_dependency_probe': {'dependency': 'database'}},
+                      repeat_reason='核实状态变化后是否仍可达', repeat_evidence_ids=['e2.1'],
                       discriminating_question='数据库是否仍然可达',
                       expected_observation='TCP 失败才支持依赖不可达解释持续存在')
     monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))

@@ -57,7 +57,7 @@ def verify(fixture, output):
                         hypothesis_condition=condition if claim == 'downstream' else None,
                         outcome='root_cause', conclusion_level='confirmed_cause', scope='localapp入口与下游',
                         supporting_evidence=citations,
-                        alternatives=[inv.Alternative(explanation='入口TCP连接失败', status='excluded',
+                        alternatives=[inv.Alternative(explanation='dependency_probe/localapp: tcp == "failed"', status='excluded',
                             claim_type='observed_condition',
                             condition=inv.ObservationCondition(operation='dependency_probe', object_name='localapp', field='tcp', expected='failed'),
                             evidence=[inv.Citation(evidence_id=rows[0]['evidence_id'], quote='ok')])])

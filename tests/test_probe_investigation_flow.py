@@ -38,6 +38,7 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
     monkeypatch.setattr(inv, 'create_agent_llm', lambda **kwargs: object())
     followup = inv.InvestigationDecision(hypothesis='persistent memory pressure',
         next_check='check memory recovery', next_tools=[allowed.name],
+        next_arguments={allowed.name: {}}, repeat_reason='复核瞬时峰值是否回落', repeat_evidence_ids=['e1.1'],
         discriminating_question='transient or persistent pressure', expected_observation='memory recovery weakens persistence')
     stop = inv.InvestigationDecision(hypothesis='persistent memory pressure', blocked_reason='no permitted discriminator',
         supporting_evidence=[inv.Citation(evidence_id='e1.1', quote='93')],
@@ -56,8 +57,9 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
         paused = await graph.aget_state(config)
         assert paused.next == ('executor',)
         assert {k: paused.values['investigation_memory'][k] for k in followup.model_dump()
-                if k not in {'next_question_id', 'hypothesis_id'}} == {
-                    k: v for k, v in followup.model_dump().items() if k not in {'next_question_id', 'hypothesis_id'}}
+                if k not in {'next_question_id', 'hypothesis_id', 'repeat_evidence_ids'}} == {
+                    k: v for k, v in followup.model_dump().items() if k not in {'next_question_id', 'hypothesis_id', 'repeat_evidence_ids'}}
+        assert paused.values['investigation_memory']['repeat_evidence_ids'] == [run_store.list_evidence(tid, 17)[0]['evidence_id']]
         assigned_id = paused.values['investigation_memory']['hypothesis_id']
         assert assigned_id == paused.values['investigation_memory']['hypothesis_tracking']['leading_id']
         assert assigned_id.startswith('h-')
@@ -80,10 +82,10 @@ async def test_followup_scope_survives_sqlite_reopen_and_preserves_unlocated_evi
         assert allowed.ainvoke.await_count == 2
         assert decide.await_count == 2
         assert all('reference-marker' in call.args[3]['references'] for call in decide.call_args_list)
-        assert 'reference-marker' in invoke.call_args_list[2].args[1][0].content
+        assert invoke.await_count == 2  # Only the legacy initial step needs executor model turns.
         assert 'reference-marker' not in str(final['raw_evidence'])
         assert len(final['past_steps']) == 2
-        assert 'outside_investigation_check' in final['raw_evidence'][1][1]
+        assert 'planned_arguments' in final['raw_evidence'][1][1]
         assert final['response'].startswith('未定位根因')
         assert settings.PROBE_TARGET_ID in final['response']
         assert sample['collected_at'] in final['response']

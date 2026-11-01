@@ -71,6 +71,7 @@ def test_live_investigation_summary_hides_unverified_causal_candidate_text():
             'verification': 'causal_claim_unverified'}}
     state = {'plan': [f'核查：{claim}'], 'investigation_memory': {
         'blocked_reason': claim, 'discriminating_question': claim,
+        'validation_issues': [f'有限条件不能证明{claim}'],
         'expected_observation': claim, 'hypothesis_tracking': {
             'config': {}, 'leading_id': 'h1', 'candidates': [candidate],
             'events': [{'kind': 'hypothesis_protected', 'step': 1, 'hypothesis_id': 'h1',
@@ -80,6 +81,7 @@ def test_live_investigation_summary_hides_unverified_causal_candidate_text():
     summary = investigation_summary(state)
 
     assert claim not in str(summary)
+    assert '有限条件不能证明' in summary['validation_issues'][0]
     assert '该因果解释尚无可验证的现场条件。' in str(summary)
     assert state['investigation_memory']['hypothesis_tracking']['candidates'][0]['explanation'] == claim
     assert state['investigation_memory']['hypothesis_tracking']['events'][0]['reason'] == claim

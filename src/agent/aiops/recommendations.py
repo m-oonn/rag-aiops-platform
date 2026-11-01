@@ -2,8 +2,38 @@
 import json
 
 
-def manual_recommendations(findings):
+def _configured_object(scope, resolution, records, target_id):
+    if (resolution or {}).get('status') != 'resolved':
+        return json.dumps(scope, sort_keys=True)
+    allowed = set(resolution.get('allowed_services', []))
+    mapping = resolution.get('dependency_services', {})
+    local_dependencies = {}
+    for record in records.values():
+        raw = json.loads(record['payload'])
+        body = raw.get('payload') or {}
+        name = body.get('dependency')
+        if (raw.get('operation') == 'dependency_probe'
+                and (target_id is None or raw.get('target_id') == target_id)
+                and body.get('host') in {'localhost', '127.0.0.1', '::1'}
+                and name in resolution.get('allowed_dependencies', [])
+                and mapping.get(name) in allowed and type(body.get('port')) is int):
+            local_dependencies[name] = (mapping[name], body['port'])
+    if set(scope) == {'service'} and scope['service'] in allowed:
+        return ('service', scope['service'])
+    if set(scope) == {'dependency'} and scope['dependency'] in local_dependencies:
+        return ('service', local_dependencies[scope['dependency']][0])
+    if set(scope) == {'local_port'}:
+        services = {name for name, port in local_dependencies.values() if port == scope['local_port']}
+        if len(services) == 1:
+            return ('service', services.pop())
+    return json.dumps(scope, sort_keys=True)
+
+
+def manual_recommendations(findings, *, resolution=None, records=None):
+    from src.agent.aiops.observations import current_probe_records
+    records = current_probe_records(records or {})
     recommendations = []
+    grouped = {}
     for finding in findings:
         code = finding['code']
         if code == 'dependency_http_failed':
@@ -21,16 +51,30 @@ def manual_recommendations(findings):
             verification = '处理后重新核对端口监听PID与服务PID，再请求对应健康接口及入口业务。'
         else:
             continue
-        recommendations.append({
+        refs = [{'evidence_id': finding['evidence_id'], 'quote': finding['quote']},
+                *finding.get('related_evidence', [])]
+        key = (finding.get('target_id'), _configured_object(finding['scope'], resolution, records, finding.get('target_id')), action)
+        if key in grouped:
+            existing = grouped[key]
+            scopes = existing.setdefault('related_scopes', [])
+            if finding['scope'] != existing['scope'] and finding['scope'] not in scopes:
+                scopes.append(finding['scope'])
+            codes = existing.setdefault('finding_codes', [existing['finding_code']])
+            if code not in codes:
+                codes.append(code)
+            existing['evidence'].extend(ref for ref in refs if ref not in existing['evidence'])
+            continue
+        item = {
             'origin': 'verified_observation_template', 'status': 'manual_review_required',
             'finding_code': code, 'scope': finding['scope'],
-            'evidence': [{'evidence_id': finding['evidence_id'], 'quote': finding['quote']},
-                         *finding.get('related_evidence', [])],
+            'evidence': refs,
             'action': action, 'preconditions': [prerequisite,
                 '执行前重新采集当前状态，确认故障仍存在且具备对应业务的操作权限。'],
             'risks': ['变更或重启可能中断请求；先备份相关配置，确定业务影响、操作窗口和回退方法。'],
             'verification_steps': [verification],
-        })
+        }
+        grouped[key] = item
+        recommendations.append(item)
     return recommendations
 
 
@@ -40,6 +84,8 @@ def format_manual_recommendations(recommendations):
     lines = ['', '', '人工处理建议（待人工核对，尚未执行；不作为根因证明）：']
     for item in recommendations:
         lines.append('处理对象：' + json.dumps(item['scope'], ensure_ascii=False))
+        if item.get('related_scopes'):
+            lines.append('同一配置对象的关联检查：' + json.dumps(item['related_scopes'], ensure_ascii=False))
         lines.append('建议：' + item['action'])
         lines.extend('操作前提：' + text for text in item['preconditions'])
         lines.extend('风险：' + text for text in item['risks'])
