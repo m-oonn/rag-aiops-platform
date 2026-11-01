@@ -11,17 +11,17 @@ from src.probe.protocol import evidence
 from src.settings import settings
 
 
-def trace(protection=True, trigger=True, case='contradiction', model_same=False):
+def trace(protection=True, trigger=True, case='contradiction', model_same=False, prose=False):
     from scripts.mechanism_behavior import behavior_snapshot
     config = {'hypothesis_protection': protection, 'contradiction_trigger': trigger, 'protection_steps': 2}
     state = {'input': 'entry unavailable', 'past_steps': [('initial', 'unknown')], 'raw_evidence': [],
         'investigation_config': config, 'investigation_tools': [{'name': 'probe_dependency_probe'}]}
     def proposal(omit=False):
-        return inv.InvestigationDecision(hypothesis='downstream failed',
+        return inv.InvestigationDecision(hypothesis='dependency_probe/db: tcp == "failed"',
             hypothesis_condition=inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='failed'),
             next_check='check db', next_tools=['probe_dependency_probe'],
             discriminating_question='is db reachable', expected_observation='tcp result',
-            alternatives=[] if omit else [inv.Alternative(explanation='entry failed', status='unresolved',
+            alternatives=[] if omit else [inv.Alternative(explanation='dependency_probe/entry: tcp == "failed"', status='unresolved',
                 condition=inv.ObservationCondition(operation='dependency_probe', object_name='entry', field='tcp', expected='failed'),
                 check=inv.CandidateCheck(next_check='check entry', next_tools=['probe_dependency_probe'],
                     discriminating_question='is entry reachable', expected_observation='tcp result'))])
@@ -35,6 +35,10 @@ def trace(protection=True, trigger=True, case='contradiction', model_same=False)
         decision = proposal(omit=turn == 1 and case == 'protection')
         if turn and model_same:
             decision.next_check = 'check entry'
+        if prose:
+            decision.hypothesis = '数据库进程退出'
+            for alternative in decision.alternatives:
+                alternative.explanation = '入口应用异常'
         state.update(inv.decide_from_evidence(state, decision, inv.evidence_index(state)))
         snapshots.append(behavior_snapshot(state, datetime.now(timezone.utc).isoformat()))
     executed = ['initial', 'intermediate', state['plan'][0]]
@@ -44,6 +48,50 @@ def trace(protection=True, trigger=True, case='contradiction', model_same=False)
     values = {**state, 'diagnosis': {'mechanism_config': config,
         'mechanisms': state['investigation_memory']['hypothesis_tracking']}}
     return config, values, snapshots, executed
+
+
+@pytest.mark.parametrize('case', ['protection', 'contradiction'])
+@pytest.mark.parametrize('mutation', [None, 'source_explanation', 'condition'])
+def test_prose_prediction_audit_validates_projection_and_rejects_tampering(case, mutation):
+    config, values, snapshots, executed = trace(case=case, prose=True)
+    if mutation == 'source_explanation':
+        snapshots[-1]['tracking']['candidates'][0]['source_explanation'] = 'invented'
+    if mutation == 'condition':
+        snapshots[-1]['tracking']['candidates'][0]['condition']['expected'] = 'ok'
+    result = audit_mechanisms(config, values, snapshots, executed_steps=executed,
+                             execution_records=inv.execution_checks(values))['behavior']
+    assert result['status'] == ('failed' if mutation else 'passed'), result
+    if not mutation:
+        assert result['executed_changes'][case] == 1
+
+
+@pytest.mark.parametrize('mutation', [None, 'explanation', 'condition', 'source_list'])
+def test_duplicate_prose_for_invalid_prediction_is_audited_as_one_neutral_candidate(mutation):
+    from scripts.mechanism_behavior import behavior_snapshot, audit_behavior
+    config = {'hypothesis_protection': True, 'contradiction_trigger': True, 'protection_steps': 2}
+    state = {'input': 'entry unavailable', 'past_steps': [('initial', 'unknown')], 'raw_evidence': [],
+        'investigation_config': config, 'investigation_tools': [{'name': 'probe_dependency_probe'}]}
+    condition = inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='success')
+    first = inv.InvestigationDecision(hypothesis='依赖可能无法连接', hypothesis_condition=condition)
+    state.update(inv.decide_from_evidence(state, first, {}))
+    snapshots = [behavior_snapshot(state, datetime.now(timezone.utc).isoformat())]
+    ident = state['investigation_memory']['hypothesis_tracking']['leading_id']
+    state['past_steps'].append(('intermediate', 'unknown'))
+    second = inv.InvestigationDecision(hypothesis='需继续核对该依赖的连接状态', hypothesis_id=ident,
+        hypothesis_condition=condition, alternatives=[inv.Alternative(explanation=first.hypothesis,
+            hypothesis_id=ident, condition=condition, status='unresolved', claim_type='causal_explanation')])
+    state.update(inv.decide_from_evidence(state, second, {}))
+    snapshots.append(behavior_snapshot(state, datetime.now(timezone.utc).isoformat()))
+    candidate = snapshots[-1]['tracking']['candidates'][0]
+    assert candidate['source_explanations'] == [second.hypothesis, first.hypothesis]
+    assert candidate['condition_binding'] == 'unverified' and candidate['relation'] == 'neutral'
+    if mutation == 'explanation': candidate['explanation'] = '伪造表达'
+    if mutation == 'condition': candidate['condition']['expected'] = 'ok'
+    if mutation == 'source_list': candidate['source_explanations'].pop()
+    result = audit_behavior(snapshots, ['initial', 'intermediate'], [])
+    assert result['status'] == ('failed' if mutation else 'passed'), result
+    assert result['executed_changes'] == {'protection': 0, 'contradiction': 0}
+    assert result['mechanism_effectiveness_verified'] is False
 
 
 @pytest.mark.parametrize('case', ['protection', 'contradiction'])
@@ -189,3 +237,33 @@ def test_historical_reconstruction_is_read_only_and_requires_all_boundaries(tmp_
     assert hashlib.sha256(database.read_bytes()).hexdigest() == before
     with pytest.raises(FileExistsError):
         verify_history(source, tmp_path / 'audit')
+
+
+@pytest.mark.parametrize('mutation', [None, 'accepted_candidate', 'missing_identity_issue'])
+def test_identity_rejection_audits_atomic_preservation_not_partial_proposal(mutation):
+    from scripts.mechanism_behavior import behavior_snapshot, audit_behavior
+    config = {'hypothesis_protection': True, 'contradiction_trigger': True, 'protection_steps': 2}
+    state = {'input': 'entry unavailable', 'past_steps': [('initial', 'unknown')],
+        'raw_evidence': [], 'investigation_config': config, 'investigation_tools': []}
+    first = inv.InvestigationDecision(hypothesis='入口状态待查',
+        hypothesis_condition=inv.ObservationCondition(operation='dependency_probe', object_name='entry', field='tcp', expected='ok'),
+        alternatives=[inv.Alternative(explanation='下游状态待查', status='unresolved')])
+    state.update(inv.decide_from_evidence(state, first, {}))
+    snapshots = [behavior_snapshot(state, datetime.now(timezone.utc).isoformat())]
+    candidates = state['investigation_memory']['hypothesis_tracking']['candidates']
+    primary, alternative = candidates
+    state['past_steps'].append(('intermediate', 'unknown'))
+    second = inv.InvestigationDecision(hypothesis='下游连接失败', hypothesis_id=primary['id'],
+        hypothesis_condition=inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='failed'),
+        alternatives=[inv.Alternative(explanation='下游状态已更新', hypothesis_id=alternative['id'], status='unresolved',
+            condition=inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='failed'))])
+    state.update(inv.decide_from_evidence(state, second, {}))
+    snapshots.append(behavior_snapshot(state, datetime.now(timezone.utc).isoformat()))
+    assert snapshots[-1]['tracking']['identity_issues']
+    if mutation == 'accepted_candidate':
+        snapshots[-1]['tracking']['candidates'][1]['source_explanation'] = '下游状态已更新'
+    if mutation == 'missing_identity_issue':
+        snapshots[-1]['tracking']['identity_issues'] = []
+    result = audit_behavior(snapshots, ['initial', 'intermediate'], [])
+    assert result['status'] == ('failed' if mutation else 'passed'), result
+    assert result['executed_changes'] == {'protection': 0, 'contradiction': 0}

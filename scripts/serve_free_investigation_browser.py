@@ -100,9 +100,10 @@ def serve(output, port, knowledge_kb=None):
                         assert len(evidence_events) == 1, 'offline evidence ledger write failed'
                     return {'plan': state['plan'][1:], 'past_steps': [(task, '离线固定工具输入')],
                             'raw_evidence': raw, 'evidence_events': evidence_events}
-                second = helpers['proposal'](include_alternative=(case != 'protection'))
+                second = helpers['concrete'](helpers['proposal'](include_alternative=(case != 'protection')))
                 second.next_check = '再次核查下游'
-                model = AsyncMock(side_effect=[helpers['proposal'](), second,
+                first = helpers['concrete'](helpers['proposal']())
+                model = AsyncMock(side_effect=[first, second,
                     inv.InvestigationDecision(hypothesis='离线验收：未查清', blocked_reason='固定输入结束，未调用真实模型')])
                 state = helpers['initial'](True, True)
                 state.update(input='离线固定输入验收：' + user_input, autonomous_investigation=True,

@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.verify_diagnostic_boundary import SETUP, docker
 
+FLASH_PRICING = {
+    'input_cny_per_million': 2, 'output_cny_per_million': 8,
+    'verified_on': '2026-10-30',
+    'source': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing',
+    'basis': 'Flash peak, cache miss; official legacy v4-flash alias billed as Flash',
+}
+
 
 class EvaluationBudgetExceeded(RuntimeError):
     def __init__(self, reason_code, message):
@@ -29,10 +36,9 @@ def model_usage_known(row):
 
 
 class PaidRequestBudget:
-    # Official Flash peak, rechecked 2026-10-23: USD0.30/M input, USD1.20/M output.
-    # Use 8 CNY/USD and input UTF-8 bytes + 8192 for protocol/token overhead.
+    # Reserve input UTF-8 bytes + 8192 for token/protocol overhead, then settle usage.
     def __init__(self, output, max_output_tokens=2048, limit_cny=5, run_limit_cny=None,
-                 allow_unpriced_models=False, max_requests=None):
+                 allow_unpriced_models=False, max_requests=None, run_max_requests=None):
         if isinstance(limit_cny, bool) or not isinstance(limit_cny, (int, float)) or not math.isfinite(limit_cny) or limit_cny <= 0:
             raise ValueError('invalid cumulative cost limit')
         self.output = output
@@ -43,7 +49,12 @@ class PaidRequestBudget:
             raise ValueError('invalid per-run reservation limit')
         self.run_limit_cny = run_limit_cny
         self.allow_unpriced_models = bool(allow_unpriced_models)
+        for cap in (max_requests, run_max_requests):
+            if cap is not None and (type(cap) is not int or cap <= 0):
+                raise ValueError('request caps must be positive integers')
         self.max_requests = max_requests
+        self.run_max_requests = run_max_requests
+        self.inherited_requests = 0
         self.inherited_reserved = 0.0
         self.reserved = 0.0
         self.ledger = []
@@ -56,19 +67,30 @@ class PaidRequestBudget:
         self.save()
         raise EvaluationBudgetExceeded(reason_code, message)
 
-    def reserve(self, body):
+    def reserve(self, body, *, require_known_usage=False):
+        # Real transports must stop even when a planner/executor swallowed the last error.
+        if require_known_usage and any(not model_usage_known(row) for row in self.ledger):
+            self.reject(body, 'previous_request_usage_unknown',
+                'A prior model request failed or has unknown usage; stopping further sends')
+        if any(row.get('budget_bound_exceeded') for row in self.ledger):
+            self.reject(body, 'usage_exceeded_reservation_bound',
+                'Reported model usage exceeded the reserved token bound; stopping further sends')
         model = body.get('model', '')
-        priced_model = model in {'deepseek-v4-flash', 'deepseek-flash'}
+        # An explicit unpriced run must not inherit legacy rates by model name.
+        priced_model = model in {'deepseek-v4-flash', 'deepseek-flash'} and not self.allow_unpriced_models
         if not priced_model and not self.allow_unpriced_models:
             self.reject(body, 'unpriced_model', 'Pricing not verified for configured model')
-        if not priced_model and self.max_requests is not None and len(self.ledger) >= self.max_requests:
-            self.reject(body, 'max_requests', 'Unpriced model request cap reached')
+        if self.max_requests is not None and len(self.ledger) >= self.max_requests:
+            self.reject(body, 'max_requests', 'Model request cap reached')
+        if self.run_max_requests is not None and len(self.ledger) - self.inherited_requests >= self.run_max_requests:
+            self.reject(body, 'per_run_request_limit', 'Per-run model request cap reached')
         input_upper = len(json.dumps(body, ensure_ascii=False).encode()) + 8192
         output_upper = min(int(body.get('max_tokens') or body.get('max_completion_tokens') or self.max_output_tokens), self.max_output_tokens)
         body.pop('max_completion_tokens', None)
         body['max_tokens'] = output_upper
         body['stream'] = False
-        reserve = (input_upper * .30 + output_upper * 1.20) * 8 / 1_000_000 if priced_model else 0.0
+        reserve = (input_upper * FLASH_PRICING['input_cny_per_million']
+                   + output_upper * FLASH_PRICING['output_cny_per_million']) / 1_000_000 if priced_model else 0.0
         if (self.run_limit_cny is not None
                 and self.reserved - self.inherited_reserved + reserve > self.run_limit_cny):
             self.reject(body, 'per_run_cost_limit', 'Per-run reservation limit reached')
@@ -79,16 +101,33 @@ class PaidRequestBudget:
         row = {'number':len(self.ledger)+1,'model':model,'input_token_upper':input_upper,
                'output_token_upper':output_upper,'reserved_cny':reserve,'status':'reserved',
                'pricing_verified': priced_model}
+        if priced_model:
+            row.update(pricing=dict(FLASH_PRICING), reservation_upper_cny=reserve)
         self.ledger.append(row)
         self.save()
         return row
 
+    def request_limits(self):
+        return {'max_requests': self.max_requests, 'run_max_requests': self.run_max_requests,
+            'inherited_requests': self.inherited_requests}
+
     def save(self):
+        for row in self.ledger[self.inherited_requests:]:
+            # Historical rows keep their original accounting; unknown usage keeps its reserve.
+            if 'reservation_upper_cny' in row and row.get('pricing_verified') and model_usage_known(row):
+                usage, rates = row['usage'], row['pricing']
+                row['reserved_cny'] = (usage['prompt_tokens'] * rates['input_cny_per_million']
+                    + usage['completion_tokens'] * rates['output_cny_per_million']) / 1_000_000
+                row['budget_bound_exceeded'] = (usage['prompt_tokens'] > row['input_token_upper']
+                    or usage['completion_tokens'] > row['output_token_upper'])
+                row['reservation_status'] = 'settled_at_peak_rates'
+        self.reserved = math.fsum(row['reserved_cny'] for row in self.ledger)
         (self.output / 'cost.json').write_text(json.dumps({
             'reserved_cny':self.reserved,'limit_cny':self.limit_cny,'requests':self.ledger,
             'blocked_requests': self.blocked_requests,
-            'rate_basis':'DeepSeek Flash peak USD0.30 input / USD1.20 output per million; 8 CNY/USD; other models are unpriced',
-            'pricing_source':'https://api-docs.deepseek.com/quick_start/pricing',
+            'request_limits': self.request_limits(),
+            'rate_basis':'New priced rows use per-row CNY peak rates; historical rates and unknown costs remain unchanged',
+            'pricing_source': FLASH_PRICING['source'],
         },ensure_ascii=False,indent=2),encoding='utf-8')
 
     def cost_summary(self, start_index=0):
@@ -110,7 +149,10 @@ class PaidRequestBudget:
             usage = row.get('usage')
             if not usage_known:
                 continue
-            known += (usage['prompt_tokens'] * .30 + usage['completion_tokens'] * 1.20) * 8 / 1_000_000
+            rates = row.get('pricing') or {'input_cny_per_million': .30 * 8,
+                                          'output_cny_per_million': 1.20 * 8}
+            known += (usage['prompt_tokens'] * rates['input_cny_per_million']
+                      + usage['completion_tokens'] * rates['output_cny_per_million']) / 1_000_000
         return {'requests': len(rows), 'usage_unknown_requests': unknown,
             'pricing_unknown_requests': sum(1 for row in rows if (
                 row.get('pricing_verified') is False or (
@@ -194,7 +236,7 @@ async def main():
         def __init__(self): self.inner=httpx.AsyncHTTPTransport()
         async def handle_async_request(self,request):
             body=json.loads(await request.aread())
-            row=budget.reserve(body)
+            row=budget.reserve(body, require_known_usage=True)
             revised=httpx.Request(request.method,request.url,headers={k:v for k,v in request.headers.items() if k.lower()!='content-length'},
                                   content=json.dumps(body).encode(),extensions=request.extensions)
             from scripts.model_request_diagnostics import record_model_response

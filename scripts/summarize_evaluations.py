@@ -8,6 +8,57 @@ from pathlib import Path
 from scripts.evaluation_record import audit_evaluation, validate_timing
 
 
+def audit_suite_budget(suite, rows):
+    """Verify the ordered ledger chain and equal caps, independently of child success labels."""
+    from scripts.evaluate_windows_probe import read_cost_ledger
+    previous_path = Path(suite['previous_cost']).resolve()
+    previous = read_cost_ledger(previous_path)
+    if suite['inherited_requests'] != len(previous['requests']):
+        raise ValueError('suite inherited request count differs')
+    import math
+    reservation = suite['run_budget_cny']
+    if reservation is not None and (type(reservation) not in (int, float)
+            or not math.isfinite(reservation) or reservation <= 0
+            or suite['budget_limit_cny'] - previous['reserved_cny'] < len(suite['order']) * reservation):
+        raise ValueError('unequal suite reservation allowance')
+    cap, per_run = suite['max_model_requests'], suite['run_max_model_requests']
+    unpriced = suite['allow_unpriced_model']
+    if not unpriced and reservation is None and per_run is None:
+        raise ValueError('priced suite missing reservation cap')
+    for value in (cap, per_run):
+        if value is not None and (type(value) is not int or value <= 0):
+            raise ValueError('invalid suite request cap')
+    if unpriced and (cap is None or per_run is None):
+        raise ValueError('unpriced suite missing request caps')
+    if per_run is not None and (cap is None or cap - len(previous['requests']) < len(suite['order']) * per_run):
+        raise ValueError('unequal suite request allowance')
+    by_directory = {row['directory']: row for row in rows}
+    for item, result in zip(suite['order'], suite['results']):
+        directory = Path(result['result_dir']).resolve()
+        row = by_directory[str(directory)]
+        if (row['case'], row['group']) != (item['case'], item['group']):
+            raise ValueError('suite execution order differs')
+        record = json.loads((directory / 'evaluation-record.json').read_text(encoding='utf-8'))
+        config = record['config']
+        if Path(config['previous_cost']).resolve() != previous_path:
+            raise ValueError('suite ledger chain skipped or reused a child')
+        current = read_cost_ledger(directory / 'cost.json')
+        if current['requests'][:len(previous['requests'])] != previous['requests']:
+            raise ValueError('suite ledger prefix changed')
+        if (current['limit_cny'] != suite['budget_limit_cny']
+                or config.get('run_budget_cny') != suite['run_budget_cny']):
+            raise ValueError('suite reservation limits differ')
+        if unpriced or cap is not None or per_run is not None:
+            for key in ('allow_unpriced_model', 'max_model_requests', 'run_max_model_requests', 'max_output_tokens'):
+                if config.get(key) != suite[key]:
+                    raise ValueError('suite child budget configuration differs: ' + key)
+            if cap is not None and len(current['requests']) > cap:
+                raise ValueError('suite cumulative request cap exceeded')
+            if per_run is not None and len(current['requests']) - len(previous['requests']) > per_run:
+                raise ValueError('suite per-run request cap exceeded')
+        previous_path, previous = directory / 'cost.json', current
+
+
 def summarize(source, output):
     source, output = Path(source).resolve(), Path(output).resolve()
     directories = sorted({p.parent for name in ('summary.json', 'evaluation-record.json', 'cost.json')
@@ -39,10 +90,13 @@ def summarize(source, output):
             summary = json.loads((directory / 'summary.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):
             summary = {}
+        behavior = (summary.get('mechanism_audit') or {}).get('behavior') or {}
         row = {'directory': str(directory), 'case': attempt.get('case', summary.get('scenario')),
             'group': attempt.get('mechanism_group', summary.get('mechanism_group')),
             'controller_case_verified': bool(attempt.get('case')),
             'audit': audit, 'diagnosis_review': 'pending', 'diagnostic_correctness_verified': False,
+            'mechanism_behavior': {key: behavior.get(key) for key in (
+                'status', 'opportunities', 'executed_changes', 'executed_checks', 'blocked_events', 'no_opportunity')},
             'vs_G00': None}
         if attempt and (attempt.get('status') != 'returned' or attempt.get('exit_code') != 0):
             audit['issues'].append('controller child not returned successfully')
@@ -63,7 +117,12 @@ def summarize(source, output):
             order, results = suite['order'], suite['results']
             expected = Counter((item['case'], item['group']) for item in order)
             resets = Counter((item['case'], item['group']) for item in suite['resets'])
-            expected_pairs = {(case, group) for case in ('normal', 'downstream_unreachable', 'application_error')
+            from scripts.verify_windows_local_faults import four_group_cases
+            cases = four_group_cases(suite.get('suite', 'baseline-v1'))
+            if suite.get('version', 1) >= 2 and suite.get('scenario_cases') != list(cases):
+                raise ValueError('suite scenario cases differ from versioned protocol')
+            run_count = len(cases) * 4
+            expected_pairs = {(case, group) for case in cases
                 for group in ('G00', 'G10', 'G01', 'G11')}
             for reset in suite['resets']:
                 boundary = reset.get('observation_not_before')
@@ -71,19 +130,21 @@ def summarize(source, output):
                 if parsed.tzinfo is None:
                     raise ValueError('reset observation boundary is not timezone-aware')
             if (suite.get('status') != 'completed' or suite.get('recovery') != 'normal_restored'
-                    or not suite.get('ended_at') or len(results) != 12 or len(order) != 12
+                    or not suite.get('ended_at') or len(results) != run_count or len(order) != run_count
                     or set(expected) != expected_pairs or any(n != 1 for n in expected.values())
                     or resets != expected
                     or any(result.get('status') != 'passed' for result in results)):
                 raise ValueError('suite incomplete or not recovered')
             result_dirs = {str(Path(r['result_dir']).resolve()) for r in results}
             actual_dirs = {r['directory'] for r in rows if Path(r['directory']).is_relative_to(path.parent)}
-            if len(result_dirs) != 12 or result_dirs != actual_dirs:
+            if len(result_dirs) != run_count or result_dirs != actual_dirs:
                 raise ValueError('suite results differ from artifacts')
             boundaries = {(r['case'], r['group']): r['observation_not_before'] for r in suite['resets']}
             for row in rows:
                 if row['directory'] in result_dirs and row['audit'].get('observation_not_before') != boundaries.get((row['case'], row['group'])):
                     raise ValueError('child observation boundary differs from controller reset')
+            if suite.get('version', 1) >= 3:
+                audit_suite_budget(suite, [row for row in rows if row['directory'] in result_dirs])
             import hashlib
             for name, expected_hash in suite['conditions_sha256'].items():
                 condition = (path.parent / name).resolve()

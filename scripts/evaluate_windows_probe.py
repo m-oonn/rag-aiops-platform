@@ -143,9 +143,11 @@ def parse_args(argv=None):
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; use only after explicit user authorization for this run')
     parser.add_argument('--allow-unpriced-model', action='store_true',
-        help='Explicit smoke-only mode for a model without verified pricing; cost remains unknown')
+        help='Treat requests as unpriced, including known model names; cost remains unknown')
     parser.add_argument('--max-model-requests', type=int,
-        help='Hard request cap for allow-unpriced-model smoke runs')
+        help='Cumulative request cap, including inherited requests')
+    parser.add_argument('--run-max-model-requests', type=int,
+        help='Maximum new model requests in this child run')
     parser.add_argument('--max-output-tokens', type=int, default=4096,
         help='Per-request output token cap for model runs')
     parser.add_argument('--knowledge-disabled', action='store_true',
@@ -161,6 +163,9 @@ def parse_args(argv=None):
         parser.error('allow-unpriced-model requires a positive max-model-requests')
     if args.max_output_tokens <= 0:
         parser.error('max-output-tokens must be positive')
+    for cap in (args.max_model_requests, args.run_max_model_requests):
+        if cap is not None and cap <= 0:
+            parser.error('request caps must be positive')
     if args.run_budget_cny is not None and (not math.isfinite(args.run_budget_cny) or args.run_budget_cny <= 0):
         parser.error('per-run budget must be finite and positive')
     if args.observation_not_before:
@@ -513,7 +518,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
     max_model_requests = getattr(args, 'max_model_requests', None)
     budget = PaidRequestBudget(output, max_output_tokens=max_output_tokens, limit_cny=limit_cny,
         run_limit_cny=run_limit, allow_unpriced_models=allow_unpriced_model,
-        max_requests=max_model_requests)
+        max_requests=max_model_requests, run_max_requests=getattr(args, 'run_max_model_requests', None))
     budget_stopped = False
     if previous is not None:
         budget.reserved = previous['reserved_cny']
@@ -521,6 +526,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         budget.inherited_reserved = previous['reserved_cny']
         budget.blocked_requests = previous.get('blocked_requests', [])
     prior_requests = len(budget.ledger)
+    budget.inherited_requests = prior_requests
     budget_stop_reason = None
     record.value['config'].update(mechanisms=expected_config, business_catalog=json.loads(settings.DIAGNOSTIC_TARGET_CATALOG),
         retry={'sdk_max_retries': 0, 'agent_retry_enabled': settings.ENABLE_LLM_RETRY,
@@ -531,6 +537,8 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         knowledge_disabled=getattr(args, 'knowledge_disabled', False), max_output_tokens=max_output_tokens)
     record.value['config']['knowledge_kb_ids'] = knowledge_kb_ids
     record.value['config'].update(run_budget_cny=run_limit, http_timeout_seconds=60,
+        allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
+        run_max_model_requests=budget.run_max_requests,
         observation_not_before=getattr(args, 'observation_not_before', None),
         shared_history_enabled=not getattr(args, 'isolate_history', False))
     record.save()
@@ -550,7 +558,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             input_dir = output / 'model-inputs'
             input_dir.mkdir(exist_ok=True)
             try:
-                row = budget.reserve(body)
+                row = budget.reserve(body, require_known_usage=True)
             except EvaluationBudgetExceeded as error:
                 budget_stopped = True
                 budget_stop_reason = error.reason_code
@@ -673,6 +681,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             'previous_cost': str(args.previous_cost) if args.previous_cost else None,
             'evaluation_record': 'evaluation-record.json',
             'cost_scope': {'cumulative': budget.cost_summary(), 'this_run': budget.cost_summary(prior_requests)},
+            'request_limits': budget.request_limits(),
             'knowledge_mode': 'local_bm25_mcp' if args.knowledge_mcp_url else ('local_runbooks' if args.local_runbooks else 'disabled'),
             'knowledge_mcp_calls': sum(t['tool'] == 'search_knowledge_base' for t in trace),
             'vector_rag_evaluated': False}

@@ -62,6 +62,22 @@ def test_launcher_check_is_explicit_subprocess_and_does_not_call_model(monkeypat
     assert fake.call_count == 1
 
 
+def test_launcher_selects_dedicated_profile_without_changing_default(tmp_path, monkeypatch):
+    path = tmp_path / 'deepseek.env'
+    path.write_text('LLM_API_BASE=https://api.deepseek.com\nLLM_API_KEY=private-test-key\n'
+                    'AGENT_MODEL=deepseek-v4-flash\nAGENT_DISABLE_THINKING=true\n', encoding='utf-8')
+    fake = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(launcher.subprocess, 'run', fake)
+    monkeypatch.setenv('LLM_API_BASE', 'https://www.rightapi.ai/v1')
+    assert launcher.main(['--profile', str(path), '--check']) == 0
+    env = fake.call_args.kwargs['env']
+    assert env['AGENT_MODEL'] == env['AGENT_MODEL_SIMPLE'] == env['EVIDENCE_LLM_MODEL'] == 'deepseek-v4-flash'
+    assert env['LLM_API_BASE'] == 'https://api.deepseek.com'
+    assert env['AGENT_DISABLE_THINKING'] == 'true'
+    assert os.environ['LLM_API_BASE'] == 'https://www.rightapi.ai/v1'
+    assert fake.call_args.args[0][1:] == ['scripts/audit_configuration.py', '--profile-check']
+
+
 def test_full_example_has_no_missing_unknown_or_duplicate_fields():
     root = Path(__file__).resolve().parents[1]
     values, audit = environment_file(root / '.env.example', set(Settings.model_fields))

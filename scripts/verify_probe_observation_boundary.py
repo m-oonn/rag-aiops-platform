@@ -87,7 +87,8 @@ async def verify_boundary_rounds(tools, target, output, log, reset, scenarios=No
                         if any(entry.get('pid') not in owners for entry in entries):
                             raise AssertionError('log contains another reset process')
                         expected_detail = {'normal': 'healthy', 'downstream_unreachable': 'upstream connection failed',
-                            'application_error': 'request failed'}[case]
+                            'application_error': 'request failed',
+                            'application_config_error': 'invalid max_attempts configuration'}[case]
                         if not any(entry.get('pid') in snapshot['app_pids'] and entry.get('status') == snapshot['app']['http_status']
                                 and entry.get('detail') == expected_detail for entry in entries):
                             raise AssertionError('log does not support current application state')

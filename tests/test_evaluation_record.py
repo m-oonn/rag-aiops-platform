@@ -10,6 +10,99 @@ from scripts.evaluate_autonomous_investigation import PaidRequestBudget
 from scripts.evaluate_windows_probe import trace_evaluation_tools
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['plan', 'decision', 'invalid_decision'])
+async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budget(tmp_path, monkeypatch, kind):
+    import importlib
+    import httpx
+    from unittest.mock import AsyncMock
+    from langchain_core.prompts import ChatPromptTemplate
+    from scripts import evaluate_windows_probe as evaluation
+    from src.agent.aiops import graph, planner, executor
+    from src.agent.aiops.structured import ainvoke_structured, StructuredOutputError
+    from src.agent.aiops.strategies.investigation import InvestigationDecision
+    from src.probe.windows.config import ProbeConfig
+    from src.settings import settings
+
+    for module in [planner, executor, importlib.import_module('src.agent.aiops.strategies.investigation')]:
+        monkeypatch.setattr(module, 'create_agent_llm', module.create_agent_llm)
+    for module in [planner, executor]:
+        monkeypatch.setattr(module, 'load_agent_tools', module.load_agent_tools)
+    for name in ['PROBE_ENABLED', 'PROBE_TARGET_ID', 'DIAGNOSTIC_TARGET_CATALOG',
+            'PROBE_EVIDENCE_DIR', 'TERMCP_ENABLED', 'ENABLE_HITL', 'ENABLE_LLM_RETRY']:
+        monkeypatch.setattr(settings, name, getattr(settings, name))
+    for name, value in {'LLM_API_BASE': 'https://api.deepseek.com', 'LLM_API_KEY': 'synthetic-only',
+            'AGENT_MODEL': 'deepseek-v4-flash', 'AGENT_DISABLE_THINKING': True}.items():
+        monkeypatch.setattr(settings, name, value)
+    monkeypatch.delenv('AGENT_MODEL', raising=False)
+    monkeypatch.setattr(executor, '_tools_cache', {})
+    monkeypatch.setattr(executor, '_tools_cache_at', {})
+    calls = []
+    schema = planner.Plan if kind == 'plan' else InvestigationDecision
+    value = ({'steps': ['核查入口']} if kind == 'plan' else {
+        'hypothesis': {'invalid': 'synthetic'} if kind == 'invalid_decision' else '待核实',
+        'alternatives': [{'explanation': '下游连接状态待查', 'status': 'unresolved',
+            'condition': {'operation': 'dependency_probe', 'object_name': 'downstream',
+                'field': 'tcp', 'expected': 'failed'},
+            'check': {'next_check': '检查依赖', 'next_tools': ['probe_dependency_probe']}}]})
+
+    async def respond(request):
+        assert str(request.url) == 'https://api.deepseek.com/chat/completions'
+        body = json.loads(request.content)
+        calls.append(body)
+        assert body['model'] == 'deepseek-v4-flash'
+        assert body['thinking'] == {'type': 'disabled'}
+        assert body['max_tokens'] == 4096 and body['stream'] is False
+        if len(calls) == 1:
+            assert body['tool_choice']['function']['name'] == schema.__name__
+            parameters = body['tools'][0]['function']['parameters']
+            assert ('steps' if kind == 'plan' else 'alternatives') in parameters['properties']
+            if kind != 'plan':
+                assert len(parameters['properties']) == len(InvestigationDecision.model_fields)
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'offline',
+                'type': 'function', 'function': {'name': schema.__name__, 'arguments': json.dumps(value)}}]}
+        else:
+            assert kind == 'invalid_decision' and 'tools' not in body
+            message = {'role': 'assistant', 'content': json.dumps(value)}
+        return httpx.Response(200, json={'id': 'offline', 'object': 'chat.completion',
+            'created': 0, 'model': 'deepseek-flash', 'usage': {'prompt_tokens': 10, 'completion_tokens': 2},
+            'choices': [{'index': 0, 'message': message,
+                'finish_reason': 'tool_calls' if len(calls) == 1 else 'stop'}]})
+
+    monkeypatch.setattr(httpx, 'AsyncHTTPTransport', lambda: httpx.MockTransport(respond))
+    monkeypatch.setattr(evaluation, 'save_mechanism_audit', AsyncMock(return_value={'passed': True}))
+
+    class Service:
+        async def execute(self, symptom, **kwargs):
+            llm = planner.create_agent_llm()
+            assert llm.root_async_client.max_retries == llm.root_client.max_retries == 0
+            try:
+                result = await ainvoke_structured(llm, schema, ChatPromptTemplate.from_template('{input}'), {'input': '离线检查'})
+            except StructuredOutputError:
+                assert kind == 'invalid_decision'
+                yield {'type': 'error', 'stage': 'investigation_failed'}
+            else:
+                assert isinstance(result, schema) and kind != 'invalid_decision'
+                yield {'type': 'complete', 'response': '仅为离线协议夹具'}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(graph, 'AIOpsService', Service)
+    args = SimpleNamespace(previous_cost=None, local_runbooks=None, knowledge_mcp_url=None, symptom_file=None,
+        mechanism_group=None, knowledge_disabled=False, allow_unpriced_model=True, max_model_requests=2)
+    cfg = ProbeConfig('test-target', 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token')
+    await evaluation.run_model(args, cfg, tmp_path, [])
+    assert len(calls) == (2 if kind == 'invalid_decision' else 1)
+    cost = json.loads((tmp_path / 'cost.json').read_text())
+    assert all(row['pricing_verified'] is False for row in cost['requests'])
+    summary = json.loads((tmp_path / 'summary.json').read_text())
+    assert summary['cost_scope']['this_run']['estimated_cny_peak'] is None
+    assert summary['workflow_completed'] is (kind != 'invalid_decision')
+    assert json.loads((tmp_path / 'evaluation-record.json').read_text())['status'] == (
+        'incomplete' if kind == 'invalid_decision' else 'completed')
+
+
 def test_source_snapshot_preserves_dirty_source_and_excludes_credentials(tmp_path):
     root, output = tmp_path / 'repo', tmp_path / 'output'
     (root / 'src').mkdir(parents=True)
@@ -127,7 +220,8 @@ async def test_controller_preserves_failed_child_attempt_without_model(tmp_path,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['ok', 'missing_usage', 'timeout', 'invalid_json', 'blocked', 'run_cap', 'sdk_timeout', 'failed_report', 'sdk_metadata'])
+@pytest.mark.parametrize('mode', ['ok', 'missing_usage', 'timeout', 'invalid_json', 'blocked', 'run_cap', 'sdk_timeout', 'failed_report', 'sdk_metadata',
+    'connect_retry', 'missing_usage_retry', 'settled_retry', 'request_cap_retry'])
 async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger(tmp_path, monkeypatch, mode):
     import importlib
     import httpx
@@ -151,6 +245,8 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
         calls.append(json.loads(request.content))
         if mode in {'timeout', 'sdk_timeout'}:
             raise httpx.ReadTimeout('mock only')
+        if mode == 'connect_retry':
+            raise httpx.ConnectError('mock connection failure')
         if mode == 'invalid_json':
             return httpx.Response(200, text='invalid')
         return httpx.Response(200, headers={'x-request-id': 'req-offline'}, json={'model': 'served-test',
@@ -158,7 +254,7 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
             'choices': [{'index': 0, 'finish_reason': 'tool_calls', 'message': {'role': 'assistant',
                 'content': None, 'tool_calls': [{'id': 'c1', 'type': 'function',
                     'function': {'name': 'offline_tool', 'arguments': '{}'}}]}}],
-            **({'usage': {'prompt_tokens': 10, 'completion_tokens': 2}} if mode in {'ok', 'failed_report', 'sdk_metadata'} else {})})
+            **({'usage': {'prompt_tokens': 10, 'completion_tokens': 2}} if mode in {'ok', 'failed_report', 'sdk_metadata', 'settled_retry', 'request_cap_retry'} else {})})
     monkeypatch.setattr(httpx, 'AsyncHTTPTransport', lambda: httpx.MockTransport(respond))
     from src.agent import aiops_llm
     monkeypatch.setattr(aiops_llm, 'create_agent_llm', lambda **kwargs: SimpleNamespace(
@@ -186,9 +282,15 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
                 message = await llm.ainvoke('offline response metadata')
                 assert message.tool_calls[0]['name'] == 'offline_tool'
             else:
-                await llm.http_async_client.post('https://api.deepseek.com/chat/completions',
-                    json={'model': 'unpriced-test' if mode == 'blocked' else 'deepseek-flash',
-                        'max_tokens': 99999, 'messages': []})
+                # Reproduce a caller swallowing the first error and attempting its next stage.
+                for _ in range(2 if mode.endswith('_retry') else 1):
+                    try:
+                        await llm.http_async_client.post('https://api.deepseek.com/chat/completions',
+                            json={'model': 'unpriced-test' if mode == 'blocked' else 'deepseek-flash',
+                                'max_tokens': 99999, 'messages': []})
+                    except httpx.ConnectError:
+                        if mode != 'connect_retry':
+                            raise
             if mode == 'failed_report':
                 yield {'type': 'report', 'report': '未定位根因：mock transport only'}
                 yield {'type': 'error', 'stage': 'investigation_failed',
@@ -208,10 +310,41 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
         symptom_file=None, mechanism_group=None, knowledge_disabled=False)
     if mode == 'run_cap':
         args.run_budget_cny = 0.000001
+    if mode == 'request_cap_retry':
+        monkeypatch.setattr(settings, 'LLM_API_BASE', 'https://api.deepseek.com')
+        args.allow_unpriced_model = True
+        args.max_model_requests = 10
+        args.run_max_model_requests = 1
     cfg = ProbeConfig('test-target', 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token')
     args.isolate_history = mode == 'ok'
     tools = [SimpleNamespace(name='probe_list_evidence')] if mode == 'ok' else []
     await evaluation.run_model(args, cfg, tmp_path, tools)
+    if mode.endswith('_retry'):
+        settled = mode == 'settled_retry'
+        assert len(calls) == (2 if settled else 1)
+        cost = json.loads((tmp_path / 'cost.json').read_text())
+        assert cost['requests'][0] == old and prior.read_bytes() == before
+        assert len(cost['requests']) == (3 if settled else 2)
+        summary = json.loads((tmp_path / 'summary.json').read_text())
+        record = json.loads((tmp_path / 'evaluation-record.json').read_text())
+        assert summary['workflow_completed'] is settled
+        assert record['status'] == ('completed' if settled else 'incomplete')
+        assert summary['budget_stopped'] is (not settled)
+        if settled:
+            assert not cost['blocked_requests']
+        else:
+            reason = 'per_run_request_limit' if mode == 'request_cap_retry' else 'previous_request_usage_unknown'
+            assert cost['blocked_requests'][-1]['reason_code'] == reason
+            assert cost['blocked_requests'][-1]['sent'] is False
+            assert record['blocked_requests'][-1]['sent'] is False
+            assert summary['cost_scope']['this_run']['usage_unknown_requests'] == (0 if mode == 'request_cap_retry' else 1)
+            if mode == 'request_cap_retry':
+                expected = {'max_requests': 10, 'run_max_requests': 1, 'inherited_requests': 1}
+                assert cost['request_limits'] == summary['request_limits'] == expected
+                assert summary['cost_scope']['this_run']['estimated_cny_peak'] is None
+            if mode == 'connect_retry':
+                assert cost['requests'][-1]['status'] == 'ConnectError'
+        return
     if mode in {'blocked', 'run_cap'}:
         assert calls == []
         cost = json.loads((tmp_path / 'cost.json').read_text())

@@ -135,6 +135,31 @@ def test_settled_cost_can_be_loaded_for_resume_without_changing_history(tmp_path
     assert read_cost_ledger(prior, for_resume=True) == value
 
 
+@pytest.mark.parametrize('model', ['deepseek-v4-flash', 'deepseek-flash'])
+def test_explicit_unpriced_mode_never_reuses_legacy_deepseek_rates(tmp_path, model):
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    budget = PaidRequestBudget(tmp_path, allow_unpriced_models=True, max_requests=1)
+    row = budget.reserve({'model': model, 'max_tokens': 64}, require_known_usage=True)
+    assert row['pricing_verified'] is False and row['reserved_cny'] == 0
+    row.update(http_status=200, usage={'prompt_tokens': 10, 'completion_tokens': 2})
+    assert budget.cost_summary()['estimated_cny_peak'] is None
+    assert budget.cost_summary()['pricing_unknown_requests'] == 1
+    with pytest.raises(EvaluationBudgetExceeded) as caught:
+        budget.reserve({'model': model, 'max_tokens': 64}, require_known_usage=True)
+    assert caught.value.reason_code == 'max_requests'
+    assert len(budget.ledger) == 1 and budget.blocked_requests[-1]['sent'] is False
+
+
+def test_explicit_request_cap_also_limits_legacy_priced_mode(tmp_path):
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    budget = PaidRequestBudget(tmp_path, max_requests=1)
+    row = budget.reserve({'model': 'deepseek-flash', 'max_tokens': 64})
+    assert row['pricing_verified'] is True
+    with pytest.raises(EvaluationBudgetExceeded) as caught:
+        budget.reserve({'model': 'deepseek-flash', 'max_tokens': 64})
+    assert caught.value.reason_code == 'max_requests'
+
+
 def test_explicit_budget_increase_preserves_prior_requests_and_new_ceiling(tmp_path):
     from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
     prior = tmp_path / 'prior.json'

@@ -10,6 +10,36 @@ import pytest
 from scripts import verify_windows_local_faults as module
 
 
+def test_candidate_opportunity_profile_is_explicit_and_does_not_name_a_fault():
+    assert module.symptom_text('neutral') == (
+        '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。'
+    )
+    prompt = module.symptom_text('candidate-opportunity')
+    assert '仍合理的候选' in prompt and '具体、可执行且能区分解释的检查' in prompt
+    assert '遇到可靠相反证据时改查其他解释' in prompt
+    assert 'downstream_unreachable' not in prompt and 'application_config_error' not in prompt
+    with pytest.raises(ValueError, match='unknown symptom profile'):
+        module.symptom_text('unknown')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('profile', ['neutral', 'candidate-opportunity'])
+async def test_model_runner_passes_selected_symptom_profile_to_child(tmp_path, profile):
+    captured = {}
+
+    def launch(args, name):
+        captured['args'] = args
+        raise RuntimeError('launch intercepted')
+
+    with pytest.raises(RuntimeError, match='launch intercepted'):
+        await module.evaluate_model_case(tmp_path, 'downstream_unreachable', launch,
+            symptom_profile=profile)
+
+    args = captured['args']
+    symptom_path = Path(args[args.index('--symptom-file') + 1])
+    assert symptom_path.read_text(encoding='utf-8') == module.symptom_text(profile)
+
+
 def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path):
     ports = [module.free_port()]
     while len(ports) < 2:
@@ -300,6 +330,26 @@ async def test_blind_controller_randomizes_order_preserves_cost_and_restores(tmp
     assert seen[0][1] is None and seen[1][1] == tmp_path / '1.json'
     assert changes == [seen[0][0], seen[1][0], 'normal']
     assert reset_times[0] <= reset_times[1]
+
+
+@pytest.mark.asyncio
+async def test_blind_controller_forwards_per_run_cost_cap(tmp_path, monkeypatch):
+    calls = []
+
+    async def set_case(case):
+        return None
+
+    async def run(*args, **kwargs):
+        calls.append(kwargs)
+        return {'status': 'passed', 'workflow_completed': True,
+            'cost_file': str(tmp_path / 'cost.json')}
+
+    monkeypatch.setattr(module, 'evaluate_model_case', run)
+    await module.evaluate_blind_cases(tmp_path, Mock(), set_case, suite=['downstream_unreachable'],
+        run_budget_cny=0.25)
+
+    assert len(calls) == 1
+    assert calls[0]['run_budget_cny'] == 0.25
 
 
 @pytest.mark.asyncio

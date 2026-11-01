@@ -38,6 +38,8 @@ def profile_environment(path, inherited=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--profile', type=Path, default=ROOT / '.env.agent-test',
+        help='Local private model profile; applies only to the child process')
     parser.add_argument('--check', action='store_true', help='Resolve model settings without sending requests')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -47,7 +49,7 @@ def main(argv=None):
     if command and (command[0] not in COMMANDS):
         parser.error('only existing project evaluation scripts are accepted')
     try:
-        env = profile_environment(ROOT / '.env.agent-test')
+        env = profile_environment(args.profile)
     except ValueError as exc:
         parser.error(str(exc))
     if args.check:

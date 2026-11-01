@@ -27,6 +27,53 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+FOUR_GROUP_SUITES = {
+    'baseline-v1': ('normal', 'downstream_unreachable', 'application_error'),
+    'mechanism-v1': ('normal', 'downstream_unreachable', 'application_config_error'),
+}
+
+SYMPTOM_PROFILES = {
+    'neutral': '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。',
+    'candidate-opportunity': (
+        '请只读调查配置中的 localapp 当前不可用问题。入口可能返回失败状态，但状态码本身不能确认根因。'
+        '请从允许检查的入口、配置、相关依赖和日志中保留仍合理的候选；为每个未排除候选指定一个具体、可执行且能区分解释的检查，'
+        '根据现场结果更新候选，遇到可靠相反证据时改查其他解释，最后分别说明已核实、未核实和检查受限之处。'
+    ),
+}
+
+
+def symptom_text(profile):
+    try:
+        return SYMPTOM_PROFILES[profile]
+    except KeyError as exc:
+        raise ValueError('unknown symptom profile') from exc
+
+
+def four_group_cases(suite):
+    if suite not in FOUR_GROUP_SUITES:
+        raise ValueError('unknown four-group scenario suite')
+    return FOUR_GROUP_SUITES[suite]
+
+
+def four_group_order(suite):
+    cases = list(four_group_cases(suite))
+    secrets.SystemRandom().shuffle(cases)
+    order = []
+    for case in cases:
+        groups = ['G00', 'G10', 'G01', 'G11']
+        secrets.SystemRandom().shuffle(groups)
+        order.extend({'case': case, 'group': group} for group in groups)
+    return order
+
+
+def four_group_conditions(out):
+    import hashlib
+    paths = [out / 'config.toml', out / 'knowledge-manifest.json', *sorted((out / 'runbooks').rglob('*.md'))]
+    if len(paths) <= 2:
+        raise ValueError('four groups require fixed knowledge corpus')
+    return {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
 def get_local(port, timeout=2):
     try:
         response = build_opener(ProxyHandler({})).open(f'http://127.0.0.1:{port}/health', timeout=timeout)
@@ -213,19 +260,23 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
     return snapshot
 
 
-async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_url=None, knowledge_disabled=False, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, observation_not_before=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, isolate_history=False):
+async def evaluate_model_case(out, case, launch, previous_cost=None, knowledge_url=None, knowledge_disabled=False, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, observation_not_before=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, isolate_history=False, run_max_model_requests=None, symptom_profile='neutral'):
     """Only the caller's explicit paid mode may invoke this serial runner."""
     from scripts.evaluate_windows_probe import read_cost_ledger, MECHANISM_GROUPS
     sample_id = uuid.uuid4().hex
     result_dir = out / ('model-' + sample_id)
     symptom_file = out / ('symptom-' + sample_id + '.txt')
-    symptom_file.write_text('请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。', encoding='utf-8')
+    symptom_file.write_text(symptom_text(symptom_profile), encoding='utf-8')
     args = [str(ROOT / 'scripts/evaluate_windows_probe.py'), '--run-model',
         '--probe-config', str(out / 'config.toml'), '--symptom-file', str(symptom_file),
         '--output-dir', str(result_dir), '--local-runbooks', str(out / 'runbooks'),
         '--max-output-tokens', str(max_output_tokens)]
     if allow_unpriced_model:
-        args += ['--allow-unpriced-model', '--max-model-requests', str(max_model_requests)]
+        args += ['--allow-unpriced-model']
+    if max_model_requests is not None:
+        args += ['--max-model-requests', str(max_model_requests)]
+    if run_max_model_requests is not None:
+        args += ['--run-max-model-requests', str(run_max_model_requests)]
     before = read_cost_ledger(previous_cost, for_resume=True, limit_cny=budget_limit_cny) if previous_cost else None
     args += ['--budget-limit-cny', str(budget_limit_cny)]
     if run_budget_cny is not None:
@@ -464,7 +515,7 @@ def _citation_in_evidence(quote, evidence_text):
     return quote in json.dumps(decoded, ensure_ascii=False, sort_keys=True)
 
 
-async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=None, previous_cost=None, mechanism_group=None, budget_limit_cny=5, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096):
+async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=None, previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral'):
     """Controller keeps the scenario order outside the investigation context."""
     order = list(suite or ['normal', 'downstream_unreachable'])
     secrets.SystemRandom().shuffle(order)
@@ -481,11 +532,15 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
             options = {'isolate_history': True, 'observation_not_before': observation_boundary}
             if mechanism_group is not None:
                 options['mechanism_group'] = mechanism_group
-            if allow_unpriced_model:
-                options.update(allow_unpriced_model=True, max_model_requests=max_model_requests,
+            if allow_unpriced_model or max_model_requests is not None or max_output_tokens != 4096:
+                options.update(allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
                     max_output_tokens=max_output_tokens)
             if budget_limit_cny != 5:
                 options['budget_limit_cny'] = budget_limit_cny
+            if run_budget_cny is not None:
+                options['run_budget_cny'] = run_budget_cny
+            if symptom_profile != 'neutral':
+                options['symptom_profile'] = symptom_profile
             result = await evaluate_model_case(out, case, launch, previous, knowledge_url=knowledge_url, **options)
             results.append(result)
             (out / 'blind-controller.json').write_text(json.dumps(controller, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -509,34 +564,42 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
     return results
 
 
-async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_cost, budget_limit_cny, run_budget_cny):
+async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_cost, budget_limit_cny, run_budget_cny, suite='baseline-v1', *, allow_unpriced_model=False, max_model_requests=None, run_max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral'):
     """Same controller-owned environment, serial fresh children; no implicit paid entry."""
     import math
     from scripts.evaluate_windows_probe import read_cost_ledger
     from scripts.evaluation_record import utc_now
-    if type(run_budget_cny) not in (int, float) or not math.isfinite(run_budget_cny) or run_budget_cny <= 0:
+    if not allow_unpriced_model and run_max_model_requests is None and (type(run_budget_cny) not in (int, float) or not math.isfinite(run_budget_cny) or run_budget_cny <= 0):
         raise ValueError('four groups require a positive per-run reservation cap')
+    for cap in (max_model_requests, run_max_model_requests):
+        if cap is not None and (type(cap) is not int or cap <= 0):
+            raise ValueError('request caps must be positive integers')
+    if allow_unpriced_model and (max_model_requests is None or run_max_model_requests is None):
+        raise ValueError('unpriced four groups require cumulative and per-run request caps')
+    if (max_model_requests is None) != (run_max_model_requests is None):
+        raise ValueError('four-group request limits require both cumulative and per-run caps')
     previous = read_cost_ledger(previous_cost, for_resume=True, limit_cny=budget_limit_cny)
     # Reserve the same opportunity for every group before touching the business.
-    cases = ['normal', 'downstream_unreachable', 'application_error']
-    if budget_limit_cny - previous['reserved_cny'] < len(cases) * 4 * run_budget_cny:
+    cases = four_group_cases(suite)
+    if run_budget_cny is not None and (type(run_budget_cny) not in (int, float)
+            or not math.isfinite(run_budget_cny) or run_budget_cny <= 0):
+        raise ValueError('invalid per-run reservation cap')
+    if run_budget_cny is not None and budget_limit_cny - previous['reserved_cny'] < len(cases) * 4 * run_budget_cny:
         raise RuntimeError('insufficient cumulative allowance for equal four-group caps')
+    if run_max_model_requests is not None and (max_model_requests is None
+            or max_model_requests - len(previous['requests']) < len(cases) * 4 * run_max_model_requests):
+        raise RuntimeError('insufficient cumulative requests for equal four-group caps')
     def conditions():
-        import hashlib
-        paths = [out / 'config.toml', out / 'knowledge-manifest.json', *sorted((out / 'runbooks').rglob('*.md'))]
-        if len(paths) <= 2:
-            raise ValueError('four groups require fixed knowledge corpus')
-        return {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+        return four_group_conditions(out)
     fixed = conditions()
-    secrets.SystemRandom().shuffle(cases)
-    order = []
-    for case in cases:
-        groups = ['G00', 'G10', 'G01', 'G11']
-        secrets.SystemRandom().shuffle(groups)
-        order.extend({'case': case, 'group': group} for group in groups)
-    record = {'version': 1, 'order': order, 'conditions_sha256': fixed, 'results': [],
+    order = four_group_order(suite)
+    record = {'version': 3, 'suite': suite, 'scenario_cases': list(cases),
+        'order': order, 'conditions_sha256': fixed, 'results': [],
         'started_at': utc_now(), 'ended_at': None, 'recovery': 'pending', 'status': 'started',
         'run_budget_cny': run_budget_cny, 'budget_limit_cny': budget_limit_cny,
+        'allow_unpriced_model': allow_unpriced_model, 'max_model_requests': max_model_requests,
+        'run_max_model_requests': run_max_model_requests, 'max_output_tokens': max_output_tokens,
+        'previous_cost': str(Path(previous_cost).resolve()), 'inherited_requests': len(previous['requests']),
         'answer_visibility': 'controller only; neutral symptom and fixed Probe allowlist', 'resets': []}
     path = out / 'four-group-controller.json'
     def save():
@@ -556,10 +619,19 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
             save()
             if conditions() != fixed:
                 raise ValueError('reset changed shared configuration or knowledge')
+            options = {}
+            if allow_unpriced_model or max_model_requests is not None or run_max_model_requests is not None:
+                options.update(allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
+                    run_max_model_requests=run_max_model_requests, max_output_tokens=max_output_tokens,
+                    isolate_history=True)
+            elif max_output_tokens != 4096:
+                options['max_output_tokens'] = max_output_tokens
+            if symptom_profile != 'neutral':
+                options['symptom_profile'] = symptom_profile
             result = await evaluate_model_case(out, item['case'], launch, previous_path,
                 knowledge_url=knowledge_url, mechanism_group=item['group'],
                 budget_limit_cny=budget_limit_cny, run_budget_cny=run_budget_cny,
-                observation_not_before=observation_boundary)
+                observation_not_before=observation_boundary, **options)
             record['results'].append(result)
             save()
             if result.get('status') != 'passed' or result.get('workflow_completed') is not True:
@@ -577,6 +649,9 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
                 raise ValueError('four-group thread missing or reused')
             threads.add(thread)
             integrity = result['record_integrity']
+            if options and any(integrity['comparison_config'].get(key) != value
+                    for key, value in options.items() if key != 'isolate_history'):
+                raise ValueError('four-group child request limits or pricing mode differ')
             if (integrity['comparison_config'].get('run_budget_cny') != run_budget_cny
                     or integrity['comparison_config'].get('shared_history_enabled') is not False
                     or integrity.get('observation_not_before') != observation_boundary):
@@ -605,7 +680,58 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
     return record['results']
 
 
-async def verify(out, evaluation_preflight=False, run_model=False, model_stage='smoke', previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, smoke_case=None):
+async def preflight_four_group_scenarios(out, tools, target, log, set_case, suite):
+    """Exercise the paid schedule's real resets and Probe windows, without decisions."""
+    from scripts.verify_probe_observation_boundary import verify_boundary_rounds
+    from scripts.evaluation_record import utc_now
+    order = four_group_order(suite)
+    fixed = four_group_conditions(out)
+    report = {'suite': suite, 'order': order, 'conditions_sha256': fixed,
+        'started_at': utc_now(), 'status': 'started', 'recovery': 'pending',
+        'model_calls': 0, 'group_labels_only': True, 'mechanism_effectiveness_verified': False}
+    path = out / 'four-group-scenario-preflight.json'
+
+    def save():
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    async def reset(case):
+        if four_group_conditions(out) != fixed:
+            raise ValueError('shared configuration or knowledge changed')
+        await set_case('normal')
+        snapshot = await set_case(case)
+        if four_group_conditions(out) != fixed:
+            raise ValueError('reset changed shared configuration or knowledge')
+        return snapshot
+
+    save()
+    try:
+        result = await verify_boundary_rounds(tools, target, out / 'scenario-windows', log, reset,
+            scenarios=[item['case'] for item in order])
+        report.update(status='passed', observations=result['evidence_count'], rounds=result['rounds'])
+    except BaseException as exc:
+        report.update(status='failed', error_type=type(exc).__name__)
+        raise
+    finally:
+        try:
+            snapshot = await set_case('normal')
+            if not snapshot or snapshot.get('case') != 'normal' or snapshot.get('passed') is not True:
+                raise RuntimeError('normal recovery not independently verified')
+            report.update(recovery='normal_restored', recovery_state=snapshot)
+        except BaseException as exc:
+            report.update(status='failed', recovery='failed', recovery_error=type(exc).__name__)
+            raise
+        finally:
+            report['ended_at'] = utc_now()
+            save()
+    return {'case': 'four_group_scenario_preflight', 'status': report['status'], 'suite': suite,
+        'rounds': report['rounds'], 'evidence_count': report['observations'], 'model_calls': 0,
+        'autonomous_model_investigation': False, 'mechanism_effectiveness_verified': False}
+
+
+async def verify(out, evaluation_preflight=False, run_model=False, model_stage='smoke', previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, smoke_case=None, four_group_suite='baseline-v1', scenario_preflight=False, run_max_model_requests=None, symptom_profile='neutral'):
+    four_group_cases(four_group_suite)
+    if scenario_preflight and (run_model or evaluation_preflight):
+        raise ValueError('scenario preflight is a separate free mode')
     from scripts.windows_probe import _set_acl
     from src.probe.evidence import validate_tool_evidence
     from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -810,6 +936,12 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 snapshot = verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker)
                 return {**snapshot, 'app_pids': [row['pid'] for row in snapshot['listeners'] if row['port'] == app_port],
                     'downstream_pids': [row['pid'] for row in snapshot['listeners'] if row['port'] == dep_port]}
+            if scenario_preflight:
+                cases.append(await preflight_four_group_scenarios(out, tools, target, log, set_model_case, four_group_suite))
+                report.update(ok=True, evidence_count=len(records),
+                    scope='scenario resets and real Probe windows only; no Agent decisions or model calls')
+                engine.dispose()
+                return report  # The existing finally still cleans all owned processes and writes the result.
             if evaluation_preflight:
                 from scripts.verify_probe_observation_boundary import verify_boundary_rounds
                 cases.append(await verify_boundary_rounds(tools, target, out / 'observation-boundary', log, set_model_case,
@@ -860,7 +992,10 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 report['model_investigation'] = 'started_requires_manual_review'
                 if model_stage == 'four-groups':
                     cases.extend(await evaluate_four_groups(out, launch, set_model_case,
-                        knowledge_config['knowledge']['url'], previous_cost, budget_limit_cny, run_budget_cny))
+                        knowledge_config['knowledge']['url'], previous_cost, budget_limit_cny, run_budget_cny,
+                        suite=four_group_suite, allow_unpriced_model=allow_unpriced_model,
+                        max_model_requests=max_model_requests, run_max_model_requests=run_max_model_requests,
+                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile))
                 elif model_stage == 'knowledge-control':
                     previous = previous_cost
                     modes = [False, True]
@@ -878,12 +1013,14 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     cases.extend(await evaluate_blind_cases(out, launch, set_model_case,
                         knowledge_url=knowledge_config['knowledge']['url'], suite=suite, previous_cost=previous_cost,
                         mechanism_group=mechanism_group, budget_limit_cny=budget_limit_cny,
+                        run_budget_cny=run_budget_cny,
                         allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
-                        max_output_tokens=max_output_tokens))
+                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile))
             from scripts.verify_windows_probe_graph import verify_graph
             if evaluation_preflight and not run_model:
                 from scripts.verify_probe_mechanisms import verify_mechanism_groups
-                cases.append(await verify_mechanism_groups(tools, out, log, knowledge_tool, knowledge_config['knowledge']['url']))
+                cases.append(await verify_mechanism_groups(tools, out, log, knowledge_tool,
+                    knowledge_config['knowledge']['url'], set_model_case))
             cases.append(await verify_graph(tools, out, log, 'normal', knowledge_tool))
             process_snapshot = await query('probe_process_snapshot', {'service': 'localapp'}, 'normal')
             app_pids = {app.pid} | {p.pid for p in psutil.Process(app.pid).children(recursive=True)}
@@ -1128,39 +1265,59 @@ def main():
     parser.add_argument('--mode-file', type=Path)
     parser.add_argument('--downstream', type=int)
     parser.add_argument('--evaluation-preflight', action='store_true')
+    parser.add_argument('--scenario-preflight', action='store_true',
+        help='Free mode: real scenario resets and Probe isolation in the four-group schedule, no Agent decisions')
+    parser.add_argument('--four-group-suite', choices=list(FOUR_GROUP_SUITES), default='baseline-v1',
+        help='Explicit versioned scenario suite; mechanism-v1 pairs two faults with the same entry 503')
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; requires separate explicit authorization for cases and cumulative budget')
     parser.add_argument('--model-stage', choices=['smoke', 'extended', 'knowledge-control', 'four-groups'], default='smoke')
-    parser.add_argument('--run-budget-cny', type=float, help='Required equal per-run reservation cap for four-groups')
+    parser.add_argument('--run-budget-cny', type=float, help='Equal per-run cost cap; four-groups may instead use equal per-run request caps with the shared CNY ceiling')
     parser.add_argument('--previous-cost', type=Path)
     parser.add_argument('--budget-limit-cny', type=float, default=5,
         help='Cumulative reservation ceiling; increasing it requires separate authorization')
     parser.add_argument('--allow-unpriced-model', action='store_true',
-        help='Explicit smoke-only mode for a model without verified pricing; cost remains unknown')
+        help='Smoke or four-groups: pricing remains unknown, explicit request caps required')
     parser.add_argument('--max-model-requests', type=int,
-        help='Hard request cap for allow-unpriced-model smoke runs')
+        help='Cumulative request cap including inherited requests')
+    parser.add_argument('--run-max-model-requests', type=int,
+        help='Equal per-run new request cap for four-groups')
     parser.add_argument('--max-output-tokens', type=int, default=4096,
         help='Per-request output token cap for model runs')
-    parser.add_argument('--smoke-case', choices=['normal', 'downstream_unreachable', 'application_error'],
+    parser.add_argument('--smoke-case', choices=['normal', 'downstream_unreachable', 'application_error', 'application_config_error'],
         help='Run one model smoke scenario instead of the default smoke pair')
+    parser.add_argument('--symptom-profile', choices=list(SYMPTOM_PROFILES), default='neutral',
+        help='Model input profile; candidate-opportunity is for targeted mechanism pre-experiments')
     parser.add_argument('--mechanism-group', choices=['G00', 'G10', 'G01', 'G11'])
     parser.add_argument('--smoke-review', type=Path, help='Human review JSON with smoke_passed=true, required before extended cases')
     args = parser.parse_args()
     import math
+    if args.scenario_preflight and (args.run_model or args.evaluation_preflight):
+        parser.error('scenario-preflight cannot be combined with model or full evaluation modes')
+    if args.four_group_suite != 'baseline-v1' and not (args.scenario_preflight or args.model_stage == 'four-groups'):
+        parser.error('four-group-suite requires scenario-preflight or model-stage four-groups')
     if not math.isfinite(args.budget_limit_cny) or args.budget_limit_cny <= 0:
         parser.error('budget limit must be finite and positive')
-    if args.allow_unpriced_model and (not args.run_model or args.model_stage != 'smoke'):
-        parser.error('allow-unpriced-model is restricted to smoke model runs')
+    if args.allow_unpriced_model and (not args.run_model or args.model_stage not in {'smoke', 'four-groups'}):
+        parser.error('allow-unpriced-model requires smoke or four-groups model runs')
     if args.allow_unpriced_model and (args.max_model_requests is None or args.max_model_requests <= 0):
         parser.error('allow-unpriced-model requires a positive max-model-requests')
     if args.max_output_tokens <= 0:
         parser.error('max-output-tokens must be positive')
+    for cap in (args.max_model_requests, args.run_max_model_requests):
+        if cap is not None and cap <= 0:
+            parser.error('request caps must be positive')
+    if args.run_max_model_requests is not None and args.model_stage != 'four-groups':
+        parser.error('controller per-run request cap requires four-groups')
+    if args.model_stage == 'four-groups' and args.allow_unpriced_model and args.run_max_model_requests is None:
+        parser.error('unpriced four-groups require a per-run request cap')
     if args.smoke_case and args.model_stage != 'smoke':
         parser.error('smoke-case requires model-stage smoke')
     if args.mechanism_group and (not args.run_model or args.model_stage == 'knowledge-control'):
         parser.error('mechanism group requires --run-model and fixed knowledge conditions')
     if args.model_stage == 'four-groups' and (not args.run_model or args.mechanism_group
-            or args.run_budget_cny is None or not math.isfinite(args.run_budget_cny) or args.run_budget_cny <= 0):
+            or (not args.allow_unpriced_model and args.run_max_model_requests is None and (args.run_budget_cny is None
+                or not math.isfinite(args.run_budget_cny) or args.run_budget_cny <= 0))):
         parser.error('four-groups requires explicit paid mode, per-run cap and no single-group override')
     if args.serve is not None:
         serve(args.serve, args.log, args.downstream, args.mode_file)
@@ -1175,7 +1332,10 @@ def main():
         model_stage=args.model_stage, previous_cost=args.previous_cost, mechanism_group=args.mechanism_group,
         budget_limit_cny=args.budget_limit_cny, run_budget_cny=args.run_budget_cny,
         allow_unpriced_model=args.allow_unpriced_model, max_model_requests=args.max_model_requests,
-        max_output_tokens=args.max_output_tokens, smoke_case=args.smoke_case))
+        run_max_model_requests=args.run_max_model_requests,
+        max_output_tokens=args.max_output_tokens, smoke_case=args.smoke_case,
+        four_group_suite=args.four_group_suite, scenario_preflight=args.scenario_preflight,
+        symptom_profile=args.symptom_profile))
     print(json.dumps({'directory': str(out), **report}, ensure_ascii=False))
     return 0 if report['ok'] else 1
 

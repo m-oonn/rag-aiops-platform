@@ -92,6 +92,8 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             return investigation.InvestigationDecision(hypothesis='入口与依赖需交叉核实',
                 next_check='核对模拟下游和应用日志',
                 next_tools=['probe_dependency_probe', 'probe_text_log'],
+                next_arguments={'probe_dependency_probe': {'dependency': 'downstream'},
+                    'probe_text_log': {'service': 'localapp', 'path': str(log), 'lines': 20}},
                 discriminating_question='入口异常是否同时伴随下游连接异常',
                 expected_observation='下游连接状态和应用日志能补充入口检查的范围')
         context = json.loads(inputs['evidence'])
@@ -147,7 +149,8 @@ async def verify_graph(tools, output: Path, log: Path, scenario: str, knowledge_
             assert len(ledger) == expected_evidence
             assert len([event for event in events if event['type'] == 'evidence']) == expected_evidence
             assert run_store.get_run(thread_id).status == 'completed'
-            assert calls['planner'] == 1 and calls['executor'] == calls['decisions'] == expected_steps
+            # Only the initial executor step uses the model stub; followups execute concrete arguments.
+            assert calls['planner'] == calls['executor'] == 1 and calls['decisions'] == expected_steps
             for item in ledger:
                 saved = run_store.get_evidence(thread_id, item['evidence_id'], 1, include_raw=True)
                 validate_evidence(saved['raw'], target_id=settings.PROBE_TARGET_ID)

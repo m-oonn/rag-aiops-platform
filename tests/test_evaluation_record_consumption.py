@@ -65,6 +65,34 @@ def artifacts(tmp_path):
     return root, source, build
 
 
+@pytest.mark.parametrize('mutation', ['none', 'summary_limit', 'inherited_count', 'exceeded', 'unpriced_rate'])
+def test_request_limit_audit_uses_ledger_and_configuration(artifacts, mutation):
+    _, _, build = artifacts
+    directory = build()
+    record = json.loads((directory / 'evaluation-record.json').read_text())
+    record['config'].update(max_model_requests=2, run_max_model_requests=2, allow_unpriced_model=False)
+    summary = json.loads((directory / 'summary.json').read_text())
+    cost = json.loads((directory / 'cost.json').read_text())
+    limits = {'max_requests': 2, 'run_max_requests': 2, 'inherited_requests': 0}
+    cost['request_limits'] = dict(limits)
+    summary['request_limits'] = dict(limits)
+    if mutation == 'summary_limit':
+        summary['request_limits']['run_max_requests'] = 3
+    elif mutation == 'inherited_count':
+        cost['request_limits']['inherited_requests'] = 1
+    elif mutation == 'exceeded':
+        record['config']['run_max_model_requests'] = 0
+        cost['request_limits']['run_max_requests'] = summary['request_limits']['run_max_requests'] = 0
+    elif mutation == 'unpriced_rate':
+        record['config']['allow_unpriced_model'] = True
+    record['config_sha256'] = hashlib.sha256(json.dumps(record['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    save(directory / 'evaluation-record.json', record)
+    save(directory / 'cost.json', cost)
+    save(directory / 'summary.json', summary)
+    result = audit_evaluation(directory)
+    assert result['passed'] is (mutation == 'none'), result['issues']
+
+
 @pytest.mark.parametrize('mutation', ['none', 'missing_record', 'config_hash', 'source_hash',
     'missing_source', 'unfinished_time', 'invalid_elapsed', 'cumulative_as_current',
     'missing_input', 'unfinished_tool', 'changed_report', 'escape_source', 'unknown_usage',
@@ -114,6 +142,25 @@ def test_integrity_rejects_incomplete_or_changed_artifacts(artifacts, mutation):
     assert result['diagnostic_correctness_verified'] is False
     if mutation == 'missing_record':
         assert result['legacy'] is True
+
+
+def test_failed_request_without_served_model_does_not_hide_later_audit_issues(artifacts):
+    root, _, build = artifacts
+    directory = build()
+    cost = json.loads((directory / 'cost.json').read_text())
+    cost['requests'][0].pop('served_model')
+    cost['requests'][0]['status'] = 'ConnectError'
+    save(directory / 'cost.json', cost)
+    trace = json.loads((directory / 'tool_trace.json').read_text())
+    trace[0]['status'] = 'started'
+    save(directory / 'tool_trace.json', trace)
+
+    result = audit_evaluation(directory, expected_root=root)
+
+    assert result['passed'] is False
+    assert 'model response metadata incomplete' in result['issues']
+    assert 'tool attempt unfinished' in result['issues']
+    assert not any('KeyError' in issue for issue in result['issues'])
 
 
 @pytest.mark.parametrize('mutation', ['none', 'scope_empty', 'scope_bool', 'wrong_call',
@@ -257,7 +304,11 @@ async def test_controller_uses_real_record_gate_and_rejects_missing_record(artif
 
 
 @pytest.mark.asyncio
-async def test_four_group_orchestration_consumes_real_child_gate_and_summary(artifacts, monkeypatch):
+@pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1'])
+@pytest.mark.parametrize('unpriced', [False, True, 'priced_requests'])
+async def test_four_group_orchestration_consumes_real_child_gate_and_summary(artifacts, monkeypatch, suite, unpriced):
+    request_caps = bool(unpriced)
+    unpriced = unpriced is True
     import sqlite3
     from scripts import verify_windows_local_faults as controller, knowledge_conditions
     root, source, build = artifacts
@@ -270,12 +321,22 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
         'expected_sha256': 'fixture', 'endpoint': 'http://127.0.0.1:9200/mcp'}
     monkeypatch.setattr(knowledge_conditions, 'check_knowledge_conditions', lambda *args: knowledge)
     prior = source / 'prior-ledger.json'
-    save(prior, {'limit_cny': 5, 'reserved_cny': 0, 'requests': []})
+    inherited = [{'number': i, 'reserved_cny': 0, 'pricing_verified': False, 'http_status': 200,
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1}} for i in range(1, 53)] if request_caps else []
+    save(prior, {'limit_cny': 5, 'reserved_cny': 0, 'requests': inherited})
+    prior_bytes = prior.read_bytes()
     launches, resets = [], []
     async def reset(case):
         resets.append(case)
     def launch(args, name):
-        assert '--isolate-history' in args and '--run-budget-cny' in args
+        assert '--isolate-history' in args
+        if request_caps:
+            assert ('--allow-unpriced-model' in args) is unpriced
+            assert '--run-budget-cny' not in args
+            assert args[args.index('--max-model-requests') + 1] == '76'
+            assert args[args.index('--run-max-model-requests') + 1] == '2'
+        else:
+            assert '--run-budget-cny' in args
         symptom = Path(args[args.index('--symptom-file') + 1]).read_text(encoding='utf-8')
         assert symptom == '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。'
         group = args[args.index('--mechanism-group') + 1]
@@ -284,17 +345,24 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
         (source / ('model-attempt-' + output.name + '.json')).unlink()
         previous_path = Path(args[args.index('--previous-cost') + 1])
         old = json.loads(previous_path.read_text())
-        budget = PaidRequestBudget(output)
+        budget = PaidRequestBudget(output, allow_unpriced_models=unpriced,
+            max_requests=76 if request_caps else None, run_max_requests=2 if request_caps else None)
         row = json.loads((output / 'cost.json').read_text())['requests'][0]
         row['number'] = len(old['requests']) + 1
+        if unpriced:
+            row.update(reserved_cny=0, pricing_verified=False)
+        budget.inherited_requests = len(old['requests'])
         budget.ledger = [*old['requests'], row]
         budget.reserved = old['reserved_cny'] + row['reserved_cny']
         budget.save()
         record_path = output / 'evaluation-record.json'
         record = json.loads(record_path.read_text())
         boundary = args[args.index('--observation-not-before') + 1]
-        record['config'].update(previous_cost=str(previous_path), run_budget_cny=0.25, shared_history_enabled=False,
+        record['config'].update(previous_cost=str(previous_path), run_budget_cny=None if request_caps else 0.25, shared_history_enabled=False,
             target_id='windows-local-01', observation_not_before=boundary)
+        if request_caps:
+            record['config'].update(allow_unpriced_model=unpriced, max_model_requests=76,
+                run_max_model_requests=2, max_output_tokens=4096)
         record['config_sha256'] = hashlib.sha256(json.dumps(record['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         save(record_path, record)
         summary_path = output / 'summary.json'
@@ -303,6 +371,8 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
             actual_estimated_cny_peak=budget.actual_cost_cny(), knowledge_mode='local_bm25_mcp', knowledge_conditions=knowledge,
             diagnosis={'version': 1, 'kind': 'unlocated', 'target_id': 'windows-local-01'},
             cost_scope={'cumulative': budget.cost_summary(), 'this_run': budget.cost_summary(len(old['requests']))})
+        if request_caps:
+            summary['request_limits'] = budget.request_limits()
         save(summary_path, summary)
         for phase in ('before', 'after'):
             save(output / ('knowledge-conditions-' + phase + '.json'), {**knowledge, 'phase': phase})
@@ -322,7 +392,9 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
         save(mechanism, data)
         launches.append(output)
         return SimpleNamespace(wait=lambda: 0)
-    results = await controller.evaluate_four_groups(source, launch, reset, knowledge['endpoint'], prior, 5, 0.25)
+    options = dict(allow_unpriced_model=unpriced, max_model_requests=76, run_max_model_requests=2) if request_caps else {}
+    results = await controller.evaluate_four_groups(source, launch, reset, knowledge['endpoint'], prior, 5,
+        None if request_caps else 0.25, suite=suite, **options)
     assert len(results) == len(set(launches)) == 12
     assert resets[-1] == 'normal'
     report = summarize(source, source.parent / 'joined-summary')
@@ -330,6 +402,25 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
     assert len(report['runs']) == 12 and all(r['vs_G00'] is not None for r in report['runs'])
     assert all(r['audit']['this_run_cost']['requests'] == 1 for r in report['runs'])
     assert report['human_reviewed'] == 0 and report['diagnostic_accuracy'] is None
+    assert prior.read_bytes() == prior_bytes
+    if unpriced:
+        assert all(r['audit']['this_run_cost']['estimated_cny_peak'] is None for r in report['runs'])
+    assert all(r['mechanism_behavior']['status'] == 'passed' for r in report['runs'])
+    assert all(r['mechanism_behavior']['opportunities'] is None for r in report['runs'])
+    suite_path = source / 'four-group-controller.json'
+    original_suite = json.loads(suite_path.read_text())
+    if unpriced:
+        for key, changed in [('max_model_requests', 75), ('run_max_model_requests', 1), ('inherited_requests', 51)]:
+            save(suite_path, {**original_suite, key: changed})
+            rejected = summarize(source, source.parent / ('wrong-budget-' + key))
+            assert not rejected['passed'] and all(r['vs_G00'] is None for r in rejected['runs'])
+        save(suite_path, original_suite)
+    changed_suite = {**original_suite, 'suite': 'baseline-v1' if suite == 'mechanism-v1' else 'mechanism-v1'}
+    save(suite_path, changed_suite)
+    rejected_suite = summarize(source, source.parent / 'wrong-scenario-suite')
+    assert rejected_suite['passed'] is False
+    assert all(row['vs_G00'] is None for row in rejected_suite['runs'])
+    save(suite_path, original_suite)
     first = launches[0]
     trace_path = first / 'tool_trace.json'
     original_trace = json.loads(trace_path.read_text())

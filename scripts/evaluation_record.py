@@ -163,6 +163,24 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
         if run_cap is not None and (type(run_cap) not in (int, float) or not math.isfinite(run_cap)
                 or run_cap <= 0 or scopes['this_run']['reserved_cny'] > run_cap + 1e-9):
             fail('per-run reservation cap invalid or exceeded')
+        limits = cost.get('request_limits') or {}
+        if ('max_model_requests' in config or 'run_max_model_requests' in config
+                or config.get('allow_unpriced_model') is True
+                or any(limits.get(k) is not None for k in ('max_requests', 'run_max_requests'))):
+            expected_limits = {'max_requests': config.get('max_model_requests'),
+                'run_max_requests': config.get('run_max_model_requests'), 'inherited_requests': len(prior)}
+            if limits != expected_limits or summary.get('request_limits') != expected_limits:
+                fail('request limit metadata or inherited count differs')
+            for key, count in (('max_requests', len(cost['requests'])),
+                    ('run_max_requests', scopes['this_run']['requests'])):
+                cap = expected_limits[key]
+                if cap is not None and (type(cap) is not int or cap <= 0 or count > cap):
+                    fail('request cap invalid or exceeded: ' + key)
+            if config.get('allow_unpriced_model') is True:
+                if expected_limits['max_requests'] is None:
+                    fail('unpriced run missing cumulative request cap')
+                if any(row.get('pricing_verified') is not False for row in cost['requests'][len(prior):]):
+                    fail('unpriced run reused verified pricing')
         inputs, models = set(), []
         for row in cost['requests'][len(prior):]:
             validate_timing(row)
@@ -179,7 +197,7 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
                 fail('model response metadata incomplete')
             models.append({k: body.get(k) for k in ('model', 'temperature', 'top_p', 'max_tokens',
                 'stream', 'thinking', 'reasoning_effort', 'seed', 'presence_penalty', 'frequency_penalty')})
-            models[-1]['served_model'] = row['served_model']
+            models[-1]['served_model'] = row.get('served_model')
         trace = load('tool_trace.json')
         # Older records lack this field and remain read-only compatible.
         if 'knowledge_kb_ids' in config:

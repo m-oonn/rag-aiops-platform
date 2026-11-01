@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
-async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_url):
+async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_url, set_case=None):
     import httpx
     from langchain_core.messages import AIMessage, ToolMessage
     from sqlalchemy import create_engine
@@ -28,6 +28,8 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
     summaries = []
     endpoint = knowledge_url
     for case in ('protection', 'contradiction', 'no_live_refutation'):
+        if set_case:
+            await set_case('application_config_error' if case in {'protection', 'contradiction'} else 'normal')
         for group, (protection, trigger) in MECHANISM_GROUPS.items():
             directory = output / ('mechanisms-' + case + '-' + group)
             directory.mkdir()
@@ -58,7 +60,7 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                     name, args = 'search_knowledge_base', {'query': 'localapp availability', 'kb_id': 14}
                 elif '核查入口' in task:
                     name, args = 'probe_dependency_probe', {'dependency': 'localapp'}
-                elif '核查日志' in task:
+                elif '核查日志' in task or '读取入口日志' in task:
                     name, args = 'probe_text_log', {'service': 'localapp', 'path': str(log), 'lines': 20}
                 else:
                     name, args = 'probe_dependency_probe', {'dependency': 'downstream'}
@@ -68,20 +70,30 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                 assert decisions[-1] and 'localapp-guide' not in inputs['evidence']
                 if len(decisions) == 3:
                     return inv.InvestigationDecision(hypothesis='未查清', blocked_reason='固定决策结束，不评价自主归因')
-                decision = inv.InvestigationDecision(hypothesis='下游 TCP 不可达',
+                expected_downstream = 'ok' if case == 'no_live_refutation' else 'failed'
+                hypothesis = f'dependency_probe/downstream: tcp == "{expected_downstream}"'
+                decision = inv.InvestigationDecision(hypothesis=hypothesis,
                     hypothesis_condition=inv.ObservationCondition(operation='dependency_probe',
-                        object_name='downstream', field='tcp', expected='failed'),
+                        object_name='downstream', field='tcp', expected=expected_downstream),
                     next_check='核查下游' if case == 'contradiction' else '核查日志',
                     next_tools=['probe_dependency_probe' if case == 'contradiction' else 'probe_text_log'],
+                    next_arguments=({'probe_dependency_probe': {'dependency': 'downstream'}} if case == 'contradiction'
+                                    else {'probe_text_log': {'service': 'localapp', 'path': str(log), 'lines': 20}}),
                     discriminating_question='下游连接是否失败', expected_observation='TCP ok 反驳 failed 预期',
-                    alternatives=[inv.Alternative(explanation='入口 TCP 不可达', status='unresolved',
+                    alternatives=[inv.Alternative(explanation='dependency_probe/localapp: http.status == 503', status='unresolved',
                         condition=inv.ObservationCondition(operation='dependency_probe',
-                            object_name='localapp', field='tcp', expected='failed'),
+                            object_name='localapp', field='http.status', expected=503),
                         check=inv.CandidateCheck(next_check='核查入口', next_tools=['probe_dependency_probe'],
-                            discriminating_question='入口是否可连接', expected_observation='TCP ok 反驳入口不可达'))]
-                        if not (len(decisions) == 2 and case == 'protection') else [])
+                            next_arguments={'probe_dependency_probe': {'dependency': 'localapp'}},
+                            discriminating_question='入口是否返回预期故障状态', expected_observation='HTTP 503 支持入口配置错误场景'))]
+                        if case != 'no_live_refutation' and not (len(decisions) == 2 and case == 'protection') else [])
                 if len(decisions) == 2:
-                    decision.next_check, decision.next_tools = '再次核查下游', ['probe_dependency_probe']
+                    if case == 'contradiction':
+                        decision.next_check, decision.next_tools = '读取入口日志', ['probe_text_log']
+                        decision.next_arguments = {'probe_text_log': {'service': 'localapp', 'path': str(log), 'lines': 20}}
+                    else:
+                        decision.next_check, decision.next_tools = '复核下游状态', ['probe_dependency_probe']
+                        decision.next_arguments = {'probe_dependency_probe': {'dependency': 'downstream'}}
                 return decision
             service = None
             try:
@@ -123,14 +135,18 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                     graph = await service._persistent_graph(service._create_run_strategy())
                     final = (await graph.aget_state({'configurable': {'thread_id': tid}})).values
                     changed = protection if case == 'protection' else trigger if case == 'contradiction' else False
-                    selected = 'localapp' if changed else 'downstream'
+                    selected_tool = ('probe_dependency_probe'
+                        if changed or case in {'protection', 'no_live_refutation'} else 'probe_text_log')
+                    selected_args = ({'dependency': 'localapp'} if changed else
+                                     {'dependency': 'downstream'} if case in {'protection', 'no_live_refutation'} else
+                                     {'service': 'localapp', 'path': str(log), 'lines': 20})
                     planning_tools = ['probe_inventory'] + (['probe_list_evidence'] if 'probe_list_evidence' in tools else [])
                     assert [c['tool'] for c in calls[:len(planning_tools)]] == planning_tools
                     checks = calls[len(planning_tools):]
                     assert checks == [{'tool': 'search_knowledge_base', 'args': {'query': 'localapp availability', 'kb_id': 14}},
                         {'tool': 'probe_dependency_probe', 'args': {'dependency': 'downstream'}}
                         if case == 'contradiction' else {'tool': 'probe_text_log', 'args': {'service': 'localapp', 'path': str(log), 'lines': 20}},
-                        {'tool': 'probe_dependency_probe', 'args': {'dependency': selected}}], checks
+                        {'tool': selected_tool, 'args': selected_args}], checks
                     ledger = run_store.list_evidence(tid, 1)
                     records = inv.evidence_index(final)
                     assert len(ledger) == len(records) == 3
@@ -138,7 +154,12 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                         saved = run_store.get_evidence(tid, item['evidence_id'], 1, include_raw=True)
                         validate_evidence(saved['raw'], target_id=settings.PROBE_TARGET_ID)
                         if saved['raw']['operation'] == 'dependency_probe':
-                            assert saved['raw']['payload']['tcp'] == 'ok', 'expected healthy TCP observation'
+                            payload = saved['raw']['payload']
+                            assert payload['tcp'] == 'ok', 'expected healthy TCP observation'
+                            if case in {'protection', 'contradiction'} and payload.get('dependency') == 'localapp':
+                                assert payload.get('http', {}).get('status') == 503, 'expected live entry HTTP 503'
+                            if case in {'protection', 'contradiction'} and payload.get('dependency') == 'downstream':
+                                assert payload.get('http', {}).get('status') == 200, 'expected healthy downstream'
                         assert run_store.get_evidence(tid, item['evidence_id'], 2) is None
                     mechanism_events = final['diagnosis']['mechanisms']['events']
                     kind = 'protection_check_selected' if case == 'protection' else 'contradiction_triggered'
@@ -158,7 +179,9 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                                 assert observed['payload']['dependency'] == 'downstream'
                                 assert observed['payload']['tcp'] == 'ok'
                     assert [e['investigation'] for e in events if e.get('investigation')][-1]['events'] == mechanism_events
-                    assert complete['diagnosis']['kind'] == 'unlocated'
+                    expected_kind = ('localized_fault'
+                        if case in {'protection', 'contradiction'} and changed else 'unlocated')
+                    assert complete['diagnosis']['kind'] == expected_kind
                     assert knowledge_context(final['raw_evidence']) == decisions[0]
                     await service.close()
                     service = graphs.AIOpsService()
@@ -182,6 +205,8 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
             check_knowledge_conditions(output / 'knowledge-manifest.json', output / 'runbooks', directory, endpoint, 'after')
         rows = summaries[-4:]
         assert len({row['knowledge_sha256'] for row in rows}) == len({row['planning_knowledge_sha256'] for row in rows}) == 1
+    if set_case:
+        await set_case('normal')
     assert len({eid for row in summaries for eid in row['evidence_ids']}) == 36
     (output / 'live-mechanism-groups.json').write_text(json.dumps(summaries, ensure_ascii=False, indent=2), encoding='utf-8')
     return {'case': 'live_probe_fixed_decision_mechanism_groups', 'status': 'passed',
