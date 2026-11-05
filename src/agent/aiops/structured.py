@@ -11,6 +11,8 @@ user prompt 中出现 "json" 关键词,否则 400 报错(InternalError.Algo.Inva
 
 import json as _json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, TypeVar
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,6 +23,42 @@ from langchain_core.exceptions import OutputParserException
 from src.agent.aiops_llm import ainvoke_with_retry
 
 _T = TypeVar("_T", bound=BaseModel)
+_decision_capture: ContextVar[list | None] = ContextVar('decision_capture', default=None)
+
+
+@contextmanager
+def capture_decision_output():
+    """Opt-in decoded arguments, not provider bodies or reasoning; task-local."""
+    rows = []
+    token = _decision_capture.set(rows)
+    try:
+        yield rows
+    finally:
+        _decision_capture.reset(token)
+
+
+def _capture_arguments(schema, stage, arguments):
+    rows = _decision_capture.get()
+    if rows is None:
+        return None
+    from src.probe.protocol import redact
+    presence = ('unknown' if not isinstance(arguments, dict) else
+                'omitted' if 'alternatives' not in arguments else
+                'empty' if arguments['alternatives'] == [] else
+                'nonempty' if isinstance(arguments['alternatives'], list) else 'invalid')
+    row = {'stage': stage, 'schema': schema.__name__, 'alternatives_presence': presence,
+           'decoded_arguments': redact(arguments), 'status': 'received'}
+    rows.append(row)
+    return row
+
+
+def _tool_arguments(raw, schema):
+    name = schema.model_json_schema().get('title', schema.__name__)
+    for call in getattr(raw, 'tool_calls', []) or []:
+        if call.get('name') == name:
+            return call.get('args')
+    # Invalid tool JSON is deliberately not retained as free text.
+    return None
 
 
 class StructuredOutputError(ValueError):
@@ -91,6 +129,9 @@ async def ainvoke_structured(
     schema: type[_T],
     prompt: ChatPromptTemplate,
     prompt_input: dict[str, Any],
+    *,
+    format_fallback: bool = True,
+    max_attempts: int | None = None,
 ) -> _T:
     """调 LLM 出结构化输出,首选 function_calling,失败降级手动 JSON。
 
@@ -106,18 +147,33 @@ async def ainvoke_structured(
     from src.utils.logger import logger
 
     # ── 策略1: with_structured_output(method="function_calling") ──
+    row = None
     try:
-        structured_llm = llm.with_structured_output(schema, method="function_calling")
+        capture = _decision_capture.get() is not None
+        structured_llm = llm.with_structured_output(schema, method="function_calling",
+                                                   **({'include_raw': True} if capture else {}))
         chain = prompt | structured_llm
-        result = await ainvoke_with_retry(
-            chain, prompt_input, label="structured.function_calling"
-        )
-        if isinstance(result, schema):
-            return result
-        return schema.model_validate(result)
+        result = await ainvoke_with_retry(chain, prompt_input, label="structured.function_calling",
+            **({'max_attempts': max_attempts} if max_attempts is not None else {}))
+        if capture and isinstance(result, dict) and 'raw' in result:
+            row = _capture_arguments(schema, 'function_calling', _tool_arguments(result['raw'], schema))
+            if result.get('parsing_error') is not None:
+                raise result['parsing_error']
+            result = result.get('parsed')
+        elif capture:
+            row = _capture_arguments(schema, 'function_calling', None)
+        parsed = result if isinstance(result, schema) else schema.model_validate(result)
+        if row is not None:
+            from src.probe.protocol import redact
+            row.update(status='parsed', parsed_proposal=redact(parsed.model_dump()))
+        return parsed
     except Exception as e:
+        if row is not None:
+            row.update(status='rejected', failure=_failure_details(e, schema))
         if not _format_failure(e):
             raise
+        if not format_fallback:
+            raise StructuredOutputError('Model output did not match the required schema') from None
         logger.warning(
             f"[structured] schema={schema.__name__} stage=function_calling 格式失败,降级: {_failure_details(e, schema)}"
         )
@@ -135,14 +191,27 @@ async def ainvoke_structured(
     choices = metadata.get('choices') or []
     finish_reason = choices[0].get('finish_reason') if choices else metadata.get('finish_reason')
     if finish_reason == 'length':
+        row = _capture_arguments(schema, 'json_fallback', None)
+        if row is not None:
+            row.update(status='rejected', failure={'code': 'output_truncated'})
         raise StructuredOutputError('Model output was truncated at the token limit', code='output_truncated')
     content = getattr(raw, "content", "") or str(raw)
     content = content.strip()
 
+    row = None
     try:
         obj = _extract_json_object(content)
-        return schema.model_validate(obj)
+        row = _capture_arguments(schema, 'json_fallback', obj)
+        parsed = schema.model_validate(obj)
+        if row is not None:
+            from src.probe.protocol import redact
+            row.update(status='parsed', parsed_proposal=redact(parsed.model_dump()))
+        return parsed
     except (ValueError, ValidationError) as exc:
+        if row is None:
+            row = _capture_arguments(schema, 'json_fallback', None)
+        if row is not None:
+            row.update(status='rejected', failure=_failure_details(exc, schema))
         logger.warning(
             f"[structured] schema={schema.__name__} stage=json_fallback 校验失败: {_failure_details(exc, schema)}"
         )

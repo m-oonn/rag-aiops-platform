@@ -53,6 +53,9 @@ def investigation_summary(state: dict) -> dict | None:
         'next_arguments': memory.get('next_arguments'),
         'check_progress': [{**row, **{k: public_text(row.get(k, '')) for k in ('next_check', 'question', 'limitation')}}
                            for row in memory.get('check_progress', [])],
+        'candidate_check_progress': {ident: [
+            {**row, **{k: public_text(row.get(k, '')) for k in ('next_check', 'question', 'limitation')}}
+            for row in rows] for ident, rows in memory.get('candidate_check_progress', {}).items()},
         'next_check': public_text(next(iter(state.get('plan') or []), '')),
         'discriminating_question': public_text(memory.get('discriminating_question', '')),
         'expected_observation': public_text(memory.get('expected_observation', '')),

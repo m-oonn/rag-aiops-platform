@@ -37,6 +37,28 @@ def test_manual_advice_is_mechanically_checked(tmp_path, change):
     assert result['capability_passed'] is False
 
 
+def test_pending_capability_is_explained_without_marking_diagnosis_failed(tmp_path):
+    result = controller.review_model_artifacts(tmp_path, 'downstream_unreachable', artifacts(tmp_path))
+    assert result['capability_passed'] is False
+    assert '待人工语义审核' in result['capability_explanation']
+    assert '不表示已证明诊断失败' in result['capability_explanation']
+    assert result['workflow_status'] == 'completed'
+    assert result['mechanical_status'] == result['result_level_status'] == 'passed'
+
+
+@pytest.mark.parametrize('status', ['ready', 'degraded', 'failed', None])
+def test_requested_report_quality_gate_is_separate_from_investigation(tmp_path, status):
+    summary = artifacts(tmp_path)
+    summary['report_model_enabled'] = True
+    if status is not None:
+        summary['report_generation'] = {'status': status}
+    result = controller.review_model_artifacts(tmp_path, 'downstream_unreachable', summary)
+    assert result['workflow_status'] == 'completed'
+    assert result['report_generation_status'] == (status or 'unknown')
+    assert result['passed'] is (status == 'ready')
+    assert result['capability_passed'] is False
+
+
 @pytest.mark.parametrize('change', ['missing_report_flag', 'missing_complete', 'empty_response', 'error_event', 'budget', 'execution_error'])
 def test_missing_or_failed_workflow_is_not_completed(tmp_path, change):
     summary = artifacts(tmp_path)

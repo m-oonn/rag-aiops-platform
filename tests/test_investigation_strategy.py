@@ -19,6 +19,34 @@ def decision(**kwargs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize('answer', ['corrected', 'still_missing', 'forbidden', 'timeout'])
+async def test_missing_check_contract_gets_one_model_correction(monkeypatch, protection, trigger, answer):
+    from copy import deepcopy
+    current = state()
+    current['investigation_tools'] = [{'name': 'diagnostic_query'}]
+    current['investigation_config'] = {'hypothesis_protection': protection, 'contradiction_trigger': trigger, 'protection_steps': 2}
+    before = deepcopy(current)
+    invalid = decision(next_check='inspect permitted logs', next_tools=['diagnostic_query'])
+    valid = invalid.model_copy(deep=True)
+    valid.discriminating_question = 'application error or downstream error?'
+    valid.expected_observation = 'actual log exception and dependency status'
+    second = {'corrected': valid, 'still_missing': invalid, 'forbidden': valid.model_copy(
+        update={'next_tools': ['not_available']}), 'timeout': httpx.ReadTimeout('offline') }[answer]
+    invoke = AsyncMock(side_effect=[invalid, second])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+    result = await module.InvestigationStrategy().decide(current)
+    assert invoke.await_count == 2 and current == before
+    feedback = json.loads(invoke.call_args.args[3]['check_feedback'])
+    assert feedback['missing_fields'] == ['decision.discriminating_question', 'decision.expected_observation']
+    assert feedback['rejected_model_suggestion'] == invalid.model_dump()
+    correction = result['investigation_memory']['check_correction']
+    assert correction['attempts'] == 1
+    assert bool(result.get('plan')) is (answer == 'corrected')
+    assert correction['status'] == ('continued' if answer == 'corrected' else 'model_request_failed' if answer == 'timeout' else 'rejected')
+
+
+@pytest.mark.asyncio
 async def test_structured_failure_returns_incomplete_report_with_evidence(monkeypatch):
     from src.agent.aiops.structured import StructuredOutputError
     monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=StructuredOutputError('invalid output')))
@@ -31,6 +59,44 @@ async def test_structured_failure_returns_incomplete_report_with_evidence(monkey
     assert 'connection refused' in result['response']
     assert current['raw_evidence'] == before
     assert result['plan'] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize('error', ['missing_path', 'unconfigured_events', 'still_invalid'])
+async def test_invalid_probe_check_gets_one_feedback_and_keeps_guards(monkeypatch, protection, trigger, error):
+    from copy import deepcopy
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    from scripts.mechanism_behavior import behavior_snapshot
+    from datetime import datetime, timezone
+    current = state(evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
+        'configured_services': {'entry': {'kind': 'process', 'text_logs_available': True,
+            'text_logs': ['D:/allowed/app.log'], 'event_logs_available': False}}}))
+    current['investigation_config'] = {'hypothesis_protection': protection, 'contradiction_trigger': trigger, 'protection_steps': 2}
+    current['investigation_tools'] = [{'name': name} for name in ['probe_text_log', 'probe_event_logs']]
+    invalid = decision(next_check='inspect logs', next_tools=['probe_text_log'],
+        next_arguments={'probe_text_log': {'service': 'entry'}},
+        discriminating_question='application or dependency failure?', expected_observation='logged exception')
+    if error == 'unconfigured_events':
+        invalid.next_tools = ['probe_event_logs']
+        invalid.next_arguments = {'probe_event_logs': {'service': 'entry'}}
+    valid = invalid.model_copy(deep=True)
+    valid.next_tools = ['probe_text_log']
+    valid.next_arguments = {'probe_text_log': {'service': 'entry', 'path': 'D:/allowed/app.log'}}
+    invoke = AsyncMock(side_effect=[invalid, invalid if error == 'still_invalid' else valid])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+    before = deepcopy(current)
+    result = await module.InvestigationStrategy().decide(current)
+    assert current == before and invoke.await_count == 2
+    correction = result['investigation_memory']['check_correction']
+    assert correction['validation_error'] and correction['attempts'] == 1
+    assert correction['missing_fields'] == []
+    assert correction['rejected_model_suggestion'] == invalid.model_dump()
+    assert bool(result['plan']) is (error != 'still_invalid')
+    assert correction['status'] == ('rejected' if error == 'still_invalid' else 'continued')
+    snapshot = behavior_snapshot({**current, **result}, datetime.now(timezone.utc).isoformat())
+    assert snapshot['behavior_context']['check_correction'] == correction
 
 
 @pytest.mark.asyncio
@@ -59,6 +125,8 @@ async def test_decision_receives_tool_capabilities_and_execution_failures(monkey
     monkeypatch.setattr(module, 'ainvoke_structured', invoke)
     current = state()
     current['investigation_tools'] = [{'name': 'probe_port_snapshot', 'description': 'bounded snapshot', 'parameters': ['limit']}]
+    current['target_resolution'] = {'status': 'resolved', 'allowed_services': ['entry', 'worker'],
+                                    'allowed_dependencies': ['entry', 'db']}
     current['raw_evidence'].append(('unsupported service', json.dumps({
         'data_source': 'tool_execution', 'tool': 'probe_service_status',
         'arguments': {'service': 'sshd'}, 'status': 'unavailable', 'reason': 'service_not_configured'})))
@@ -68,6 +136,8 @@ async def test_decision_receives_tool_capabilities_and_execution_failures(monkey
     assert 'service_not_configured' in inputs['checks']
     assert 'sshd' in inputs['checks']
     assert 'progress' in inputs
+    assert json.loads(inputs['target_resolution']) == current['target_resolution']
+    assert '本次已解析业务范围' in module._PROMPT.format(**inputs)
 
 
 @pytest.mark.asyncio
@@ -85,6 +155,140 @@ async def test_reference_guidance_reaches_decision_but_cannot_support_root_cause
     assert 'do-not-store' not in inputs['references']
     assert 'handbook-only diagnosis' not in inputs['evidence']
     assert result['response'].startswith('未定位根因')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corrected', [True, False])
+async def test_rejected_health_claim_gets_one_feedback_attempt_without_bypassing_gate(monkeypatch, corrected):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='services',
+        payload={'service': 'orders', 'state': 'running'})
+    citation = module.Citation(evidence_id='e1.1', quote='running')
+    invalid = decision(outcome='healthy', conclusion_level='healthy_within_scope', scope='本次orders状态',
+        supporting_evidence=[citation], alternatives=[module.Alternative(
+            explanation='历史故障已排除', status='excluded', evidence=[citation])])
+    valid = invalid.model_copy(deep=True)
+    valid.alternatives = [module.Alternative(explanation='services/orders: state == "stopped"',
+        status='excluded', claim_type='observed_condition', evidence=[citation],
+        condition=module.ObservationCondition(operation='services', object_name='orders',
+            field='state', expected='stopped'))]
+    invoke = AsyncMock(side_effect=[invalid, valid if corrected else invalid])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+    result = await module.InvestigationStrategy().decide(state(raw))
+    assert invoke.await_count == 2
+    feedback = json.loads(invoke.call_args.args[3]['health_feedback'])
+    assert feedback['validation_issues'] and feedback['rejected_model_suggestion'] == invalid.model_dump()
+    assert result['diagnosis']['kind'] == ('healthy_within_scope' if corrected else 'unlocated')
+    assert result['investigation_memory']['health_correction']['attempts'] == 1
+    assert result['investigation_memory']['health_correction']['status'] == result['diagnosis']['kind']
+
+
+@pytest.mark.asyncio
+async def test_health_feedback_does_not_expose_unsaved_candidate_id(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='services',
+        payload={'service': 'orders', 'state': 'running'})
+    citation = module.Citation(evidence_id='e1.1', quote='running')
+    invalid = decision(outcome='healthy', conclusion_level='healthy_within_scope', scope='本次orders状态',
+        supporting_evidence=[citation], alternatives=[module.Alternative(
+            explanation='services/orders: state == "running"', status='supported',
+            claim_type='observed_condition', evidence=[citation],
+            condition=module.ObservationCondition(operation='services', object_name='orders',
+                field='state', expected='running'))])
+    current = state(raw)
+    rejected = module.decide_from_evidence(current, invalid, module.evidence_index(current),
+        require_concrete_checks=True)
+    assert rejected['diagnosis']['kind'] == 'unlocated'
+    assert rejected['diagnosis']['alternatives'][0]['hypothesis_id']
+    invoke = AsyncMock(side_effect=[invalid, invalid])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+    result = await module.InvestigationStrategy().decide(current)
+    assert invoke.await_count == 2
+    feedback = json.loads(invoke.call_args.args[3]['health_feedback'])
+    assert feedback['validated_alternatives'][0]['hypothesis_id'] == ''
+    assert result['diagnosis']['kind'] == 'unlocated'
+    assert 'investigation_memory' not in current
+
+
+@pytest.mark.asyncio
+async def test_healthy_decision_binds_missing_citations_from_complete_probe_records(monkeypatch):
+    from src.probe.protocol import evidence
+    target = 'windows-local-01'
+    current = state()
+    current['target_resolution'] = {
+        'status': 'resolved', 'target_id': target,
+        'allowed_services': ['localapp', 'downstream'],
+        'allowed_dependencies': ['localapp', 'downstream'],
+        'services': {
+            'localapp': {'kind': 'process', 'process_names': ['python.exe']},
+            'downstream': {'kind': 'process', 'process_names': ['python.exe']},
+        },
+    }
+    records = [
+        evidence(target_id=target, operation='inventory', payload={
+            'configured_services': {
+                'localapp': {'kind': 'process', 'process_names': ['python.exe']},
+                'downstream': {'kind': 'process', 'process_names': ['python.exe']},
+            }}),
+        evidence(target_id=target, operation='dependency_probe', payload={
+            'dependency': 'localapp', 'tcp': 'ok', 'http': {'status': 200}}),
+        evidence(target_id=target, operation='dependency_probe', payload={
+            'dependency': 'downstream', 'tcp': 'ok', 'http': {'status': 200}}),
+        evidence(target_id=target, operation='processes', payload={
+            'service': 'localapp', 'processes': [{'pid': 1}],
+            'matched_count': 1, 'skipped_count': 0}),
+        evidence(target_id=target, operation='processes', payload={
+            'service': 'downstream', 'processes': [{'pid': 2}],
+            'matched_count': 1, 'skipped_count': 0}),
+    ]
+    current['raw_evidence'].extend((f'probe-{i}', item) for i, item in enumerate(records))
+    healthy = decision(outcome='healthy', conclusion_level='healthy_within_scope',
+        scope='当前窗口内核查 localapp、downstream、进程与入口')
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=[healthy, healthy]))
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    assert result['diagnosis']['kind'] == 'healthy_within_scope'
+    assert result['plan'] == []
+    assert result['diagnosis']['evidence']
+    assert result['diagnosis']['alternatives']
+
+
+@pytest.mark.asyncio
+async def test_healthy_decision_does_not_reuse_success_superseded_by_newer_failed_probe(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from src.probe.protocol import evidence
+    target = 'windows-local-01'
+    now = datetime.now(timezone.utc)
+    current = state()
+    current['target_resolution'] = {
+        'status': 'resolved', 'target_id': target,
+        'allowed_services': ['app'], 'allowed_dependencies': ['db'],
+        'services': {'app': {'kind': 'process', 'process_names': ['app.exe']}},
+    }
+    inventory = evidence(target_id=target, operation='inventory', payload={
+        'configured_services': {'app': {'kind': 'process', 'process_names': ['app.exe']}}})
+    old_success = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'db', 'tcp': 'ok', 'http': {'status': 200}},
+        collected_at=(now - timedelta(seconds=10)).isoformat())
+    latest_failure = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'db', 'tcp': 'unknown', 'http': {'error': 'ReadTimeout'},
+        'error': 'ReadTimeout'}, collected_at=now.isoformat())
+    app_process = evidence(target_id=target, operation='processes', payload={
+        'service': 'app', 'processes': [{'pid': 10, 'name': 'app.exe'}],
+        'matched_count': 1, 'skipped_count': 0})
+    current['raw_evidence'].extend((f'probe-{i}', item) for i, item in enumerate(
+        [inventory, old_success, latest_failure, app_process]))
+    healthy = decision(outcome='healthy', conclusion_level='healthy_within_scope',
+        scope='当前窗口内核查 app 与 db')
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=[healthy, healthy]))
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    assert result['diagnosis']['kind'] == 'unlocated'
+    assert 'db' in result['diagnosis']['conclusion'] or 'db' in result['response']
 
 
 @pytest.mark.asyncio
@@ -345,6 +549,40 @@ async def test_localized_stop_does_not_claim_available_checks_are_exhausted(monk
 
 
 @pytest.mark.asyncio
+async def test_localized_report_highlights_current_log_observations_without_confirming_cause(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    current = state()
+    current['raw_evidence'] = [(name, json.dumps(evidence(
+        target_id=settings.PROBE_TARGET_ID, operation=operation, payload=payload)))
+        for name, operation, payload in [
+            ('入口', 'dependency_probe', {'dependency': 'localapp', 'tcp': 'ok', 'http': {'status': 503}}),
+            ('下游', 'dependency_probe', {'dependency': 'downstream', 'tcp': 'ok', 'http': {'status': 200}}),
+            ('旧日志', 'text_logs', {'service': 'localapp', 'path': 'C:/demo/app.log', 'lines': ['old failure']}),
+            ('当前日志', 'text_logs', {'service': 'localapp', 'path': 'C:/demo/app.log',
+                'lines': ['ValueError: invalid max_attempts configuration']}),
+            ('范围外日志', 'text_logs', {'service': 'other', 'path': 'C:/demo/other.log', 'lines': ['outside failure']}),
+            ('失败查询', 'text_logs', {'service': 'localapp', 'path': 'C:/demo/denied.log',
+                'error': 'denied', 'lines': ['unavailable failure']})]]
+    current['target_resolution'] = {'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+        'allowed_dependencies': ['localapp', 'downstream'], 'allowed_services': ['localapp']}
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=decision(blocked_reason='no new check')))
+
+    result = await module.InvestigationStrategy().decide(current)
+    notes = result['diagnosis']['observation_notes']
+    log_note = next(note for note in notes if '现场日志观察' in note)
+    assert 'localapp' in log_note and '[e4.1]' in log_note
+    assert 'ValueError: invalid max_attempts configuration' in log_note
+    assert log_note in result['response']
+    assert result['response'].index(log_note) < result['response'].index('停止原因：')
+    assert all(text not in '\n'.join(notes) for text in ['old failure', 'outside failure', 'unavailable failure'])
+    assert '不作为因果确认' in log_note
+    assert result['diagnosis']['kind'] == 'localized_fault'
+    assert '更深原因尚未确认' in result['response']
+
+
+@pytest.mark.asyncio
 async def test_failed_allowlisted_loopback_dependency_forces_exact_listener_check(monkeypatch):
     from src.probe.protocol import evidence
     from src.settings import settings
@@ -582,6 +820,155 @@ def test_missing_dependency_address_is_not_reported_as_a_remote_target():
     assert '依赖在远端' not in gaps[0]['limitation']
 
 
+def _configuration_error_evidence(*, event_logs_available=False, matching_hash=True):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    path = 'D:/runtime/app.mode'
+    source_hash = 'sha256:config-source'
+    log_event = {'at': '2026-11-03T00:00:00Z', 'pid': 1234, 'status': 503,
+        'error_type': 'ValueError', 'detail': 'invalid max_attempts configuration',
+        'configuration': {'source': path, 'field': 'max_attempts', 'value': 'invalid',
+            'expected': 'integer-convertible',
+            'source_sha256': source_hash if matching_hash else 'sha256:other-source'}}
+    raw = [
+        ('inventory', evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
+            'configured_services': {'app': {'kind': 'process', 'process_names': ['app.exe'],
+                'event_logs_available': event_logs_available, 'configuration_available': True,
+                'text_logs_available': True}}, 'configured_dependencies': []})),
+        ('log', evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
+            'service': 'app', 'path': 'D:/runtime/app.log', 'lines': [json.dumps(log_event)]})),
+        ('config', evidence(target_id=settings.PROBE_TARGET_ID, operation='configuration', payload={
+            'service': 'app', 'path': path, 'source_sha256': source_hash,
+            'values': {'max_attempts': 'invalid'}, 'missing_keys': []})),
+    ]
+    current = state()
+    current.update(raw_evidence=[(step, json.dumps(payload)) for step, payload in raw],
+        target_resolution={'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+            'allowed_services': ['app'], 'allowed_dependencies': [],
+            'dependency_services': {}, 'services': {'app': {'probe_service': 'app'}}},
+        investigation_tools=[{'name': 'probe_event_log'}])
+    return current
+
+
+def test_config_error_finding_requires_log_and_snapshot_to_match_exact_source():
+    current = _configuration_error_evidence()
+    records = module.evidence_index(current)
+    findings = module._localized_findings(records, current)
+
+    finding = next(row for row in findings if row['code'] == 'configuration_error_log_matches_snapshot')
+    assert finding['causal'] is False
+    assert len(finding['related_evidence']) == 1
+    assert module._valid_citations([
+        module.Citation(evidence_id=finding['evidence_id'], quote=finding['quote']),
+        *[module.Citation(**ref) for ref in finding['related_evidence']],
+    ], records)
+
+    mismatched = _configuration_error_evidence(matching_hash=False)
+    assert not module._configuration_error_findings(module.evidence_index(mismatched), mismatched)
+
+
+def test_config_history_check_runs_only_when_event_channel_is_configured():
+    current = _configuration_error_evidence(event_logs_available=True)
+    check = module._configuration_history_check(current, module.evidence_index(current))
+    assert check[0]['next_tools'] == ['probe_event_log']
+    assert check[0]['next_arguments']['probe_event_log'] == {
+        'service': 'app', 'since_minutes': 1440, 'limit': 200}
+
+    current = _configuration_error_evidence(event_logs_available=False)
+    assert module._configuration_history_check(current, module.evidence_index(current)) is None
+    gaps = module.investigation_gaps(current, decision(), module.evidence_index(current))
+    assert any('inventory 未配置可用事件通道' in row['limitation'] for row in gaps)
+
+
+def test_config_report_is_actionable_and_keeps_details_out_of_main_text():
+    current = _configuration_error_evidence()
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+    report, diagnosis = result['response'], result['diagnosis']
+    advice = next(row for row in diagnosis['recommendations']
+                  if row['finding_code'] == 'configuration_error_log_matches_snapshot')
+    assert 'max_attempts' in advice['action'] and 'invalid' in advice['action']
+    assert '整数' in advice['action']
+    assert 'ValueError' in report and 'max_attempts' in report
+    assert report.index('人工处理建议') < report.index('停止原因：')
+    assert 'source_sha256' not in report
+    assert 'sha256:config-source' not in report
+    assert any(row['id'].startswith('gap-config-history-') for row in diagnosis['unresolved_questions'])
+    assert '已复核' in diagnosis['stop_reason']
+    assert '未核验' in diagnosis['stop_reason']
+    assert all(ref['quote'] for ref in advice['evidence'])
+
+
+def test_config_hash_mismatch_does_not_produce_config_repair_advice():
+    current = _configuration_error_evidence(matching_hash=False)
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+    assert not result['diagnosis']['recommendations']
+
+
+def test_config_report_explains_observed_failure_and_separates_history_gap():
+    from src.probe.protocol import evidence
+    current = _configuration_error_evidence()
+    step, raw = current['raw_evidence'][1]
+    observed = json.loads(raw)
+    observed['payload']['lines'] *= 2
+    current['raw_evidence'][1] = (step, json.dumps(evidence(target_id=observed['target_id'],
+        operation='text_logs', payload=observed['payload'])))
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+    report = result['response']
+    assert "配置字段 max_attempts='invalid'" in report
+    assert '应用日志记录 ValueError' in report and 'HTTP 503' in report
+    assert '优先支持配置解析失败这一解释' in report
+    assert '日志陈述与独立快照的交叉支持，尚未独立复现因果' in report
+    assert '更深原因尚未确认，不据此推断服务停止' not in report
+    assert report.count('未查清：app 的配置错误由谁在何时引入？') == 1
+    assert result['diagnosis']['kind'] == 'localized_fault'
+    assert all(row['causal'] is False for row in result['diagnosis']['observed_findings'])
+
+
+def test_downstream_stop_log_is_reported_as_source_statement_with_unknown_actor():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    current = state()
+    current['raw_evidence'] = [(name, json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+        operation=operation, payload=payload))) for name, operation, payload in [
+        ('dependency', 'dependency_probe', {'dependency': 'downstream', 'host': '127.0.0.1',
+            'port': 9100, 'tcp': 'failed'}),
+        ('listener', 'ports', {'local_port': 9100, 'listening_only': True, 'ports': []}),
+        ('process', 'processes', {'service': 'downstream', 'selection': 'top_accessible_processes',
+            'inspected_count': 10, 'matched_count': 0, 'skipped_count': 0, 'processes': []}),
+        ('log', 'text_logs', {'service': 'downstream', 'path': 'D:/test/downstream.log',
+            'lines': [json.dumps({'event': 'shutdown_requested', 'reason': 'controlled_stop',
+                'stop_request': {'channel': 'file_presence', 'initiator': 'unknown'}})]})]]
+    current['investigation_tools'] = []
+    result = module.decide_from_evidence(current, decision(), module.evidence_index(current))
+    report = result['response']
+    assert not result['plan']
+    assert 'shutdown_requested' in report and 'controlled_stop' in report and 'unknown' in report
+    assert '日志为应用自身记录' in report and '不作为因果确认' in report
+    assert 'TCP=failed' in report and '返回范围内无监听' in report and '匹配0' in report
+    assert '进程崩溃' not in report
+
+
+def test_blocked_general_policy_does_not_hide_next_existing_legal_policy():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    current = state()
+    current['raw_evidence'] = [(name, json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+        operation=operation, payload=payload))) for name, operation, payload in [
+        ('inventory', 'inventory', {'configured_services': {'downstream': {
+            'kind': 'process', 'process_names': ['worker.exe']}}}),
+        ('dependency', 'dependency_probe', {'dependency': 'downstream', 'host': '127.0.0.1',
+            'port': 9100, 'tcp': 'failed'})]]
+    current['target_resolution'] = {'status': 'resolved', 'allowed_dependencies': ['downstream'],
+        'allowed_services': ['downstream'], 'dependency_services': {'downstream': 'downstream'}}
+    current['investigation_tools'] = [{'name': 'probe_port_snapshot'}, {'name': 'probe_process_snapshot'}]
+    records = module.evidence_index(current)
+    first = module._unverified_loopback_dependency_check(current, records)
+    current['past_steps'].append((first[0]['next_check'], 'already attempted'))
+    followup = module.dependency_followup_policy(current, records)
+    assert followup['check']['next_tools'] == ['probe_process_snapshot']
+
+
 @pytest.mark.parametrize(('resolution', 'host', 'include_tool', 'prior_snapshot', 'expected'), [
     ({'status': 'unmatched', 'allowed_dependencies': ['downstream']}, '127.0.0.1', True, False, False),
     ({'status': 'resolved', 'allowed_dependencies': []}, '127.0.0.1', True, False, False),
@@ -667,6 +1054,27 @@ async def test_unverified_causal_alternative_is_sanitized_from_user_output(monke
     assert result['investigation_memory']['model_suggestion']['alternatives'][0]['explanation'] == claim
     assert result['investigation_memory']['alternatives'][0]['explanation'] == claim
     assert result['diagnosis']['alternatives'][0]['verification'] == 'causal_claim_unverified'
+
+
+@pytest.mark.asyncio
+async def test_supported_causal_claim_without_condition_or_citation_stays_unresolved(monkeypatch):
+    claim = 'controlled_stop 导致 downstream 进程退出'
+    answer = decision(alternatives=[module.Alternative(
+        explanation=claim, status='supported', claim_type='causal_explanation')])
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(return_value=answer))
+
+    result = await module.InvestigationStrategy().decide(state())
+
+    alternative = result['diagnosis']['alternatives'][0]
+    assert alternative['status'] == 'unresolved'
+    assert alternative['verification'] == 'unverified'
+    assert alternative['evidence'] == []
+    assert result['investigation_memory'].get('root_cause', '') == ''
+    saved = next(candidate for candidate in
+                 result['investigation_memory']['hypothesis_tracking']['candidates']
+                 if candidate['source_explanation'] == claim)
+    assert saved['status'] == 'active'
+    assert saved['proposal']['original_status'] == 'supported'
 
 
 @pytest.mark.parametrize('completed,failed', [(False, False), (True, False), (True, True)])
@@ -795,6 +1203,33 @@ def test_old_mcp_python_repr_checkpoint_is_readable():
     current["raw_evidence"] = [("old check", str([{"type": "text", "text": json.dumps({
         "data_source": "diagnostic_target", "content": "actual output"})}]))]
     assert "actual output" in module.evidence_index(current)["e1.1"]["payload"]
+
+
+def test_decision_memory_prompt_projection_omits_duplicate_history_without_mutating_checkpoint():
+    from copy import deepcopy
+    memory = {
+        'model_suggestion': {'hypothesis': 'duplicate original proposal'},
+        'check_progress': [{'check': 'duplicate execution status'}],
+        'hypothesis_tracking': {'leading_id': 'h-1', 'candidates': [
+            {'id': 'h-1', 'condition': {'operation': 'ports', 'object_name': '8080',
+                'field': 'listening', 'expected': False}, 'status': 'active'}]},
+        'unresolved_questions': [{'id': 'q-1', 'question': 'why is the listener absent?'}],
+        'candidate_check_progress': {'h-1': [{'status': 'not_run'}]},
+        'evidence_summaries': [{'evidence_id': 'e1.1', 'summary': 'listener probe failed'}],
+        'identity_correction': {'attempts': 1, 'status': 'identity_rejected'},
+    }
+    before = deepcopy(memory)
+
+    projection = module._decision_memory_context(memory)
+
+    assert 'model_suggestion' not in projection
+    assert 'check_progress' not in projection
+    assert projection['hypothesis_tracking']['candidates'][0]['id'] == 'h-1'
+    assert projection['unresolved_questions'] == memory['unresolved_questions']
+    assert projection['candidate_check_progress'] == memory['candidate_check_progress']
+    assert projection['evidence_summaries'] == memory['evidence_summaries']
+    assert projection['identity_correction'] == memory['identity_correction']
+    assert memory == before
 
 
 @pytest.mark.asyncio

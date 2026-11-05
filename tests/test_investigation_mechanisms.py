@@ -43,7 +43,6 @@ def concrete(answer):
         if item.next_tools:
             item.next_arguments = {tool: ({'dependency': 'db'} if tool == 'probe_dependency_probe'
                                          else {'service': 'entry'}) for tool in item.next_tools}
-            item.repeat_reason, item.repeat_evidence_ids = '复核本轮状态', ['e1.1']
     return answer
 
 
@@ -279,7 +278,7 @@ def test_mechanisms_cannot_select_missing_tools_or_repeat_completed_checks():
     state['investigation_tools'] = [{'name': 'probe_dependency_probe'}]
     result = decide(state, proposal())
     assert result['plan'] == []
-    assert '没有可执行' in result['diagnosis']['stop_reason']
+    assert '没有可安全执行的新检查' in result['diagnosis']['stop_reason']
     assert result['diagnosis']['kind'] == 'unlocated'
     state = after_first(initial())
     add_observation(state)
@@ -455,6 +454,12 @@ def test_referenced_rephrased_leader_keeps_saved_prediction_and_counterevidence(
     assert leader['condition'] == original['condition']
     assert leader['relation'] == 'contradict'
     assert leader['contradicting_observations'] == 1
+    if rewrite == 'change':
+        assert result['plan'] == []
+        assert tracking['identity_issues']
+        assert leader['birth_step'] == original['birth_step']
+        assert not any(e['kind'] == 'contradiction_triggered' for e in tracking['events'])
+        return
     assert result['plan'] == ([check().next_check] if trigger else [answer.next_check])
     assert bool([e for e in tracking['events'] if e['kind'] == 'contradiction_triggered']) is trigger
 
@@ -545,7 +550,7 @@ def test_legacy_output_and_tracking_without_identity_fields_remain_usable_after_
     assert current['candidates'][0]['birth_step'] == original['birth_step']
 
 
-def test_saved_prediction_is_restored_before_validating_a_rewritten_exclusion():
+def test_rewritten_exclusion_is_atomically_rejected_and_saved_prediction_preserved():
     state = after_first(initial(False, False))
     original = state['investigation_memory']['hypothesis_tracking']['candidates'][1]
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='services',
@@ -558,10 +563,12 @@ def test_saved_prediction_is_restored_before_validating_a_rewritten_exclusion():
     rejected.status = 'excluded'
     rejected.evidence = [inv.Citation(evidence_id='e1.1', quote='stopped')]
     result = decide(state, answer)
-    saved = result['investigation_memory']['alternatives'][0]
+    tracking = result['investigation_memory']['hypothesis_tracking']
+    assert result['plan'] == [] and tracking['identity_issues']
+    saved = next(c for c in tracking['candidates'] if c['id'] == original['id'])
     assert saved['condition'] == original['condition']
-    assert saved['status'] == 'unresolved'
-    assert saved['verification'] == 'predicate_mismatch'
+    assert saved['birth_step'] == original['birth_step']
+    assert result['investigation_memory']['model_suggestion']['alternatives'][0]['condition']['expected'] == 'running'
 
 
 @pytest.mark.asyncio
@@ -584,7 +591,7 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
         task = state['plan'][0]
         executed.append(task)
         raw = []
-        if len(executed) == 3:
+        if len(executed) >= 3:
             tool, args = ('probe_service_status', {'service': 'entry'}) if task == check().next_check else (
                 'probe_dependency_probe', {'dependency': 'db'})
             raw = [(task, json.dumps({'data_source': 'tool_execution', 'tool': tool,
@@ -602,8 +609,10 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
         second.alternatives[0].status = 'excluded'
         second.alternatives[0].check = None
     second.next_check = '再次核查下游'
-    model = AsyncMock(side_effect=[concrete(proposal()), concrete(second),
-        inv.InvestigationDecision(hypothesis='未查清', blocked_reason='没有更多可执行检查')])
+    # The common stop review may execute other saved legal checks in every group.
+    model = AsyncMock(side_effect=[concrete(proposal()), concrete(second), *[
+        inv.InvestigationDecision(hypothesis='未查清', blocked_reason='没有更多可执行检查')
+        for _ in range(4)]])
     monkeypatch.setattr(inv, 'ainvoke_structured', model)
     service = graph_module.AIOpsService()
     graph = service._build_graph(DefaultReplanStrategy())
@@ -613,8 +622,12 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
     streamed = [event async for event in service._stream_events(graph, config, current)]
     final = (await graph.aget_state(config)).values
     changed = trigger if case == 'contradiction' else protection
-    assert executed == ['初始检查', proposal().next_check, check().next_check if changed else second.next_check]
-    assert model.await_count == 3
+    common_repeat_fallback = case == 'contradiction'
+    assert executed[:3] == ['初始检查', proposal().next_check,
+        check().next_check if changed or common_repeat_fallback else second.next_check]
+    assert len(executed) == len(set(executed))
+    assert all(task in {check().next_check, second.next_check} for task in executed[3:])
+    assert model.await_count == len(executed)
     assert final['investigation_config'] == current['investigation_config']
     assert final['diagnosis']['mechanisms'] == inv._public_tracking(final['investigation_memory']['hypothesis_tracking'])
     assert final['diagnosis']['kind'] == 'unlocated'
@@ -624,12 +637,12 @@ async def test_real_graph_routes_to_investigation_and_executes_the_mechanism_sel
         current['investigation_config'], tmp_path)
     assert audit['passed'], audit
     trace = json.loads((tmp_path / 'mechanism_trace.json').read_text(encoding='utf-8'))
-    assert len(trace['decisions']) == 3
+    assert len(trace['decisions']) == model.await_count
     assert trace['executed_steps'] == executed
-    assert trace['decisions'][1]['plan'] == [executed[-1]]
+    assert trace['decisions'][1]['plan'] == [executed[2]]
     summaries = [event['investigation'] for event in streamed if event.get('investigation')]
-    assert len(summaries) == 3
-    assert summaries[1]['next_check'] == executed[-1]
+    assert len(summaries) == model.await_count
+    assert summaries[1]['next_check'] == executed[2]
     assert summaries[-1]['events'] == final['diagnosis']['mechanisms']['events']
     if changed:
         kind = 'contradiction_triggered' if case == 'contradiction' else 'protection_check_selected'
@@ -687,7 +700,8 @@ async def test_sqlite_reopen_preserves_candidates_and_run_switches(tmp_path, mon
         assert restored.values['investigation_memory'] == paused.values['investigation_memory']
         assert restored.values['investigation_config'] == state['investigation_config']
         result = await graph.ainvoke(None, config, interrupt_after=['replanner'])
-        assert result['plan'] == [check().next_check]
+        assert result['plan'] == []
+        assert '该检查步骤此前已执行' in result['investigation_memory']['blocked_reason']
         assert result['investigation_memory']['hypothesis_tracking']['config'] == state['investigation_config']
         before = paused.values['investigation_memory']['hypothesis_tracking']['candidates']
         after = result['investigation_memory']['hypothesis_tracking']['candidates']

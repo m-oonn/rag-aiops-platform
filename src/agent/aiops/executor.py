@@ -388,6 +388,22 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
     from src.agent.aiops.strategies.investigation import _payloads, followup_check_error
     name, args = tc.get('name'), tc.get('args') or {}
     if name == 'read_run_evidence':
+        memory = state.get('investigation_memory') or {}
+        planned = memory.get('next_arguments')
+        if planned is not None and name in (memory.get('next_tools') or []):
+            from src.agent.aiops.evidence_reader import read_query_key
+            from src.agent.aiops.strategies.investigation import evidence_index
+            from src.agent.aiops.probe_checks import arguments_error, progress_error
+            try:
+                if name not in planned or read_query_key(args) != read_query_key(planned[name]):
+                    return 'planned_evidence_read_arguments_mismatch'
+            except (TypeError, ValueError):
+                return 'invalid_planned_evidence_read_arguments'
+            records = evidence_index(state)
+            if arguments_error(name, args, state, records):
+                return 'invalid_planned_evidence_read_arguments'
+            if progress_error({**memory, 'next_arguments': {name: args}}, state, records):
+                return 'planned_evidence_read_already_completed_or_unavailable'
         return ''
     if name in PROBE_TOOL_OPERATIONS:
         from src.agent.aiops.strategies.investigation import repeated_probe_arguments
@@ -416,7 +432,7 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
     if resolution.get('status') == 'resolved':
         if name == 'probe_dependency_probe' and args.get('dependency') not in resolution.get('allowed_dependencies', []):
             return 'dependency_outside_business_scope'
-        if name in {'probe_service_status', 'probe_event_log', 'probe_text_log', 'probe_process_snapshot'}:
+        if name in {'probe_service_status', 'probe_event_log', 'probe_text_log', 'probe_config_snapshot', 'probe_process_snapshot'}:
             if args.get('service') not in resolution.get('allowed_services', []):
                 return 'service_outside_business_scope'
     if resolution.get('status') == 'host_overview' and name == 'probe_dependency_probe':
@@ -427,7 +443,7 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
             return 'invalid_investigation_check'
         if name not in memory['next_tools']:
             return 'outside_investigation_check'
-    service_tools = {'probe_service_status', 'probe_event_log', 'probe_text_log', 'probe_process_snapshot'}
+    service_tools = {'probe_service_status', 'probe_event_log', 'probe_text_log', 'probe_config_snapshot', 'probe_process_snapshot'}
     if name not in service_tools | {'probe_dependency_probe'}:
         return ''
     for _, raw in reversed(state.get('raw_evidence', []) or []):
@@ -455,6 +471,8 @@ def _probe_request_limit(tc: dict, state: PlanExecuteState) -> str:
                     return 'service_not_configured'
                 if name == 'probe_event_log' and services[service].get('event_logs_available') is False:
                     return 'event_logs_not_configured'
+                if name == 'probe_config_snapshot' and services[service].get('configuration_available') is not True:
+                    return 'configuration_not_configured'
                 if name == 'probe_text_log' and services[service].get('text_logs_available') is False:
                     return 'text_logs_not_configured'
             return ''
@@ -504,7 +522,8 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
         memory = state.get('investigation_memory') or {}
         planned = memory.get('next_arguments')
         if (state.get('autonomous_investigation') and memory.get('next_check') and planned is not None
-                and memory.get('next_tools') and all(name in PROBE_TOOL_OPERATIONS for name in memory['next_tools'])):
+                and memory.get('next_tools') and all(name in set(PROBE_TOOL_OPERATIONS) | {'read_run_evidence'}
+                                                     for name in memory['next_tools'])):
             # The investigator already selected this query; no model is needed to reselect it.
             summaries = []
             for i, name in enumerate(dict.fromkeys(memory['next_tools'])):

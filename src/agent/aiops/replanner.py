@@ -41,14 +41,18 @@ def create_replanner(strategy: Any = None):
             _strategy, (DefaultReplanStrategy, DynamicClassificationStrategy)
         ):
             from src.agent.aiops.strategies.investigation import InvestigationStrategy
-            return await InvestigationStrategy().decide(state)
-        restore = getattr(_strategy, "restore_checkpoint", None)
-        if callable(restore) and state.get("strategy_checkpoint"):
-            restore(state["strategy_checkpoint"])
-        update = await _strategy.decide(state)
-        snapshot = getattr(_strategy, "checkpoint", None)
-        if callable(snapshot):
-            update["strategy_checkpoint"] = snapshot()
+            update = await InvestigationStrategy().decide(state)
+        else:
+            restore = getattr(_strategy, "restore_checkpoint", None)
+            if callable(restore) and state.get("strategy_checkpoint"):
+                restore(state["strategy_checkpoint"])
+            update = await _strategy.decide(state)
+            snapshot = getattr(_strategy, "checkpoint", None)
+            if callable(snapshot):
+                update["strategy_checkpoint"] = snapshot()
+        if state.get('autonomous_investigation'):
+            from src.agent.aiops.reporting import finalize_report
+            update = await finalize_report(state, update)
         return update
 
     return replanner

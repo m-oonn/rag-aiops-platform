@@ -25,7 +25,7 @@ EVIDENCE_SOURCES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
      ("check_website", "check_ports", "check_service_health", "check_api_endpoint")),
     ("host_probe", "Windows 主机 Probe",
      ("probe_inventory", "probe_resource_snapshot", "probe_service_status", "probe_process_snapshot",
-      "probe_port_snapshot", "probe_event_log", "probe_text_log", "probe_dependency_probe", "probe_list_evidence")),
+      "probe_port_snapshot", "probe_event_log", "probe_text_log", "probe_config_snapshot", "probe_dependency_probe", "probe_list_evidence")),
 )
 
 DIAGNOSTIC_SOURCE = (

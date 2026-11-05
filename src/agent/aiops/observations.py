@@ -5,12 +5,13 @@ from datetime import datetime
 
 FAULT_LABELS = {
     'service_not_running': '配置服务当前未运行',
-    'configured_process_not_observed': '完整查询未发现配置进程',
+    'configured_process_not_observed': '本次可枚举范围内未发现配置进程',
     'port_not_listening': '指定端口未监听',
     'expected_port_not_listening': '期望端口未监听',
     'dependency_tcp_failed': '配置依赖 TCP 探测失败',
     'dependency_http_failed': 'HTTP 探测返回失败状态',
     'port_owner_mismatch': '监听端口归属与服务 PID 不符',
+    'configuration_error_log_matches_snapshot': '配置错误日志与当前独立配置快照字段及哈希一致',
 }
 
 
@@ -50,7 +51,7 @@ def in_business_scope(value, scope, records=None):
         return True
     if operation == 'dependency_probe':
         return payload.get('dependency') in scope.get('allowed_dependencies', [])
-    if operation in {'services', 'processes', 'text_logs', 'event_logs'}:
+    if operation in {'services', 'processes', 'text_logs', 'event_logs', 'configuration'}:
         return payload.get('service') in scope.get('allowed_services', [])
     if operation == 'ports':
         expected = {p for service in scope.get('services', {}).values()

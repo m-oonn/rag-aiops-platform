@@ -202,9 +202,6 @@
           <div class="diagnosis-banner-meta">
             已检查范围：{{ diagnosis.scope || '未记录' }} · 目标：{{ diagnosis.target_id || '未记录' }}
           </div>
-          <div v-if="diagnosis.stop_reason" class="diagnosis-banner-meta">
-            停止原因：{{ diagnosis.stop_reason }}
-          </div>
         </div>
 
         <div class="diagnosis-sections">
@@ -224,6 +221,27 @@
             </ul>
           </section>
 
+          <section v-if="(diagnosis.observation_notes || []).length" class="diagnosis-section">
+            <h4 class="diagnosis-section-title">证据说明</h4>
+            <p v-for="(note, index) in diagnosis.observation_notes" :key="`note-${index}`">{{ note }}</p>
+          </section>
+          <section v-if="(diagnosis.recommendations || []).length" class="diagnosis-section diagnosis-recommendations">
+            <h4 class="diagnosis-section-title"><el-icon><WarningFilled /></el-icon> 人工处理建议</h4>
+            <p>以下建议待人工核对，尚未执行；不作为根因证明。</p>
+            <ul class="diagnosis-list">
+              <li v-for="(item, index) in diagnosis.recommendations || []" :key="`recommendation-${index}`" class="diagnosis-item">
+                <span>处理对象：{{ JSON.stringify(item.scope || {}) }}</span>
+                <span>建议：{{ item.action }}</span>
+                <span v-for="(text, i) in item.preconditions || []" :key="`precondition-${i}`">操作前提：{{ text }}</span>
+                <span v-for="(text, i) in item.risks || []" :key="`risk-${i}`">风险：{{ text }}</span>
+                <span v-for="(text, i) in item.verification_steps || []" :key="`verify-${i}`">处理后验证：{{ text }}</span>
+                <el-button v-for="(ref, i) in item.evidence || []" :key="`advice-ref-${i}`"
+                  text size="small" type="primary" @click="focusEvidence(ref.evidence_id)">
+                  建议依据：{{ ref.evidence_id }}
+                </el-button>
+              </li>
+            </ul>
+          </section>
           <section v-if="(diagnosis.alternatives || []).length" class="diagnosis-section">
             <h4 class="diagnosis-section-title"><el-icon><Connection /></el-icon> 替代解释核查</h4>
             <ul class="diagnosis-list">
@@ -278,23 +296,11 @@
               </li>
             </ul>
           </section>
-          <section v-if="(diagnosis.recommendations || []).length" class="diagnosis-section diagnosis-recommendations">
-            <h4 class="diagnosis-section-title"><el-icon><WarningFilled /></el-icon> 人工处理建议</h4>
-            <p>以下建议待人工核对，尚未执行；不作为根因证明。</p>
-            <ul class="diagnosis-list">
-              <li v-for="(item, index) in diagnosis.recommendations || []" :key="`recommendation-${index}`" class="diagnosis-item">
-                <span>处理对象：{{ JSON.stringify(item.scope || {}) }}</span>
-                <span>建议：{{ item.action }}</span>
-                <span v-for="(text, i) in item.preconditions || []" :key="`precondition-${i}`">操作前提：{{ text }}</span>
-                <span v-for="(text, i) in item.risks || []" :key="`risk-${i}`">风险：{{ text }}</span>
-                <span v-for="(text, i) in item.verification_steps || []" :key="`verify-${i}`">处理后验证：{{ text }}</span>
-                <el-button v-for="(ref, i) in item.evidence || []" :key="`advice-ref-${i}`"
-                  text size="small" type="primary" @click="focusEvidence(ref.evidence_id)">
-                  建议依据：{{ ref.evidence_id }}
-                </el-button>
-              </li>
-            </ul>
-          </section>
+
+        </div>
+
+        <div v-if="diagnosis.stop_reason" class="diagnosis-banner-meta">
+          停止原因：{{ diagnosis.stop_reason }}
         </div>
 
         <div v-if="(diagnosis.evidence || []).length" class="diagnosis-citations">
@@ -303,7 +309,7 @@
             :key="index"
             text size="small" type="primary"
             @click="focusEvidence(ref.evidence_id)"
-          >{{ ref.evidence_id }}：{{ ref.quote }}</el-button>
+          >{{ ref.evidence_id }}</el-button>
         </div>
       </div>
       <el-tag v-else-if="!liveRun" type="info">历史格式：未记录结构化结论级别</el-tag>

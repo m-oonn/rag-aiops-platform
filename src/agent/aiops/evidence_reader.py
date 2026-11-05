@@ -10,13 +10,35 @@ from src.probe.protocol import raw_hash, redact
 from src.settings import settings
 
 
-def read_run_evidence(thread_id, user_id, evidence_id, query=None, offset=0, limit=4000):
-    if user_id is None or not re.fullmatch(r'ev-[A-Za-z0-9]{16,80}', evidence_id):
+def validate_read_arguments(evidence_id, query=None, offset=0, limit=4000):
+    if not isinstance(evidence_id, str) or not re.fullmatch(r'ev-[A-Za-z0-9]{16,80}', evidence_id):
         raise ValueError('invalid evidence identity')
     if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 16384:
         raise ValueError('invalid evidence page')
     if query is not None and (not isinstance(query, str) or len(query) > 256):
         raise ValueError('invalid literal query')
+
+
+def read_query_key(arguments):
+    validate_read_arguments(**arguments)
+    return (arguments['evidence_id'], arguments.get('query') or None,
+            arguments.get('offset', 0), arguments.get('limit', 4000))
+
+
+def stored_excerpt(raw, query=None, offset=0, limit=4000):
+    text = json.dumps(redact(raw), ensure_ascii=False, indent=2)
+    if query:
+        text = '\n'.join(line for line in text.splitlines() if query in line)
+    excerpt = text[offset:offset + limit].encode('utf-8')[:16384].decode('utf-8', errors='ignore')
+    return {'excerpt': excerpt, 'offset': offset,
+            'next_offset': offset + len(excerpt) if offset + len(excerpt) < len(text) else None,
+            'truncated': bool(offset or len(excerpt) < len(text))}
+
+
+def read_run_evidence(thread_id, user_id, evidence_id, query=None, offset=0, limit=4000):
+    validate_read_arguments(evidence_id, query, offset, limit)
+    if user_id is None:
+        raise ValueError('invalid evidence identity')
     run = run_store.get_run(thread_id)
     if not run or run.user_id != user_id:
         raise PermissionError('evidence unavailable for this run')
@@ -51,17 +73,10 @@ def read_run_evidence(thread_id, user_id, evidence_id, query=None, offset=0, lim
             or run_store._parse_utc(raw.get('collected_at')) != run_store._parse_utc(row['collected_at'])
             or raw_hash(raw.get('payload')) != row['raw_hash'] or raw.get('raw_hash') != row['raw_hash']):
         raise ValueError('evidence integrity check failed')
-    text = json.dumps(redact(raw), ensure_ascii=False, indent=2)
-    if query:
-        text = '\n'.join(line for line in text.splitlines() if query in line)
-    # Character paging is capped again in bytes to bound multi-byte log output.
-    excerpt = text[offset:offset + limit].encode('utf-8')[:16384].decode('utf-8', errors='ignore')
     return {'data_source': 'evidence_excerpt', 'evidence_id': evidence_id,
             'target_id': row['target_id'], 'operation': row['kind'],
             'collected_at': row['collected_at'], 'raw_hash': row['raw_hash'],
-            'fresh': row['fresh'], 'excerpt': excerpt, 'offset': offset,
-            'next_offset': offset + len(excerpt) if offset + len(excerpt) < len(text) else None,
-            'truncated': bool(offset or len(excerpt) < len(text)), 'new_observation': False}
+            'fresh': row['fresh'], **stored_excerpt(raw, query, offset, limit), 'new_observation': False}
 
 
 def evidence_read_tool(thread_id, user_id):

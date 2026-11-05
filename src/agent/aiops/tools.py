@@ -25,6 +25,8 @@ def config_file_read_unavailable(step: str, tools: list) -> bool:
     not arbitrary natural-language capability inference.
     """
     names = {tool.name for tool in tools}
+    if 'probe_config_snapshot' in names:
+        return False  # Exact service/file/key permissions remain enforced by the collector.
     if {'shell_input', 'shell_key'} <= names:
         return False  # Existing terminal wrappers still require command approval.
     return bool(re.search(

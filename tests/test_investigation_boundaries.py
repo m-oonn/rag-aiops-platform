@@ -92,6 +92,20 @@ def test_unaligned_prose_is_preserved_while_only_finite_prediction_is_verified(p
     assert not result['investigation_memory']['hypothesis_tracking']['events']
 
 
+def test_contradicted_finite_condition_is_not_reported_as_an_unchecked_question():
+    state = scene(('dependency_probe', {'dependency': 'db', 'tcp': 'ok', 'http': {'status': 200}}))
+    condition = inv.ObservationCondition(operation='dependency_probe', object_name='db', field='tcp', expected='failed')
+    answer = inv.InvestigationDecision(hypothesis='unknown', alternatives=[inv.Alternative(
+        explanation='database crashed', status='excluded', claim_type='observed_condition', condition=condition)])
+    result = inv.decide_from_evidence(state, answer, inv.evidence_index(state))
+    alt = result['diagnosis']['alternatives'][0]
+    assert alt['status'] == 'excluded' and alt['verification'] == 'predicate_verified'
+    assert result['diagnosis']['unresolved_questions'] == []
+    assert '未查清：dependency_probe/db' not in result['response']
+    assert result['investigation_memory']['model_suggestion']['alternatives'][0]['explanation'] == 'database crashed'
+    assert result['diagnosis']['kind'] != 'confirmed_cause'
+
+
 def test_public_limits_replace_stale_process_top256_wording_and_preserve_audit_text():
     state = scene(('dependency_probe', {'dependency': 'db', 'tcp': 'failed'}))
     answer = inv.InvestigationDecision(hypothesis='unknown', alternatives=[inv.Alternative(
@@ -128,7 +142,7 @@ def test_free_text_limits_do_not_erase_verified_faults_or_confirm_causality(note
     result = inv.decide_from_evidence(state, answer, inv.evidence_index(state))
     assert result['diagnosis']['kind'] == 'localized_fault'
     assert 'crashed' not in result['diagnosis']['conclusion']
-    assert note in result['response']
+    assert '诊断详情' in result['response']
     assert result['diagnosis']['contradictions'] == [note]
     assert result['diagnosis']['recommendations']
     assert answer.model_dump() == original
@@ -176,6 +190,26 @@ def test_snippet_covers_a_field_beyond_the_truncated_context_prefix():
     assert '"tcp": "failed"' in offered['citation_snippets'].values()
 
 
+def test_log_snippets_preserve_complete_escaped_fields_beyond_prefix():
+    source_hash = '8bbb6e42' + 'a' * 56
+    line = json.dumps({'padding': 'x' * 1400, 'error_type': 'ValueError',
+        'configuration': {'field': 'max_attempts', 'value': 'invalid',
+                          'source_sha256': source_hash}}, ensure_ascii=False)
+    state = scene(('text_logs', {'service': 'localapp', 'path': 'app.log', 'lines': [line]}))
+    records = inv.evidence_index(state)
+    snippets = inv._citation_snippets(records['e1.1'])
+    expected = json.dumps(json.dumps('source_sha256') + ': ' + json.dumps(source_hash))[1:-1]
+    assert expected in snippets.values()
+    assert len(snippets) <= 18 and all(len(q) <= 400 for q in snippets.values())
+    assert all(q in records['e1.1']['payload'] for q in snippets.values())
+    snippet_id = next(k for k, q in snippets.items() if q == expected)
+    decision = inv.InvestigationDecision(hypothesis='unknown', supporting_evidence=[
+        inv.Citation(evidence_id='e1.1', snippet_id=snippet_id, quote='fabricated')])
+    inv._resolve_citations(decision, records)
+    assert decision.supporting_evidence[0].quote == expected
+    assert inv._valid_citations(decision.supporting_evidence, records)
+
+
 def test_behavior_audit_rejects_tampered_binding_of_a_free_text_candidate():
     from scripts.mechanism_behavior import audit_behavior, behavior_snapshot
     from datetime import datetime, timezone
@@ -210,7 +244,7 @@ def test_prose_candidates_use_independent_finite_predictions_for_mechanisms(prot
     original = copy.deepcopy(answer.model_dump())
     first = inv.decide_from_evidence(state, answer, inv.evidence_index(state))
     tracking = first['investigation_memory']['hypothesis_tracking']
-    assert tracking['version'] == 3
+    assert tracking['version'] == 4
     assert tracking['candidates'][0]['explanation'] == 'dependency_probe/db: tcp == "failed"'
     assert tracking['candidates'][0]['source_explanation'] == 'database crashed'
     assert answer.model_dump() == original
@@ -325,7 +359,8 @@ def test_invalid_prediction_is_explained_through_memory_report_and_sse_without_r
     assert issues == result['diagnosis']['validation_issues']
     assert issues == investigation_summary({**state, **result})['validation_issues']
     assert '有限预期无效' in result['response']
-    assert '待核实说明（不作为可靠反证）：日志为空，退出原因未知' in result['response']
+    assert result['diagnosis']['contradictions'] == ['日志为空，退出原因未知']
+    assert '诊断详情' in result['response']
     assert result['diagnosis']['kind'] == 'localized_fault'
     assert memory['model_suggestion'] == original == proposed.model_dump()
 

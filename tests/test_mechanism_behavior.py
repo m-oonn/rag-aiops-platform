@@ -6,9 +6,21 @@ import json
 import pytest
 
 from scripts.evaluate_windows_probe import audit_mechanisms
+from scripts.mechanism_behavior import _blocked_review_matches
 from src.agent.aiops.strategies import investigation as inv
 from src.probe.protocol import evidence
 from src.settings import settings
+
+
+def test_blocked_review_audit_ignores_fixed_remediation_hint_but_checks_reason():
+    base = {'kind': 'no_eligible_saved_candidate', 'rejected_candidates': [
+        {'candidate_id': 'candidate-1', 'reason': '该服务的事件通道未配置。'}]}
+    decorated = {'kind': 'no_eligible_saved_candidate', 'rejected_candidates': [
+        {'candidate_id': 'candidate-1', 'reason': '该服务的事件通道未配置。 请改用适用检查或说明实际限制。'}]}
+    changed = {'kind': 'no_eligible_saved_candidate', 'rejected_candidates': [
+        {'candidate_id': 'candidate-1', 'reason': '权限不足。'}]}
+    assert _blocked_review_matches(base, decorated)
+    assert not _blocked_review_matches(base, changed)
 
 
 def trace(protection=True, trigger=True, case='contradiction', model_same=False, prose=False):
@@ -146,6 +158,40 @@ def test_same_model_check_is_executed_but_not_counted_as_additional_change():
     assert result['status'] == 'passed'
     assert result['executed_checks']['contradiction'] == 1
     assert result['executed_changes']['contradiction'] == 0
+
+
+def test_policy_check_preempts_mechanism_without_failing_contradiction_audit():
+    config, values, snapshots, executed = trace()
+    tracking = snapshots[-1]['tracking']
+    tracking['policy_selected_check'] = {'kind': 'configuration_crosscheck'}
+    tracking['events'] = [event for event in tracking['events']
+                          if event['kind'] != 'contradiction_triggered']
+
+    behavior = audit_mechanisms(config, values, snapshots, executed_steps=executed,
+        execution_records=inv.execution_checks(values))['behavior']
+
+    assert behavior['status'] == 'passed', behavior
+    assert behavior['opportunities']['contradiction'] == 1
+    assert behavior['executed_changes']['contradiction'] == 0
+    assert behavior['decisions'][-1]['policy_preempted'] is True
+    assert behavior['mechanism_effectiveness_verified'] is False
+
+
+@pytest.mark.parametrize('mutation', [None, 'wrong_object', 'missing_tool', 'failed'])
+def test_concrete_discriminating_check_audits_all_planned_queries(mutation):
+    from scripts.mechanism_behavior import _executed_candidate
+    check = {'next_check': 'inspect downstream and log',
+        'next_tools': ['probe_dependency_probe', 'probe_text_log'],
+        'next_arguments': {'probe_dependency_probe': {'dependency': 'downstream'},
+            'probe_text_log': {'service': 'entry', 'path': 'D:/app.log', 'lines': 20}}}
+    candidate = {'condition': {'operation': 'dependency_probe', 'object_name': 'entry',
+        'field': 'http.status', 'expected': 200}, 'check': check}
+    executions = [{'step': check['next_check'], 'tool': tool, 'arguments': deepcopy(args), 'status': 'success'}
+        for tool, args in check['next_arguments'].items()]
+    if mutation == 'wrong_object': executions[0]['arguments']['dependency'] = 'wrong'
+    if mutation == 'missing_tool': executions.pop()
+    if mutation == 'failed': executions[-1]['status'] = 'failed'
+    assert _executed_candidate(candidate, check, executions) is (mutation is None)
 
 
 def test_no_opportunity_and_repeated_event_are_not_counted_twice():

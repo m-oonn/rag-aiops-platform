@@ -156,6 +156,25 @@ def test_unknown_tool_argument_mapping_returns_report_instead_of_keyerror():
     assert not result['plan'] and '参数' in result['diagnosis']['stop_reason']
 
 
+def test_fake_probe_suffix_is_rejected_before_any_tool_plan():
+    result = decide(state(), decision(next_arguments={
+        'probe_dependency_probe': {'dependency': 'entry'},
+        'probe_dependency_probe_2': {'dependency': 'downstream'},
+    }))
+    assert not result['plan']
+    assert '不存在的 Probe 工具名' in result['diagnosis']['stop_reason']
+    assert 'probe_dependency_probe_2' in result['diagnosis']['stop_reason']
+
+
+def test_valid_probe_arguments_complete_omitted_tool_name():
+    result = decide(state(), decision(
+        next_tools=[],
+        next_arguments={'probe_dependency_probe': {'dependency': 'entry'}},
+    ))
+    assert result['plan'] == ['inspect entry']
+    assert result['investigation_memory']['next_tools'] == ['probe_dependency_probe']
+
+
 @pytest.mark.parametrize('actual,expected', [({'local_port': 9001}, False),
     ({'local_port': 9000, 'limit': 100}, False), ({'local_port': 9000, 'limit': 256, 'listening_only': False}, True)])
 def test_behavior_execution_requires_actual_query_arguments(actual, expected):
@@ -183,7 +202,8 @@ def test_process_application_does_not_schedule_windows_service_query():
     assert '不适用' in result['diagnosis']['stop_reason']
 
 
-def test_inapplicable_main_check_continues_saved_unfinished_candidate():
+@pytest.mark.parametrize('stop_mode', ['blocked', 'model_stops'])
+def test_inapplicable_main_check_continues_saved_unfinished_candidate(stop_mode):
     current = state(('inventory', {'configured_services': {
         'entry': {'kind': 'process'}, 'worker': {'kind': 'process'}}}))
     current['investigation_tools'].extend([{'name': 'probe_service_status'},
@@ -204,11 +224,13 @@ def test_inapplicable_main_check_continues_saved_unfinished_candidate():
     proposed = decision(next_check='inspect worker service', next_tools=['probe_service_status'],
         next_arguments={'probe_service_status': {'service': 'worker'}},
         discriminating_question='is worker service running?', expected_observation='service state')
+    if stop_mode == 'model_stops':
+        proposed.next_check, proposed.next_tools, proposed.next_arguments = '', [], None
     result = decide(current, proposed)
     assert result['plan'] == ['inspect worker process']
     assert result['investigation_memory']['next_arguments'] == {
         'probe_process_snapshot': {'service': 'worker'}}
-    assert '检查不可执行' in result['investigation_memory']['validation_issues'][-1]
+    assert '此前保存' in result['investigation_memory']['validation_issues'][-1]
 
 
 @pytest.mark.parametrize('invalidity', ['completed', 'failed', 'contradicted', 'expired', 'out_of_scope'])
@@ -284,7 +306,8 @@ def test_blocked_check_stop_records_why_saved_candidate_cannot_be_reused():
     assert not result['diagnosis']['stop_reason'].startswith('模型停止建议')
 
 
-def test_blocked_check_fallback_is_reconstructed_by_behavior_audit():
+@pytest.mark.parametrize('model_stops', [False, True])
+def test_blocked_check_fallback_is_reconstructed_by_behavior_audit(model_stops):
     from datetime import datetime, timezone
     from scripts.mechanism_behavior import audit_behavior, behavior_snapshot
 
@@ -309,9 +332,12 @@ def test_blocked_check_fallback_is_reconstructed_by_behavior_audit():
     snapshots = [behavior_snapshot(current, now)]
     current['past_steps'].append(('inspect entry', 'entry probe completed'))
     proposed = decision(next_check='inspect worker service', next_tools=['probe_service_status'],
-        next_arguments={'probe_service_status': {'service': 'worker'}},
+        next_arguments=None,
         discriminating_question='is worker service running?', expected_observation='service state')
-    current.update(decide(current, proposed))
+    if model_stops:
+        proposed.next_check, proposed.next_tools, proposed.next_arguments = '', [], None
+    current.update(inv.decide_from_evidence(current, proposed, inv.evidence_index(current),
+                                            require_concrete_checks=True))
     snapshots.append(behavior_snapshot(current, datetime.now(timezone.utc).isoformat()))
     executions = [
         {'step': 'inspect entry', 'tool': 'probe_dependency_probe',
@@ -373,3 +399,39 @@ async def test_concrete_executor_runs_exact_query_without_model_reselection(monk
     assert len(checks) == 1 and checks[0]['status'] == 'success'
     assert checks[0]['question'] == current['investigation_memory']['discriminating_question']
     assert ex._probe_request_limit({'name': tool.name, 'args': {'dependency': 'other'}}, current) == 'planned_probe_arguments_mismatch'
+
+
+@pytest.mark.asyncio
+async def test_unavailable_event_query_runs_alternative_and_consumes_result(monkeypatch):
+    ex = importlib.import_module('src.agent.aiops.executor')
+    current = state(('inventory', {'configured_services': {'entry': {'event_logs_available': False}}}))
+    current['investigation_tools'].append({'name': 'probe_event_log'})
+    alternative = inv.Alternative(explanation='dependency_probe/entry: tcp == \"failed\"',
+        claim_type='observed_condition', status='unresolved',
+        condition=inv.ObservationCondition(operation='dependency_probe', object_name='entry', field='tcp', expected='failed'),
+        check=inv.CandidateCheck(next_check='inspect entry connectivity', next_tools=['probe_dependency_probe'],
+            next_arguments={'probe_dependency_probe': {'dependency': 'entry'}},
+            discriminating_question='entry reachable?', expected_observation='TCP and HTTP'))
+    scheduled = decide(current, decision(next_check='query entry events', next_tools=['probe_event_log'],
+        next_arguments={'probe_event_log': {'service': 'entry'}}, alternatives=[alternative]))
+    assert scheduled['plan'] == ['inspect entry connectivity']
+    async def probe(dependency: str):
+        return evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe',
+                        payload={'dependency': dependency, 'tcp': 'failed'})
+    schema = StructuredTool.from_function(coroutine=probe, name='probe_dependency_probe', description='fixture')
+    async def invoke(args):
+        return await probe(**args)
+    tool = SimpleNamespace(name=schema.name, description=schema.description, args=schema.args,
+        ainvoke=AsyncMock(side_effect=invoke))
+    monkeypatch.setattr(ex, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(ex, 'create_agent_llm', Mock(side_effect=AssertionError('no model needed')))
+    current.update(scheduled, autonomous_investigation=True)
+    step = scheduled['plan'][0]
+    text, raw = await ex._run_step(step, current)
+    tool.ainvoke.assert_awaited_once_with({'dependency': 'entry'})
+    current['raw_evidence'].append((step, raw))
+    current['past_steps'].append((step, text))
+    stopped = decide(current, decision(next_check='', next_tools=[], next_arguments=None, alternatives=[alternative]))
+    assert not stopped['plan']
+    assert any(f['code'] == 'dependency_tcp_failed' for f in stopped['diagnosis']['observed_findings'])
+    assert any(c['evidence_ids'] for c in stopped['investigation_memory']['hypothesis_tracking']['candidates'])

@@ -206,6 +206,35 @@ describe('AIOps.vue', () => {
       expect(wrapper.find('.investigation-card').exists()).toBe(false)
       wrapper.unmount()
     })
+  it('keeps actionable advice before gaps and raw quotations behind evidence references after refresh', async () => {
+    localStorage.getItem.mockImplementation(key => ({ token: 'test-token', aiops_last_thread: 'action-run' })[key] || null)
+    const diagnosis = { kind: 'localized_fault', conclusion: 'max_attempts=invalid',
+      observation_notes: ['配置与ValueError日志同源同值'], stop_reason: '已复核；历史来源缺失',
+      unresolved_questions: [{ question: '变更者未知' }],
+      recommendations: [{ scope: { service: 'app' }, action: '由人修正max_attempts为有效整数',
+        verification_steps: ['独立请求下游和入口'], evidence: [{ evidence_id: 'ev-123', quote: 'HUGE_RAW_JSON' }] }],
+      evidence: [{ evidence_id: 'ev-123', quote: 'HUGE_RAW_JSON' }] }
+    vi.spyOn(global, 'fetch').mockImplementation(async url => {
+      if (url.endsWith('/action-run')) return { ok: true, json: async () => ({ status: 'completed', report: '简短报告', diagnosis }) }
+      if (url.endsWith('/evidence')) return { ok: true, json: async () => ({ evidence: [{ evidence_id: 'ev-123', summary: '配置证据' }] }) }
+      throw new Error(`unexpected ${url}`)
+    })
+    for (let refresh = 0; refresh < 2; refresh++) {
+      const wrapper = mount(AIOps, { global: { plugins: [ElementPlus] } })
+      await flushPromises()
+      const text = wrapper.find('.diagnosis-result').text()
+      expect(text).toContain('配置与ValueError日志同源同值')
+      expect(text.indexOf('由人修正')).toBeLessThan(text.indexOf('变更者未知'))
+      expect(text.indexOf('由人修正')).toBeLessThan(text.indexOf('停止原因：'))
+      expect(text).not.toContain('HUGE_RAW_JSON')
+      expect(wrapper.find('.diagnosis-citations button').text()).toBe('ev-123')
+      await wrapper.find('.diagnosis-citations button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.el-collapse-item__header').attributes('aria-expanded')).toBe('true')
+      wrapper.unmount()
+    }
+  })
+
   beforeEach(() => {
     vi.stubGlobal('localStorage', {
       getItem: vi.fn(() => 'test-token'),

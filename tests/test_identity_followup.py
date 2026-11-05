@@ -78,6 +78,187 @@ def saved_check_fixture(protection=False, trigger=False, multi=False):
 
 
 @pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+def test_configuration_crosscheck_requires_allowed_clue_and_never_retries(protection, trigger):
+    state, _, add, _ = fixture(protection, trigger)
+    state['raw_evidence'] = []
+    state['investigation_tools'].append({'name': 'probe_config_snapshot'})
+    add('inventory', {'configured_services': {'worker': {'configuration_available': True}}})
+    add('text_logs', {'service': 'worker', 'path': 'C:/demo/db.log', 'lines': [json.dumps({
+        'error_type': 'ValueError', 'configuration': {'field': 'max_attempts', 'value': 'invalid'}})]})
+    records = inv.evidence_index(state)
+    policy = inv.dependency_followup_policy(state, records)
+    assert policy['selection']['kind'] == 'configuration_log_crosscheck'
+    check = policy['check']
+    assert check['next_arguments'] == {'probe_config_snapshot': {'service': 'worker'}}
+    assert policy['selection']['dependency_evidence']
+    from src.agent.aiops.probe_checks import arguments_error
+    assert arguments_error('probe_config_snapshot', {'service': 'other'}, state, records)
+    assert arguments_error('probe_config_snapshot', {'service': 'worker', 'path': 'C:/secret'}, state, records)
+    outside = deepcopy(state)
+    outside['target_resolution']['allowed_services'] = []
+    assert inv.dependency_followup_policy(outside, inv.evidence_index(outside)) is None
+    missing = deepcopy(state)
+    inventory = json.loads(missing['raw_evidence'][0][1])
+    inventory['payload']['configured_services']['worker']['configuration_available'] = False
+    from src.probe.protocol import raw_hash
+    inventory['raw_hash'] = raw_hash(inventory['payload'])
+    missing['raw_evidence'][0] = ('inventory', json.dumps(inventory))
+    assert inv.dependency_followup_policy(missing, inv.evidence_index(missing)) is None
+    assert arguments_error('probe_config_snapshot', {'service': 'worker'}, missing, inv.evidence_index(missing))
+    no_clue = deepcopy(state)
+    no_clue['raw_evidence'] = no_clue['raw_evidence'][:1]
+    assert inv.dependency_followup_policy(no_clue, inv.evidence_index(no_clue)) is None
+    state['past_steps'].append((check['next_check'], 'read failed'))
+    assert inv.dependency_followup_policy(state, records) is None
+    state['past_steps'].pop()
+    failed = deepcopy(state)
+    failed['raw_evidence'].append(('failed configuration', json.dumps({'data_source': 'tool_execution',
+        'tool': 'probe_config_snapshot', 'arguments': {'service': 'worker'},
+        'status': 'failed', 'reason': 'access denied'})))
+    assert inv.dependency_followup_policy(failed, inv.evidence_index(failed)) is None
+    add('configuration', {'service': 'worker', 'values': {'max_attempts': 'invalid'}, 'source_sha256': 'abc'})
+    records = inv.evidence_index(state)
+    assert inv.dependency_followup_policy(state, records) is None
+    assert any('独立配置快照' in note and 'max_attempts' in note for note in inv.log_observation_notes(records, state))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize('second_invalid', [False, True])
+@pytest.mark.parametrize('conflict', ['field', 'expected'])
+async def test_live_identity_error_gets_one_correction_without_mutating_saved_state(monkeypatch, second_invalid, protection, trigger, conflict):
+    state, wrong, _, first = saved_check_fixture(protection, trigger)
+    if conflict == 'expected':
+        wrong.hypothesis_condition.field = 'tcp'
+        wrong.hypothesis_condition.expected = 'failed'
+    state['past_steps'].append(('inspect saved db', 'already checked'))
+    before = deepcopy(state)
+    corrected = wrong.model_copy(deep=True)
+    corrected.hypothesis_id = ''
+    corrected.next_check = 'inspect db after correction'
+    corrected.next_tools = ['probe_dependency_probe']
+    corrected.next_arguments = {'probe_dependency_probe': {'dependency': 'db'}}
+    corrected.discriminating_question = 'db reachable?'
+    corrected.expected_observation = 'db TCP and HTTP status'
+    invoke = AsyncMock(side_effect=[wrong, wrong if second_invalid else corrected])
+    monkeypatch.setattr(inv, 'ainvoke_structured', invoke)
+    monkeypatch.setattr(inv, 'create_agent_llm', Mock())
+    result = await inv.InvestigationStrategy().decide(state)
+    assert invoke.await_count == 2
+    assert state == before
+    assert wrong.model_dump() == json.loads(invoke.call_args.args[3]['identity_feedback'])['rejected_model_suggestion']
+    assert 'identity_feedback' in invoke.call_args.args[2].input_variables
+    formatted = invoke.call_args.args[2].format_messages(**invoke.call_args.args[3])
+    assert 'rejected_model_suggestion' in formatted[-1].content
+    correction = result['investigation_memory']['identity_correction']
+    assert correction['attempts'] == 1
+    assert correction['status'] == ('identity_rejected' if second_invalid else 'corrected')
+    assert correction['conflicts'][0]['saved_condition']['field'] == 'tcp'
+    assert correction['conflicts'][0]['proposed_condition']['field'] == ('tcp' if conflict == 'expected' else 'http.status')
+    if conflict == 'expected':
+        assert correction['conflicts'][0]['proposed_condition']['expected'] == 'failed'
+        assert correction['conflicts'][0]['saved_condition']['expected'] == 'ok'
+    tracking = result['investigation_memory']['hypothesis_tracking']
+    if second_invalid:
+        assert result['plan'] == []
+        assert tracking['identity_issues']
+        for actual, original in zip(tracking['candidates'], before['investigation_memory']['hypothesis_tracking']['candidates']):
+            for key in ('id', 'condition', 'birth_step', 'check', 'proposal'):
+                assert actual[key] == original[key]
+        assert '纠正一次后仍未通过' in result['response']
+    else:
+        assert result['plan'] == ['inspect db after correction']
+        assert not tracking['identity_issues']
+        old = before['investigation_memory']['hypothesis_tracking']['candidates'][0]
+        saved = next(c for c in tracking['candidates'] if c['id'] == old['id'])
+        assert saved['condition'] == old['condition'] and saved['birth_step'] == old['birth_step']
+    final = behavior_snapshot({**state, **result}, datetime.now(timezone.utc).isoformat())
+    audit = audit_behavior([first, final], [name for name, _ in state['past_steps']])
+    assert audit['status'] == 'passed', audit
+    assert audit['executed_changes'] == {'protection': 0, 'contradiction': 0}
+    for mutation in ('attempts', 'conflicts', 'status'):
+        forged = deepcopy(final)
+        forged['behavior_context']['identity_correction'][mutation] = {
+            'attempts': 2, 'conflicts': [], 'status': 'invented'}[mutation]
+        assert audit_behavior([first, forged], [name for name, _ in state['past_steps']])['status'] == 'failed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error_kind', ['timeout', 'budget', 'invalid_output', 'truncated'])
+async def test_identity_correction_failure_preserves_evidence_and_does_not_retry(monkeypatch, error_kind):
+    import httpx
+    from openai import APIStatusError
+    from src.agent.aiops.structured import StructuredOutputError
+    state, wrong, _, first = saved_check_fixture()
+    state['past_steps'].append(('inspect saved db', 'already checked'))
+    before = deepcopy(state)
+    errors = {
+        'timeout': httpx.ReadTimeout('constructed outage'),
+        'budget': APIStatusError('budget gate', response=httpx.Response(402,
+            request=httpx.Request('POST', 'https://example.invalid')),
+            body={'error': {'type': 'evaluation_budget_exceeded', 'code': 'per_run_cost_limit'}}),
+        'invalid_output': StructuredOutputError('invalid decision'),
+        'truncated': StructuredOutputError('truncated', code='output_truncated')}
+    invoke = AsyncMock(side_effect=[wrong, errors[error_kind]])
+    monkeypatch.setattr(inv, 'ainvoke_structured', invoke)
+    monkeypatch.setattr(inv, 'create_agent_llm', Mock())
+    result = await inv.InvestigationStrategy().decide(state)
+    assert invoke.await_count == 2 and state == before
+    assert result['plan'] == [] and result['investigation_failure']
+    memory = result['investigation_memory']
+    assert memory['model_suggestion'] == wrong.model_dump()
+    assert memory['identity_correction']['status'] == result['investigation_failure']['code']
+    final = behavior_snapshot({**state, **result}, datetime.now(timezone.utc).isoformat())
+    audit = audit_behavior([first, final], [name for name, _ in state['past_steps']])
+    assert audit['status'] == 'passed', audit
+
+
+@pytest.mark.asyncio
+async def test_corrected_check_survives_json_restore_and_executes_without_another_model(monkeypatch):
+    state, wrong, _, _ = saved_check_fixture()
+    state['past_steps'].append(('inspect saved db', 'already checked'))
+    corrected = wrong.model_copy(deep=True)
+    corrected.hypothesis_id = ''
+    corrected.next_check = 'inspect db after correction'
+    corrected.next_tools = ['probe_dependency_probe']
+    corrected.next_arguments = {'probe_dependency_probe': {'dependency': 'db'}}
+    corrected.discriminating_question = 'db reachable?'
+    corrected.expected_observation = 'db TCP status'
+    invoke = AsyncMock(side_effect=[wrong, corrected])
+    monkeypatch.setattr(inv, 'ainvoke_structured', invoke)
+    monkeypatch.setattr(inv, 'create_agent_llm', Mock())
+    result = await inv.InvestigationStrategy().decide(state)
+    restored = json.loads(json.dumps({**state, **result, 'autonomous_investigation': True}))
+    ex = importlib.import_module('src.agent.aiops.executor')
+    observed = []
+
+    async def probe(dependency: str):
+        """Return constructed dependency evidence without network access."""
+        observed.append(dependency)
+        return evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe',
+            payload={'dependency': dependency, 'tcp': 'ok', 'http': {'status': 200}})
+
+    tool = StructuredTool.from_function(coroutine=probe, name='probe_dependency_probe')
+    monkeypatch.setattr(ex, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(ex, 'create_agent_llm', Mock(side_effect=AssertionError('concrete check must execute directly')))
+    await ex._run_step(restored['plan'][0], restored)
+    assert observed == ['db'] and invoke.await_count == 2
+    assert restored['investigation_memory']['identity_correction']['status'] == 'corrected'
+
+
+@pytest.mark.asyncio
+async def test_live_identity_error_uses_safe_saved_check_without_extra_model_call(monkeypatch):
+    state, wrong, _, _ = saved_check_fixture()
+    invoke = AsyncMock(return_value=wrong)
+    monkeypatch.setattr(inv, 'ainvoke_structured', invoke)
+    monkeypatch.setattr(inv, 'create_agent_llm', Mock())
+    result = await inv.InvestigationStrategy().decide(state)
+    assert invoke.await_count == 1
+    assert result['plan'] == ['inspect saved db']
+    assert 'identity_correction' not in result['investigation_memory']
+
+
+@pytest.mark.parametrize('protection,trigger', [(False, False), (True, False), (False, True), (True, True)])
 def test_identity_rejection_continues_previously_saved_check_before_downstream_observation(protection, trigger):
     state, wrong, _, _ = saved_check_fixture(protection, trigger)
     original = deepcopy(state['investigation_memory']['hypothesis_tracking'])
@@ -218,6 +399,32 @@ def test_id_error_keeps_candidates_and_completes_finite_independent_followups(pr
     assert '候选 ID' in result['diagnosis']['stop_reason']
     assert '未独立验证' in result['diagnosis']['stop_reason']
     assert not result['investigation_memory']['hypothesis_tracking'].get('identity_recovery')
+
+
+def test_identity_rejection_allows_wider_read_of_same_mapped_log():
+    state, wrong, add, _ = fixture()
+    add('ports', {'local_port': 5678, 'listening_only': True, 'ports': []})
+    add('processes', {'service': 'worker', 'processes': [], 'skipped_count': 0})
+    add('text_logs', {'service': 'worker', 'path': 'C:/demo/db.log', 'line_limit': 20, 'lines': []})
+    before = deepcopy(state['investigation_memory']['hypothesis_tracking']['candidates'])
+
+    result = inv.decide_from_evidence(state, wrong, inv.evidence_index(state))
+
+    memory = result['investigation_memory']
+    tracking = memory['hypothesis_tracking']
+    assert result['plan'] == [memory['next_check']]
+    assert tracking['identity_issues']
+    assert tracking['identity_recovery']['selection']['kind'] == 'failed_dependency_mapped_check'
+    assert memory['next_tools'] == ['probe_text_log']
+    assert memory['next_arguments'] == {'probe_text_log': {
+        'service': 'worker', 'path': 'C:/demo/db.log', 'lines': 100}}
+    assert tracking['candidates'] == before
+    assert memory['model_suggestion'] == wrong.model_dump()
+
+    state.update(result)
+    add('text_logs', {'service': 'worker', 'path': 'C:/demo/db.log', 'line_limit': 100, 'lines': []})
+    repeated = inv.decide_from_evidence(state, wrong, inv.evidence_index(state))
+    assert repeated['plan'] == []
 
 
 @pytest.mark.parametrize('block', ['remote', 'unresolved', 'wrong_target', 'unallowlisted', 'missing_tool', 'already_observed'])

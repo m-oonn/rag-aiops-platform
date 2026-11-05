@@ -58,6 +58,19 @@ async def test_invalid_json_has_distinct_safe_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('result', [None, {'value': 42}])
+async def test_single_composition_disables_format_and_outer_retry(monkeypatch, result):
+    invoke = AsyncMock(return_value=result)
+    monkeypatch.setattr(module, 'ainvoke_with_retry', invoke)
+    with pytest.raises(module.StructuredOutputError):
+        await module.ainvoke_structured(fake_llm(), Answer,
+            ChatPromptTemplate.from_template('{input}'), {'input': 'check'},
+            format_fallback=False, max_attempts=1)
+    invoke.assert_awaited_once()
+    assert invoke.await_args.kwargs['max_attempts'] == 1
+
+
+@pytest.mark.asyncio
 async def test_json_fallback_preserves_partial_prompt_variables(monkeypatch):
     llm = RunnableLambda(lambda _: None)
     llm.with_structured_output = Mock(return_value=RunnableLambda(lambda _: None))

@@ -50,6 +50,77 @@ def test_dependency_service_mapping_is_explicit_and_inventory_restricted():
     assert found['allowed_services'] == [] and found['dependency_services'] == {}
 
 
+def _wrong_endpoint_state(*, mapped=True, same_port=False, omit=(), truncate=()):
+    upstream_port = 11750 if same_port else 11751
+    snapshot = evidence(target_id=settings.PROBE_TARGET_ID, operation='configuration', payload={
+        'service': 'localapp', 'path': 'C:/app/connection.json', 'source_sha256': 'abc123',
+        'values': {'downstream_port': upstream_port}})
+    upstream = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'localapp_upstream', 'host': '127.0.0.1', 'port': upstream_port,
+        'tcp': 'failed', 'http': {'error': 'connection refused'}})
+    downstream = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'host': '127.0.0.1', 'port': 11750, 'tcp': 'ok',
+        'http': {'status': 200}})
+    items = [('config', snapshot), ('upstream', upstream), ('downstream', downstream)]
+    raw = [(name, json.dumps({**value, **({'truncated': True} if name in truncate else {})}))
+           for name, value in items if name not in omit]
+    state = {'raw_evidence': raw, 'target_resolution': {
+        'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
+        'allowed_services': ['localapp', 'downstream'],
+        'allowed_dependencies': ['localapp_upstream', 'downstream'],
+        'dependency_services': {'downstream': 'downstream'} if mapped else {},
+    }}
+    return state
+
+
+def test_wrong_downstream_endpoint_finding_cites_snapshot_and_both_probes():
+    state = _wrong_endpoint_state()
+    findings = inv._localized_findings(inv.evidence_index(state), state)
+    mismatch = next(item for item in findings if item['code'] == 'configured_downstream_endpoint_mismatch')
+    assert 'downstream_port=11751' in mismatch['summary']
+    assert '11750' in mismatch['summary'] and 'HTTP 200' in mismatch['summary']
+    assert mismatch['causal'] is False
+    assert len(mismatch['related_evidence']) == 2
+    assert {item['evidence_id'] for item in mismatch['related_evidence']} == {'e2.1', 'e3.1'}
+    assert mismatch['quote']
+
+
+def test_wrong_downstream_endpoint_reaches_cited_diagnosis_and_actionable_report():
+    from src.agent.aiops.reporting import build_bundle, render_report, rule_layout
+
+    state = _wrong_endpoint_state()
+    records = inv.evidence_index(state)
+    diagnosis = inv.diagnosis_result(state, inv.InvestigationDecision(hypothesis='原因尚未知'),
+        'localized_fault', records, reason='有限检查已完成；更深原因未知。')
+    mismatch = next(item for item in diagnosis['observed_findings']
+                    if item['code'] == 'configured_downstream_endpoint_mismatch')
+    advice = next(item for item in diagnosis['recommendations']
+                  if item['finding_code'] == 'configured_downstream_endpoint_mismatch')
+    bundle = build_bundle(diagnosis, records=records, resolution=state['target_resolution'])
+    report = render_report(bundle, rule_layout(bundle))
+
+    assert [ref['evidence_id'] for ref in advice['evidence']] == ['e1.1', 'e2.1', 'e3.1']
+    assert 'downstream_port=11751' in report
+    assert '登记的 downstream（端口 11750）' in report
+    assert '端点错配解释' in report
+    assert '更深原因尚未确认' in report
+    assert all(ref['quote'] for ref in [
+        {'quote': mismatch['quote']}, *mismatch['related_evidence'], *advice['evidence']])
+
+
+@pytest.mark.parametrize('state', [
+    _wrong_endpoint_state(mapped=False),
+    _wrong_endpoint_state(same_port=True),
+    _wrong_endpoint_state(omit=('downstream',)),
+    _wrong_endpoint_state(truncate=('config',)),
+    {'raw_evidence': _wrong_endpoint_state()['raw_evidence'],
+     'target_resolution': {'status': 'unmatched'}},
+])
+def test_wrong_downstream_endpoint_finding_requires_complete_explicit_scope(state):
+    findings = inv._localized_findings(inv.evidence_index(state), state)
+    assert 'configured_downstream_endpoint_mismatch' not in {item['code'] for item in findings}
+
+
 def test_negative_process_query_requires_configured_names_and_complete_access():
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='processes', payload={
         'service': 'svc', 'processes': [], 'skipped_count': 0})
@@ -58,7 +129,9 @@ def test_negative_process_query_requires_configured_names_and_complete_access():
     inventory = evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
         'configured_services': {'svc': {'process_names': ['app.exe']}}})
     current['raw_evidence'].insert(0, ('inventory', json.dumps(inventory)))
-    assert observation_clues(inv.evidence_index(current))[0]['code'] == 'configured_process_not_observed'
+    clue = observation_clues(inv.evidence_index(current))[0]
+    assert clue['code'] == 'configured_process_not_observed'
+    assert clue['summary'] == '本次可枚举范围内未发现配置进程'
     raw['truncated'] = True
     current['raw_evidence'][-1] = ('processes', json.dumps(raw))
     assert [c['code'] for c in observation_clues(inv.evidence_index(current))] == ['truncated_observation']
@@ -263,17 +336,22 @@ async def test_executor_blocks_third_unchanged_query_in_same_step_but_keeps_othe
 
 
 @pytest.mark.asyncio
-async def test_localized_conclusion_uses_observed_fault_not_model_causal_claim(monkeypatch):
+@pytest.mark.parametrize('omit_supporting_evidence', [False, True])
+async def test_localized_conclusion_uses_observed_fault_not_model_causal_claim(monkeypatch,
+                                                                               omit_supporting_evidence):
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='services', payload={'service': 'svc', 'state': 'stopped'})
     current = {'input': 'symptom', 'raw_evidence': [('check', json.dumps(raw))]}
     answer = inv.InvestigationDecision(hypothesis='candidate', conclusion_level='localized_fault',
         scope='svc', localized_fault='administrator stopped it',
-        supporting_evidence=[inv.Citation(evidence_id='e1.1', quote='stopped')])
+        supporting_evidence=[] if omit_supporting_evidence else
+            [inv.Citation(evidence_id='e1.1', quote='stopped')])
     monkeypatch.setattr(inv, 'ainvoke_structured', AsyncMock(return_value=answer))
     result = await inv.InvestigationStrategy().decide(current)
     assert result['diagnosis']['kind'] == 'localized_fault'
     assert 'administrator' not in result['diagnosis']['conclusion']
     assert 'svc' in result['diagnosis']['conclusion']
+    assert result['diagnosis']['evidence']
+    assert result['diagnosis']['evidence'][0]['evidence_id'] == 'e1.1'
 
 
 @pytest.mark.asyncio
