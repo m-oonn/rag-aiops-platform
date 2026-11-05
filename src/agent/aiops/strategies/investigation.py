@@ -82,6 +82,8 @@ class InvestigationDecision(BaseModel):
     discriminating_question: str = Field(default='', description='next_check非空时必填：要区分的具体解释或未决问题')
     expected_observation: str = Field(default='', description='next_check非空时必填：什么实际工具结果会改变判断')
     root_cause: str = ""
+    root_cause_code: Literal['', 'configured_downstream_endpoint_mismatch'] = Field(default='',
+        description='只有已核实的直接原因类型才填写；configured_downstream_endpoint_mismatch只裁决当前请求的运行时错配，不裁决配置历史')
     supporting_evidence: list[Citation] = Field(default_factory=list,
         description='最终结论必填实际证据ID及逐字引用；healthy须覆盖每个允许依赖及服务进程，不能只在hypothesis文字中叙述')
     alternatives: list[Alternative] = Field(default_factory=list,
@@ -125,6 +127,7 @@ condition 只表达现场条件，例如 dependency_probe/downstream/tcp/failed�
 contradictions 只保存待核实说明；日志为空、缺少退出历史不等于互相矛盾的现场事实。
 只描述该有限条件的解释填写 claim_type=observed_condition；深层因果解释保持 causal_explanation，不能用条件冒充因果排除。
 自由文本因果解释无法由程序验证为已排除；无条件的旧引用仍可展示，但不充当关键解释已排除的证明。
+唯一可确认的直接原因码为 configured_downstream_endpoint_mismatch：必须填写该原因码，并引用同一运行的加载配置快照、配置端点失败探测、登记端点成功探测、带同一配置哈希的应用失败请求日志、及匹配请求ID的入口503日志。缺少任一项时不得确认。结论只回答本次请求的直接运行原因，不说明配置变更者、动机或配置端点历史；“旧端点过去是否曾可用”等不否定当前错配的历史问题，应保留为 unresolved，并标为本结论范围之外的非关键解释，写明不影响直接原因判断的理由。
 继续检查时填写 next_question_id，使用此前记忆中未决问题的稳定 ID；没有旧问题时可留空。
 localized_fault 只填写已被证据直接确认的故障现象。healthy_within_scope 只描述核查的具体对象及窗口，
 故障层有直接证据时，即使更深原因 unavailable/unresolved，也可报告 localized_fault，并保留这些限制；
@@ -1793,6 +1796,50 @@ def _downstream_endpoint_mismatch_findings(records, state):
     return findings
 
 
+def _confirmed_endpoint_cause_evidence(records, state):
+    """Return the complete evidence set for the one directly verifiable endpoint cause."""
+    current = current_probe_records(records)
+    for finding in _downstream_endpoint_mismatch_findings(records, state):
+        mismatch = finding['endpoint_mismatch']
+        config = json.loads(current[finding['evidence_id']]['payload'])['payload']
+        source_hash = config.get('source_sha256')
+        if not source_hash:
+            continue
+        app_events, edge_events = [], []
+        for evidence_id, record in current.items():
+            raw = json.loads(record['payload'])
+            body = raw.get('payload') or {}
+            if raw.get('operation') != 'text_logs' or body.get('error') or raw.get('truncated'):
+                continue
+            for line in body.get('lines', []):
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                status = event.get('status')
+                upstream = event.get('upstream')
+                configuration = event.get('configuration')
+                if (body.get('service') == mismatch['service'] and event.get('event') == 'request_completed'
+                        and event.get('path') == '/api/availability' and type(status) is int and status >= 500
+                        and event.get('detail') == 'upstream connection failed'
+                        and isinstance(upstream, dict) and upstream.get('port') == mismatch['configured_port']
+                        and isinstance(configuration, dict) and configuration.get('source_sha256') == source_hash
+                        and event.get('request_id')):
+                    app_events.append((evidence_id, event))
+                elif (body.get('service') == 'edge' and event.get('event') == 'request_completed'
+                        and event.get('path') == '/api/availability' and type(status) is int and status >= 500
+                        and event.get('request_id')):
+                    edge_events.append((evidence_id, event))
+        for app_id, app_event in app_events:
+            for edge_id, edge_event in edge_events:
+                if app_event['request_id'] == edge_event['request_id']:
+                    return {finding['evidence_id'],
+                        *[item['evidence_id'] for item in finding['related_evidence']], app_id, edge_id}
+    return set()
+
+
 def _configuration_error_findings(records, state):
     """Pair an application config error with the independently read same file/value."""
     current = current_probe_records(records)
@@ -2918,10 +2965,6 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None, req
                 if state.get('_probe_check_contract_version', 3) >= 3 else set())
             if check.next_check and check.next_arguments is None and any(t in concrete_tools for t in check.next_tools):
                 check.next_arguments = {}
-    # Matching quotations and finite predicates cannot validate free-text causality.
-    if decision.conclusion_level == 'confirmed_cause' and decision.outcome != 'healthy':
-        decision.validation_issues.append('自由文本因果解释尚未验证；原文引用和有限条件排除不能确认根因，保留为待核实假设。')
-        decision.root_cause, decision.outcome, decision.conclusion_level = '', 'investigating', 'unlocated'
     aliases = {record.get('legacy_id'): key for key, record in records.items()}
     for citation in [*decision.supporting_evidence, *[c for a in decision.alternatives for c in a.evidence]]:
         citation.evidence_id = aliases.get(citation.evidence_id, citation.evidence_id)
@@ -2940,6 +2983,16 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None, req
     current_records = current_probe_records(records)
     scoped_records = {key: value for key, value in current_records.items()
                       if in_business_scope(json.loads(value['payload']), state.get('target_resolution'), current_records)}
+    required_cause_evidence = _confirmed_endpoint_cause_evidence(scoped_records, state)
+    if decision.conclusion_level == 'confirmed_cause' and decision.outcome != 'healthy':
+        cited_support = {citation.evidence_id for citation in decision.supporting_evidence}
+        if (decision.root_cause_code != 'configured_downstream_endpoint_mismatch'
+                or not required_cause_evidence
+                or not required_cause_evidence <= cited_support):
+            decision.validation_issues.append(
+                '根因缺少受支持的原因码或完整同请求证据链；保留为未确认假设。')
+            decision.root_cause, decision.root_cause_code = '', ''
+            decision.outcome, decision.conclusion_level = 'investigating', 'unlocated'
     policy_check = dependency_followup_policy(state, scoped_records)
     tracking = _apply_investigation_mechanisms(state, decision, scoped_records,
                                                policy_selected=bool(policy_check))
@@ -3055,7 +3108,10 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None, req
                      and 200 <= o.get('payload', {}).get('http', {}).get('status', 0) < 300))
             for o in observations)
     else:
-        sufficient = sufficient and decision.conclusion_level == 'confirmed_cause'
+        sufficient = (sufficient and decision.conclusion_level == 'confirmed_cause'
+            and decision.root_cause_code == 'configured_downstream_endpoint_mismatch'
+            and bool(required_cause_evidence)
+            and required_cause_evidence <= {citation.evidence_id for citation in decision.supporting_evidence})
         observations = [json.loads(records[c.evidence_id]['payload']) for c in decision.supporting_evidence
                         if c.evidence_id in records]
         sufficient = sufficient and all(not o.get('truncated') and not o.get('payload', {}).get('error')

@@ -12,6 +12,7 @@ FAULT_LABELS = {
     'dependency_http_failed': 'HTTP 探测返回失败状态',
     'port_owner_mismatch': '监听端口归属与服务 PID 不符',
     'configuration_error_log_matches_snapshot': '配置错误日志与当前独立配置快照字段及哈希一致',
+    'configured_downstream_endpoint_mismatch': '应用加载的下游端点与登记端点不一致',
 }
 
 

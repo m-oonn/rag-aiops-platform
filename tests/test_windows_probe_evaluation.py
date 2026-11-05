@@ -545,6 +545,28 @@ def test_target_catalog_contains_allowed_query_names_without_credentials(tmp_pat
     assert 'token_file' not in text and 'tls_ca_file' not in text
 
 
+def test_business_catalog_resolves_edge_entry_to_allowlisted_service_scope(tmp_path):
+    from scripts.evaluate_windows_probe import business_catalog
+    from src.agent.aiops.target_catalog import resolve_target
+    from src.probe.windows.config import ProbeConfig, ServiceConfig, DependencyConfig
+
+    cfg = ProbeConfig('test-target', 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token',
+        services={name: ServiceConfig(name, text_logs=(f'C:/logs/{name}.log',))
+            for name in ('edge', 'localapp', 'downstream')},
+        dependencies={name: DependencyConfig('127.0.0.1', 18080 + index, 'http', '/api/availability')
+            for index, name in enumerate(('edge', 'localapp', 'downstream', 'localapp_upstream'))})
+    inventory = {'configured_services': {name: {'text_logs_available': True}
+                    for name in ('edge', 'localapp', 'downstream')},
+        'configured_dependencies': ['edge', 'localapp', 'downstream', 'localapp_upstream']}
+    found = resolve_target(business_catalog(cfg),
+        'edge 的 /api/availability 业务请求失败，请调查原因', inventory, 'test-target')
+
+    assert found['status'] == 'resolved' and found['service'] == 'edge'
+    assert found['allowed_services'] == ['downstream', 'edge', 'localapp']
+    assert found['allowed_dependencies'] == ['downstream', 'edge', 'localapp', 'localapp_upstream']
+    assert found['dependency_services']['localapp_upstream'] == 'localapp'
+
+
 def test_empty_runbook_directory_fails_before_evaluation(tmp_path):
     with pytest.raises(ValueError, match='no Markdown'):
         with local_runbook_retrieval(tmp_path, tmp_path):

@@ -278,16 +278,24 @@ def target_catalog(cfg):
 def business_catalog(cfg):
     """The disposable app is a process, not an installed Windows service."""
     dependencies = sorted(cfg.dependencies)
-    entries = {}
-    for name, dep in cfg.dependencies.items():
-        if name == 'localapp' and dep.health_scheme:
-            entries[f'{dep.health_scheme}://{dep.host}:{dep.port}{dep.health_path}'] = name
-    return json.dumps({'version': 1, 'target_id': cfg.target_id, 'services': {
-        'localapp': {'aliases': ['测试应用'], 'entries': entries,
-            'probe_service': 'localapp' if 'localapp' in cfg.services else None,
-            'log_refs': ['localapp'] if 'localapp' in cfg.services else [],
-            'dependency_services': {name: name for name in dependencies if name in cfg.services},
-            'dependencies': dependencies}}}, ensure_ascii=False)
+    services = {}
+    dependency_services = {ref: ref for ref in dependencies if ref in cfg.services}
+    if 'localapp_upstream' in dependencies and 'localapp' in cfg.services:
+        dependency_services['localapp_upstream'] = 'localapp'
+    for name, service in cfg.services.items():
+        dependency = cfg.dependencies.get(name)
+        entries = {}
+        if dependency and dependency.health_scheme:
+            entries[f'{dependency.health_scheme}://{dependency.host}:{dependency.port}{dependency.health_path}'] = name
+        services[name] = {
+            'aliases': ['测试应用'] if name == 'localapp' else [],
+            'entries': entries,
+            'probe_service': name,
+            'log_refs': [name],
+            'dependency_services': dependency_services,
+            'dependencies': dependencies,
+        }
+    return json.dumps({'version': 1, 'target_id': cfg.target_id, 'services': services}, ensure_ascii=False)
 
 
 @contextmanager

@@ -72,19 +72,19 @@ async def verify_endpoint_round(fixture, tools, output, target, canary, symptom,
     from scripts.evaluate_windows_probe import trace_evaluation_tools
     from scripts.evaluate_windows_probe import local_runbook_retrieval
     from scripts.knowledge_conditions import check_knowledge_conditions
+    from scripts.evaluate_windows_probe import business_catalog
+    from src.probe.windows.config import load_config
+    from src.agent.aiops.target_catalog import resolve_target
 
     phase = output / 'round-1'
     phase.mkdir()
     boundary = fixture.boundary
     wrapped = {tool.name: tool for tool in trace_evaluation_tools(
         list(tools.values()), target, phase, [], boundary)}
+    inventory = None
     state = {'input': symptom, 'plan': [], 'past_steps': [], 'raw_evidence': [],
         'evidence_events': [], 'investigation_memory': {},
-        'target_resolution': {'status': 'resolved', 'service': 'edge',
-            'allowed_services': ['edge', 'localapp', 'downstream'],
-            'allowed_dependencies': ['edge', 'localapp', 'downstream', 'localapp_upstream'],
-            'dependency_services': {'edge': 'edge', 'localapp': 'localapp',
-                'downstream': 'downstream', 'localapp_upstream': 'localapp'}},
+        'target_resolution': {},
         'investigation_tools': [{'name': name, 'description': tool.description, 'args': tool.args}
             for name, tool in tools.items()]}
     row = {'fault': 'localapp_wrong_endpoint', 'status': 'started', 'boundary': boundary}
@@ -134,6 +134,10 @@ async def verify_endpoint_round(fixture, tools, output, target, canary, symptom,
             json.dumps(captured, ensure_ascii=False, indent=2), encoding='utf-8')
 
     inventory = await collect('inventory', 'probe_inventory', {})
+    state['target_resolution'] = resolve_target(
+        business_catalog(load_config(output / 'config.toml')), symptom, inventory, target)
+    assert state['target_resolution']['status'] == 'resolved'
+    assert state['target_resolution']['service'] == 'edge'
     assert inventory['configured_services']['localapp']['configuration_available']
     edge = await collect('edge', 'probe_dependency_probe', {'dependency': 'edge'})
     downstream = await collect('downstream', 'probe_dependency_probe', {'dependency': 'downstream'})
@@ -377,16 +381,20 @@ async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_mode
                             raise
                         await asyncio.sleep(0.25)
                 try:
+                    if fault_pair == 'endpoint':
+                        await verify_endpoint_round(fixture, tools, output, target, canary, symptom, report, observations)
                     if run_model:
+                        if fault_pair == 'endpoint':
+                            boundary = fixture.reset('localapp_wrong_endpoint')
+                        else:
+                            boundary = fixture.boundary
                         model_result = await run_paid_endpoint_evaluation(
                             launch=launch, output=output, config=config, symptom=output / 'symptom.txt',
                             runbooks=output / 'runbooks', manifest=output / 'knowledge-manifest.json',
                             previous_cost=previous_cost, timeout_authorization=timeout_authorization,
-                            boundary=fixture.boundary)
+                            boundary=boundary)
                         report['model_evaluation'] = model_result
                         save()
-                    if fault_pair == 'endpoint':
-                        await verify_endpoint_round(fixture, tools, output, target, canary, symptom, report, observations)
                     faults = (('downstream_unreachable', 'downstream_bind_failed') if fault_pair == 'causes'
                               else (() if fault_pair == 'endpoint' else ('localapp_unavailable', 'downstream_unreachable')))
                     for index, fault in enumerate(faults):

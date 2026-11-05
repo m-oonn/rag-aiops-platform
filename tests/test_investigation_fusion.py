@@ -85,6 +85,48 @@ def test_wrong_downstream_endpoint_finding_cites_snapshot_and_both_probes():
     assert mismatch['quote']
 
 
+def test_endpoint_root_cause_requires_configured_failure_and_matching_business_request_logs():
+    state = _wrong_endpoint_state()
+    state['target_resolution']['allowed_services'].append('edge')
+    request_id = 'request-123'
+    localapp_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503, 'detail': 'upstream connection failed',
+        'upstream': {'port': 11751}, 'configuration': {'source_sha256': 'abc123'}}
+    edge_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503}
+    state['raw_evidence'].extend([
+        ('localapp log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='text_logs', payload={'service': 'localapp', 'lines': [json.dumps(localapp_event)]}))),
+        ('edge log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='text_logs', payload={'service': 'edge', 'lines': [json.dumps({'status': None}),
+                json.dumps(edge_event)]}))),
+    ])
+    records = inv.evidence_index(state)
+
+    required = inv._confirmed_endpoint_cause_evidence(records, state)
+
+    assert required == {'e1.1', 'e2.1', 'e3.1', 'e4.1', 'e5.1'}
+    decision = inv.InvestigationDecision(
+        hypothesis='localapp 使用了未登记的下游端口',
+        root_cause='localapp 启动时加载的 downstream_port 与登记服务不一致，导致该业务请求连接失败',
+        root_cause_code='configured_downstream_endpoint_mismatch', outcome='root_cause',
+        conclusion_level='confirmed_cause', scope='edge /api/availability 本次失败请求',
+        supporting_evidence=[inv.Citation(evidence_id=ident, quote=records[ident]['payload'][:300])
+            for ident in sorted(required)],
+        alternatives=[inv.Alternative(explanation='downstream 曾在 5889 提供服务后迁移；何时迁移仍未知',
+            status='unresolved', critical=False,
+            noncritical_reason='该历史可能解释配置为何过期，但不否定本次请求中 localapp 指向无监听端口导致失败。')])
+    accepted = inv.decide_from_evidence(state, decision, records)
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert 'localapp 启动时加载的 downstream_port' in accepted['response']
+    assert accepted['diagnosis']['alternatives'][0]['status'] == 'unresolved'
+    state['raw_evidence'].pop()
+    incomplete_records = inv.evidence_index(state)
+    assert not inv._confirmed_endpoint_cause_evidence(incomplete_records, state)
+    rejected = inv.decide_from_evidence(state, decision, incomplete_records)
+    assert rejected['diagnosis']['kind'] == 'localized_fault'
+
+
 def test_wrong_downstream_endpoint_reaches_cited_diagnosis_and_actionable_report():
     from src.agent.aiops.reporting import build_bundle, render_report, rule_layout
 

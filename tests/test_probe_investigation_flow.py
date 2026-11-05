@@ -214,6 +214,47 @@ async def test_planner_persists_initial_inventory_without_enabling_terminal(monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('symptom', 'expected_status'), [
+    ('edge 的 /api/availability 业务请求失败', 'resolved'),
+    ('unregistered-service 的业务请求失败', 'unmatched'),
+])
+async def test_planner_uses_registered_business_entry_before_model(monkeypatch, tmp_path, symptom, expected_status):
+    from scripts.evaluate_windows_probe import business_catalog
+    from src.probe.windows.config import ProbeConfig, ServiceConfig, DependencyConfig
+
+    planner_module = importlib.import_module('src.agent.aiops.planner')
+    target = settings.PROBE_TARGET_ID
+    cfg = ProbeConfig(target, 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token',
+        services={name: ServiceConfig(name, text_logs=(f'C:/logs/{name}.log',))
+            for name in ('edge', 'localapp', 'downstream')},
+        dependencies={name: DependencyConfig('127.0.0.1', 18080 + index, 'http', '/api/availability')
+            for index, name in enumerate(('edge', 'localapp', 'downstream'))})
+    inventory = evidence(target_id=target, operation='inventory', payload={
+        'configured_services': {name: {'text_logs_available': True}
+            for name in ('edge', 'localapp', 'downstream')},
+        'configured_dependencies': ['edge', 'localapp', 'downstream']})
+    tool = SimpleNamespace(name='probe_inventory', args={}, description='inventory',
+        ainvoke=AsyncMock(return_value=[{'type': 'text', 'text': json.dumps(inventory)}]))
+    invoke = AsyncMock(return_value=planner_module.Plan(steps=['inspect edge']))
+    monkeypatch.setattr(settings, 'PROBE_ENABLED', True)
+    monkeypatch.setattr(settings, 'DIAGNOSTIC_TARGET_CATALOG', business_catalog(cfg))
+    monkeypatch.setattr(settings, 'SERVICE_ALIASES', '{}')
+    monkeypatch.setattr(planner_module, 'load_agent_tools', AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(planner_module, 'create_agent_llm', MagicMock())
+    monkeypatch.setattr(planner_module, 'ainvoke_structured', invoke)
+
+    result = await planner_module.planner({'input': symptom})
+
+    assert result['target_resolution']['status'] == expected_status
+    if expected_status == 'resolved':
+        assert result['target_resolution']['service'] == 'edge'
+        assert invoke.await_count == 1
+    else:
+        assert result['diagnosis']['kind'] == 'unlocated'
+        assert invoke.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_executor_receives_reference_context_without_turning_it_into_evidence(monkeypatch):
     from langchain_core.messages import AIMessage
     executor = importlib.import_module('src.agent.aiops.executor')
