@@ -10,6 +10,51 @@ import pytest
 from scripts import verify_windows_local_faults as module
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('changed', [False, True])
+async def test_manual_window_observes_external_repair_and_never_edits_config(tmp_path, monkeypatch, changed):
+    mode = tmp_path / 'app.mode'
+    initial = '{"max_attempts": "invalid"}'
+    mode.write_text(initial, encoding='utf-8')
+    clock = {'now': 0}
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock['now']))
+    async def wait(_):
+        clock['now'] += 0.5
+        if changed:
+            mode.write_text('{"max_attempts": 3}', encoding='utf-8')
+    monkeypatch.setattr(module.asyncio, 'sleep', wait)
+    requests = []
+    def get(port):
+        requests.append(port)
+        return 200, 'healthy'
+    monkeypatch.setattr(module, 'get_local', get)
+    result = await module.await_manual_config_repair(tmp_path, {'result_dir': str(tmp_path)}, mode, 9100, 9101, 1)
+    assert result['controller_repair_performed'] is False
+    assert result['human_confirmation'] is None
+    if changed:
+        assert result['status'] == 'external_edit_retested'
+        assert result['business_retest']['passed'] is True
+        assert requests == [9101, 9100]
+    else:
+        assert result['status'] == 'pending_manual_acceptance_timeout'
+        assert mode.read_text(encoding='utf-8') == initial
+        assert not requests
+
+
+@pytest.mark.asyncio
+async def test_manual_handoff_runs_before_controller_restore(tmp_path, monkeypatch):
+    order = []
+    async def set_case(case):
+        order.append(case)
+    async def run(*args, **kwargs):
+        return {'status': 'passed', 'workflow_completed': True, 'cost_file': str(tmp_path / 'cost.json')}
+    async def handoff(result):
+        order.append('manual_window')
+    monkeypatch.setattr(module, 'evaluate_model_case', run)
+    await module.evaluate_blind_cases(tmp_path, Mock(), set_case, suite=['application_config_error'], after_case=handoff)
+    assert order == ['application_config_error', 'manual_window', 'normal']
+
+
 def test_candidate_opportunity_profile_is_explicit_and_does_not_name_a_fault():
     assert module.symptom_text('neutral') == (
         '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。'
@@ -48,7 +93,7 @@ def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path)
             ports.append(port)
     app_port, dep_port = ports
     mode, dep_mode, log = tmp_path / 'app.mode', tmp_path / 'dep.mode', tmp_path / 'app.log'
-    mode.write_text('normal')
+    mode.write_text(json.dumps({'max_attempts': 3}))
     dep_mode.write_text('normal')
     owned = []
     def launch(port, mode_file, downstream=None, wait=True):
@@ -81,6 +126,13 @@ def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path)
         assert verify('application_config_error', app, dep)['passed']
         assert module.get_local(app_port) == unavailable_response == (503, 'temporarily unavailable')
         assert module.get_local(dep_port) == (200, 'healthy')
+        errors = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()
+                  if json.loads(line).get('error_type') == 'ValueError']
+        config = errors[-1]['configuration']
+        assert config == {'source': str(mode.resolve()), 'field': 'max_attempts',
+                          'value': 'invalid', 'value_present': True, 'expected': 'integer-convertible',
+                          'source_sha256': module.hashlib.sha256(mode.read_bytes()).hexdigest()}
+        assert 'controller' not in json.dumps(config).lower()
         with pytest.raises(RuntimeError, match='state verification failed'):
             verify('downstream_unreachable', app, dep)
         # Valid configuration takes the normal application path again.
@@ -107,6 +159,34 @@ def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path)
     rows = [json.loads(line) for line in (tmp_path / 'controller-observations.jsonl').read_text(encoding='utf-8').splitlines()]
     assert len(rows) == 12 and rows[-1]['passed'] is False
     assert all(row['agent_evidence'] is False for row in rows)
+
+
+def test_controlled_downstream_stop_is_written_by_process_to_allowed_log(tmp_path):
+    port = module.free_port()
+    mode_file, log, stop_file = (tmp_path / name for name in ('mode', 'downstream.log', 'stop.request'))
+    mode_file.write_text('normal', encoding='utf-8')
+    process = subprocess.Popen([
+        sys.executable, str(Path(module.__file__).resolve()), '--serve', str(port),
+        '--mode-file', str(mode_file), '--log', str(log), '--stop-file', str(stop_file),
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+    try:
+        module.wait_listener(port, process)
+        owned_pids = {process.pid, *[child.pid for child in module.psutil.Process(process.pid).children(recursive=True)]}
+        stop_file.touch()
+        assert process.wait(timeout=10) == 0
+        events = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+        assert len(events) == 1
+        assert events[0]['pid'] in owned_pids
+        assert events[0]['event'] == 'shutdown_requested'
+        assert events[0]['reason'] == 'controlled_stop'
+        request = events[0]['stop_request']
+        assert request == {'channel': 'file_presence', 'path': str(stop_file.resolve()),
+                           'mtime_ns': stop_file.stat().st_mtime_ns, 'initiator': 'unknown'}
+        assert module.listening_rows([port]) == []
+    finally:
+        if process.poll() is None:
+            module.stop(process)
 
 
 @pytest.mark.parametrize('mutation', ['wrong_body', 'missing_body', 'wrong_log', 'wrong_pid', 'wrong_error_type'])
@@ -354,6 +434,27 @@ async def test_blind_controller_forwards_per_run_cost_cap(tmp_path, monkeypatch)
 
     assert len(calls) == 1
     assert calls[0]['run_budget_cny'] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_blind_controller_forwards_per_run_request_cap_separately(tmp_path, monkeypatch):
+    calls = []
+
+    async def set_case(case):
+        return None
+
+    async def run(*args, **kwargs):
+        calls.append(kwargs)
+        return {'status': 'passed', 'workflow_completed': True,
+            'cost_file': str(tmp_path / 'cost.json')}
+
+    monkeypatch.setattr(module, 'evaluate_model_case', run)
+    await module.evaluate_blind_cases(tmp_path, Mock(), set_case, suite=['downstream_unreachable'],
+        max_model_requests=20, run_max_model_requests=3)
+
+    assert len(calls) == 1
+    assert calls[0]['max_model_requests'] == 20
+    assert calls[0]['run_max_model_requests'] == 3
 
 
 @pytest.mark.asyncio

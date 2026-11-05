@@ -27,7 +27,7 @@ def environment(tmp_path):
 @pytest.mark.parametrize('suite', ['baseline-v1', 'mechanism-v1', 'e2-fault-pair-v1'])
 @pytest.mark.parametrize('mutation', ['none', 'failed_child', 'exception', 'config_change',
     'source_change', 'reused_directory', 'reused_thread', 'missing_db', 'reset_failure', 'recovery_failure',
-    'boundary_mismatch', 'symptom_mismatch'])
+    'boundary_mismatch', 'symptom_mismatch', 'mixed_channels'])
 async def test_four_group_order_fixed_environment_isolation_and_failure(environment, monkeypatch, mutation, suite):
     out, prior = environment
     calls, resets = [], []
@@ -75,7 +75,10 @@ async def test_four_group_order_fixed_environment_isolation_and_failure(environm
             'record_integrity': {'passed': True, 'observation_not_before': 'wrong' if mutation == 'boundary_mismatch' else observation_not_before, 'source_signature': 'changed' if mutation == 'source_change' and index == 2 else 'fixed',
                 'comparison_config': {'objects': ['fixed ports'], 'knowledge': 'same',
                     'run_budget_cny': run_budget_cny, 'shared_history_enabled': False,
-                    'symptom_sha256': symptom_sha256}}}
+                    'symptom_sha256': symptom_sha256,
+                    'model_channels': ([{'api_base': 'https://primary.invalid/v1', 'model': 'flash', 'served_model': 'flash'},
+                        {'api_base': 'https://fallback.invalid/v1', 'model': 'flash', 'served_model': 'flash'}]
+                        if mutation == 'mixed_channels' else [])}}}
     reset_times = []
     monkeypatch.setattr(controller, 'evaluate_model_case', run)
     before = prior.read_bytes()
@@ -114,6 +117,58 @@ async def test_equal_budget_preflight_rejects_before_any_reset_or_model(environm
     reset, launch = AsyncMock(), Mock()
     with pytest.raises((ValueError, RuntimeError)):
         await controller.evaluate_four_groups(out, launch, reset, 'http://127.0.0.1:9200/mcp', prior, 5, cap)
+    reset.assert_not_awaited()
+    launch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_selected_slots_preflight_only_selected_equal_caps(environment, monkeypatch):
+    out, prior = environment
+    calls, resets = [], []
+    selected = [
+        {'case': 'downstream_unreachable', 'group': 'G10'},
+        {'case': 'downstream_unreachable', 'group': 'G11'},
+        *[{'case': 'application_config_error', 'group': group} for group in ('G01', 'G00', 'G10', 'G11')],
+    ]
+    async def set_case(case):
+        resets.append(case)
+
+    async def run(directory, case, launch, previous, *, knowledge_url, mechanism_group,
+            budget_limit_cny, run_budget_cny, observation_not_before, symptom_profile):
+        calls.append((case, mechanism_group))
+        child = out / f'child-{len(calls)}'
+        child.mkdir()
+        for name in ('runs.sqlite', 'checkpoints.sqlite'):
+            (child / name).write_bytes(b'isolated')
+        (child / 'mechanism_trace.json').write_text(json.dumps({'thread_id': f'thread-{len(calls)}'}))
+        return {'status': 'passed', 'workflow_completed': True, 'result_dir': str(child),
+            'cost_file': str(out / f'cost-{len(calls)}.json'), 'record_integrity': {
+                'passed': True, 'observation_not_before': observation_not_before, 'source_signature': 'fixed',
+                'comparison_config': {'run_budget_cny': run_budget_cny, 'shared_history_enabled': False,
+                    'symptom_sha256': hashlib.sha256(controller.symptom_text('candidate-opportunity').encode()).hexdigest()}}}
+
+    monkeypatch.setattr(controller, 'evaluate_model_case', run)
+    result = await controller.evaluate_four_groups(out, Mock(), set_case, 'http://127.0.0.1:9200/mcp',
+        prior, 1.01, 0.1, suite='e2-fault-pair-v1', selected_order=selected,
+        symptom_profile='candidate-opportunity')
+    assert len(result) == 6
+    assert calls == [(item['case'], item['group']) for item in selected]
+    assert len([case for case in resets if case != 'normal']) == 6
+    saved = json.loads((out / 'four-group-controller.json').read_text())
+    assert saved['order'] == selected
+    assert saved['status'] == 'completed'
+    assert saved['scheduled_slot_count'] == 6 and saved['suite_slot_count'] == 8
+    assert saved['suite_complete'] is False
+
+
+@pytest.mark.asyncio
+async def test_selected_slots_over_budget_reject_before_reset(environment):
+    out, prior = environment
+    reset, launch = AsyncMock(), Mock()
+    selected = controller.four_group_order('e2-fault-pair-v1')[:6]
+    with pytest.raises(RuntimeError, match='insufficient cumulative allowance'):
+        await controller.evaluate_four_groups(out, launch, reset, 'http://127.0.0.1:9200/mcp',
+            prior, 0.9, 0.1, suite='e2-fault-pair-v1', selected_order=selected)
     reset.assert_not_awaited()
     launch.assert_not_called()
 
@@ -172,6 +227,8 @@ async def test_unpriced_batch_budget_rejects_before_reset(environment, total, pe
     ['--four-group-suite', 'mechanism-v1'],
     ['--run-model', '--model-stage', 'four-groups', '--allow-unpriced-model', '--max-model-requests', '196'],
     ['--run-model', '--model-stage', 'four-groups', '--allow-unpriced-model', '--max-model-requests', '196', '--run-max-model-requests', '0'],
+    ['--run-model', '--model-stage', 'four-groups', '--four-group-suite', 'e2-fault-pair-v1', '--four-group-slot', 'downstream_unreachable/G10', '--four-group-slot', 'downstream_unreachable/G10'],
+    ['--run-model', '--model-stage', 'four-groups', '--four-group-suite', 'e2-fault-pair-v1', '--four-group-slot', 'normal/G10'],
 ])
 def test_four_group_cli_rejects_incomplete_parameters_before_environment(monkeypatch, options):
     import sys
@@ -199,6 +256,23 @@ def test_four_group_cli_preserves_review_ledger_and_cap_before_dispatch(tmp_path
     assert verify.await_args.kwargs['previous_cost'] == prior
 
 
+def test_selected_four_group_cli_passes_only_requested_slots(tmp_path, monkeypatch):
+    import sys
+    review = tmp_path / 'review.json'
+    review.write_text(json.dumps({'smoke_passed': True}))
+    slots = ['downstream_unreachable/G10', 'downstream_unreachable/G11']
+    monkeypatch.setattr(sys, 'argv', ['controller', '--run-model', '--model-stage', 'four-groups',
+        '--four-group-suite', 'e2-fault-pair-v1', '--run-budget-cny', '0.1',
+        '--previous-cost', str(tmp_path / 'prior.json'), '--smoke-review', str(review),
+        *sum((['--four-group-slot', slot] for slot in slots), [])])
+    verify = AsyncMock(return_value={'ok': True})
+    monkeypatch.setattr(controller, 'verify', verify)
+    assert controller.main() == 0
+    assert verify.await_args.kwargs['four_group_slots'] == [
+        {'case': 'downstream_unreachable', 'group': 'G10'},
+        {'case': 'downstream_unreachable', 'group': 'G11'}]
+
+
 def test_unpriced_four_group_cli_preserves_equal_caps_and_requires_review(tmp_path, monkeypatch):
     import sys
     review = tmp_path / 'review.json'
@@ -218,6 +292,17 @@ def test_unpriced_four_group_cli_preserves_equal_caps_and_requires_review(tmp_pa
     assert verify.await_args.kwargs['max_model_requests'] == 196
     assert verify.await_args.kwargs['allow_unpriced_model'] is True
     assert verify.await_args.kwargs['run_budget_cny'] is None
+
+
+def test_single_smoke_cli_accepts_separate_per_run_request_cap(monkeypatch):
+    import sys
+    monkeypatch.setattr(sys, 'argv', ['controller', '--run-model', '--smoke-case',
+        'downstream_unreachable', '--max-model-requests', '20', '--run-max-model-requests', '3'])
+    verify = AsyncMock(return_value={'ok': True})
+    monkeypatch.setattr(controller, 'verify', verify)
+    assert controller.main() == 0
+    assert verify.await_args.kwargs['max_model_requests'] == 20
+    assert verify.await_args.kwargs['run_max_model_requests'] == 3
 
 
 def test_free_scenario_cli_does_not_request_model_or_budget(monkeypatch):
@@ -254,14 +339,18 @@ async def test_free_scenario_preflight_preserves_schedule_failure_and_recovery(e
         return {'rounds': 12, 'evidence_count': 48}
 
     monkeypatch.setattr(boundary, 'verify_boundary_rounds', run)
+    from src.probe.protocol import evidence
+    toolset = {'probe_text_log': SimpleNamespace(ainvoke=AsyncMock(return_value=evidence(
+        target_id='fixture', operation='text_logs', payload={'service': 'downstream',
+        'lines': [json.dumps({'event': 'shutdown_requested', 'reason': 'controlled_stop'})]})))}
     before = prior.read_bytes()
     if failure == 'none':
-        result = await controller.preflight_four_group_scenarios(out, {}, 'fixture', out / 'app.log', reset, 'mechanism-v1')
+        result = await controller.preflight_four_group_scenarios(out, toolset, 'fixture', out / 'app.log', reset, 'mechanism-v1')
         assert result['model_calls'] == 0 and result['rounds'] == 12
         assert not result['mechanism_effectiveness_verified']
     else:
         with pytest.raises(RuntimeError):
-            await controller.preflight_four_group_scenarios(out, {}, 'fixture', out / 'app.log', reset, 'mechanism-v1')
+            await controller.preflight_four_group_scenarios(out, toolset, 'fixture', out / 'app.log', reset, 'mechanism-v1')
     record = json.loads((out / 'four-group-scenario-preflight.json').read_text())
     assert record['status'] == ('passed' if failure == 'none' else 'failed')
     assert record['recovery'] == ('failed' if failure == 'recovery' else 'normal_restored')

@@ -57,7 +57,12 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                     return AIMessage(content='固定决策检查结束')
                 task = messages[1].content.rsplit('请执行以下诊断步骤: ', 1)[-1]
                 if '查运维手册' in task:
-                    name, args = 'search_knowledge_base', {'query': 'localapp availability', 'kb_id': 14}
+                    initial = [{'id': 'knowledge', 'name': 'search_knowledge_base',
+                        'args': {'query': 'localapp availability', 'kb_id': 14}}]
+                    if case != 'no_live_refutation' and 'probe_config_snapshot' in tools:
+                        initial.append({'id': 'configuration', 'name': 'probe_config_snapshot',
+                            'args': {'service': 'localapp'}})
+                    return AIMessage(content='', tool_calls=initial)
                 elif '核查入口' in task:
                     name, args = 'probe_dependency_probe', {'dependency': 'localapp'}
                 elif '核查日志' in task or '读取入口日志' in task:
@@ -143,13 +148,17 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                     planning_tools = ['probe_inventory'] + (['probe_list_evidence'] if 'probe_list_evidence' in tools else [])
                     assert [c['tool'] for c in calls[:len(planning_tools)]] == planning_tools
                     checks = calls[len(planning_tools):]
-                    assert checks == [{'tool': 'search_knowledge_base', 'args': {'query': 'localapp availability', 'kb_id': 14}},
+                    expected_checks = [{'tool': 'search_knowledge_base', 'args': {'query': 'localapp availability', 'kb_id': 14}}]
+                    if case != 'no_live_refutation' and 'probe_config_snapshot' in tools:
+                        expected_checks.append({'tool': 'probe_config_snapshot', 'args': {'service': 'localapp'}})
+                    expected_checks.extend([
                         {'tool': 'probe_dependency_probe', 'args': {'dependency': 'downstream'}}
                         if case == 'contradiction' else {'tool': 'probe_text_log', 'args': {'service': 'localapp', 'path': str(log), 'lines': 20}},
-                        {'tool': selected_tool, 'args': selected_args}], checks
+                        {'tool': selected_tool, 'args': selected_args}])
+                    assert checks == expected_checks, checks
                     ledger = run_store.list_evidence(tid, 1)
                     records = inv.evidence_index(final)
-                    assert len(ledger) == len(records) == 3
+                    assert len(ledger) == len(records) == (4 if case != 'no_live_refutation' and 'probe_config_snapshot' in tools else 3)
                     for item in ledger:
                         saved = run_store.get_evidence(tid, item['evidence_id'], 1, include_raw=True)
                         validate_evidence(saved['raw'], target_id=settings.PROBE_TARGET_ID)
@@ -179,8 +188,12 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                                 assert observed['payload']['dependency'] == 'downstream'
                                 assert observed['payload']['tcp'] == 'ok'
                     assert [e['investigation'] for e in events if e.get('investigation')][-1]['events'] == mechanism_events
+                    # Mechanism activation and baseline diagnosis are separate:
+                    # the config-error cases include a matching config snapshot
+                    # and error log, which can localize the fault without a
+                    # mechanism changing the selected check.
                     expected_kind = ('localized_fault'
-                        if case in {'protection', 'contradiction'} and changed else 'unlocated')
+                        if case in {'protection', 'contradiction'} else 'unlocated')
                     assert complete['diagnosis']['kind'] == expected_kind
                     assert knowledge_context(final['raw_evidence']) == decisions[0]
                     await service.close()
@@ -207,8 +220,8 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
         assert len({row['knowledge_sha256'] for row in rows}) == len({row['planning_knowledge_sha256'] for row in rows}) == 1
     if set_case:
         await set_case('normal')
-    assert len({eid for row in summaries for eid in row['evidence_ids']}) == 36
+    assert len({eid for row in summaries for eid in row['evidence_ids']}) == (44 if 'probe_config_snapshot' in tools else 36)
     (output / 'live-mechanism-groups.json').write_text(json.dumps(summaries, ensure_ascii=False, indent=2), encoding='utf-8')
     return {'case': 'live_probe_fixed_decision_mechanism_groups', 'status': 'passed',
-        'investigations': len(summaries), 'evidence_count': 36, 'model_calls': 0,
+        'investigations': len(summaries), 'evidence_count': 44, 'model_calls': 0,
         'autonomous_model_investigation': False, 'mechanism_effectiveness_verified': False}

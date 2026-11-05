@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,6 +66,96 @@ def artifacts(tmp_path):
         (directory / 'report.txt').write_text('未定位根因：fixture', encoding='utf-8')
         return directory
     return root, source, build
+
+
+@pytest.mark.parametrize('mutation', ['none', 'baseline', 'missing', 'sources', 'mode', 'implementation'])
+def test_local_runbook_baseline_is_consumed_and_audited(artifacts, tmp_path, mutation):
+    from scripts.knowledge_conditions import ROOT, knowledge_conditions, check_knowledge_conditions
+    root, _, build = artifacts
+    for name in ('scripts/evaluate_windows_probe.py', 'scripts/knowledge_conditions.py',
+                 'src/agent/aiops/local_retrieval.py'):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((ROOT / name).read_bytes())
+    directory = build()
+    corpus = tmp_path / 'runbooks'
+    corpus.mkdir()
+    (corpus / 'topology.md').write_text('localapp connects to downstream', encoding='utf-8')
+    manifest = tmp_path / 'manifest.json'
+    baseline = knowledge_conditions(corpus, mode='local_runbooks')
+    save(manifest, baseline)
+    check_knowledge_conditions(manifest, corpus, directory, None, 'before')
+    after = check_knowledge_conditions(manifest, corpus, directory, None, 'after')
+    summary = json.loads((directory / 'summary.json').read_text())
+    summary.update(knowledge_mode='local_runbooks', knowledge_conditions=after)
+    save(directory / 'summary.json', summary)
+    save(directory / 'knowledge_trace.json', {'mode': 'local_runbooks', 'sources': baseline['sources'], 'queries': []})
+    if mutation == 'missing': (directory / 'knowledge-baseline.json').unlink()
+    if mutation == 'baseline':
+        baseline['sources'][0]['sha256'] = 'changed'
+        save(directory / 'knowledge-baseline.json', baseline)
+    if mutation == 'sources': save(directory / 'knowledge_trace.json', {'sources': []})
+    if mutation == 'mode':
+        after['mode'] = 'mcp_fixture'
+        save(directory / 'knowledge-conditions-after.json', after)
+    if mutation == 'implementation':
+        baseline['implementations']['src/agent/aiops/local_retrieval.py'] = 'changed'
+        value = {k: v for k, v in baseline.items() if k != 'sha256'}
+        baseline['sha256'] = hashlib.sha256(json.dumps(value, ensure_ascii=False,
+            sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        save(directory / 'knowledge-baseline.json', baseline)
+        for phase in ('before', 'after'):
+            audit = json.loads((directory / ('knowledge-conditions-' + phase + '.json')).read_text())
+            audit.update(expected_sha256=baseline['sha256'], actual_sha256=baseline['sha256'])
+            save(directory / ('knowledge-conditions-' + phase + '.json'), audit)
+            if phase == 'after': summary['knowledge_conditions'] = audit
+        save(directory / 'summary.json', summary)
+    result = audit_evaluation(directory, expected_root=root)
+    assert result['passed'] is (mutation == 'none'), result
+
+
+@pytest.mark.parametrize('mutation', ['none', 'authorization_hash', 'binding', 'new_unknown', 'missing'])
+def test_authorized_timeout_record_keeps_unknown_cost_without_waiving_new_failures(artifacts, mutation):
+    root, source, build = artifacts
+    directory = build()
+    old = {'number': 1, 'reserved_cny': .092916, 'reservation_upper_cny': .092916,
+        'status': 'ReadTimeout', 'error_type': 'ReadTimeout', 'pricing_verified': True}
+    prior = {'limit_cny': 5, 'reserved_cny': old['reserved_cny'], 'requests': [old]}
+    previous = source / 'previous.json'
+    save(previous, prior)
+    authorization = source / 'authorization.json'
+    value = {'version': 1, 'kind': 'single_historical_read_timeout', 'user_authorization': '一次续测',
+        'request_number': 1, 'reserved_cny': old['reserved_cny'], 'limit_cny': 5, 'run_limit_cny': 5,
+        'output_dir': str(directory), 'previous_sha256': hashlib.sha256(previous.read_bytes()).hexdigest(),
+        'request_sha256': hashlib.sha256(json.dumps(old, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
+    save(authorization, value)
+    binding = {'path': str(authorization), 'sha256': hashlib.sha256(authorization.read_bytes()).hexdigest()}
+    save(directory / 'timeout-authorization-use.json', binding)
+    record = json.loads((directory / 'evaluation-record.json').read_text())
+    record['config'].update(previous_cost=str(previous), run_budget_cny=5, timeout_resume_authorization=binding)
+    cost = json.loads((directory / 'cost.json').read_text())
+    cost['requests'][0]['number'] = 2
+    cost['requests'].insert(0, old)
+    cost['reserved_cny'] += old['reserved_cny']
+    cost['request_limits']['inherited_requests'] = 1
+    if mutation == 'new_unknown':
+        cost['requests'][1].pop('usage')
+    save(directory / 'cost.json', cost)
+    budget = PaidRequestBudget(directory)
+    budget.ledger = cost['requests']
+    summary = json.loads((directory / 'summary.json').read_text())
+    summary.update(previous_cost=str(previous), model_requests=2, reserved_cny=cost['reserved_cny'],
+        actual_estimated_cny_peak=None, cost_scope={'cumulative': budget.cost_summary(), 'this_run': budget.cost_summary(1)})
+    save(directory / 'summary.json', summary)
+    if mutation == 'authorization_hash':
+        value['request_number'] = 2
+        save(authorization, value)
+    if mutation == 'binding': save(directory / 'timeout-authorization-use.json', {})
+    if mutation == 'missing': record['config'].pop('timeout_resume_authorization')
+    record['config_sha256'] = hashlib.sha256(json.dumps(record['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    save(directory / 'evaluation-record.json', record)
+    result = audit_evaluation(directory, expected_root=root)
+    assert result['passed'] is (mutation == 'none'), result
 
 
 @pytest.mark.parametrize('mutation', ['none', 'summary_limit', 'inherited_count', 'exceeded', 'unpriced_rate'])
@@ -213,7 +304,7 @@ def test_integrity_verifies_recorded_and_advertised_knowledge_scope(artifacts, m
 
 
 @pytest.mark.parametrize('mutation', ['none', 'missing_group', 'different_source', 'different_config', 'legacy',
-    'missing_controller', 'malformed_controller', 'missing_controller_time', 'failed_suite', 'unrecovered_suite'])
+    'missing_controller', 'malformed_controller', 'missing_controller_time', 'failed_suite', 'unrecovered_suite', 'different_channel'])
 def test_summary_only_compares_complete_matching_four_groups(artifacts, mutation):
     root, source, build = artifacts
     for group in ['G00', 'G10', 'G01', 'G11']:
@@ -221,6 +312,13 @@ def test_summary_only_compares_complete_matching_four_groups(artifacts, mutation
             continue
         build(group)
     directory = source / 'G11'
+    if mutation == 'different_channel':
+        for child in source.iterdir():
+            if child.is_dir():
+                cost = json.loads((child / 'cost.json').read_text())
+                cost['requests'][0]['api_base'] = ('https://fallback.invalid/v1'
+                    if child == directory else 'https://primary.invalid/v1')
+                save(child / 'cost.json', cost)
     if mutation in {'different_source', 'different_config'}:
         path = directory / 'evaluation-record.json'
         record = json.loads(path.read_text())
@@ -256,6 +354,59 @@ def test_summary_only_compares_complete_matching_four_groups(artifacts, mutation
     assert result['passed'] is (mutation == 'none')
     assert all((row['vs_G00'] is not None) == (mutation == 'none') for row in result['runs'])
     assert result['human_reviewed'] == 0 and result['diagnostic_accuracy'] is None
+    if mutation == 'none':
+        assert {(r['group'], r['baseline_group']) for r in result['comparisons']} == {
+            ('G10', 'G00'), ('G01', 'G00'), ('G11', 'G10'), ('G11', 'G01')}
+
+
+def test_summary_keeps_unexecuted_slots_and_unknown_review_fields(artifacts):
+    _, source, build = artifacts
+    build('G00')
+    save(source / 'four-group-controller.json', {
+        'suite': 'e2-fault-pair-v1', 'status': 'failed', 'recovery': 'normal_restored',
+        'order': [{'case': case, 'group': group}
+            for case in ('downstream_unreachable', 'application_config_error')
+            for group in ('G00', 'G10', 'G01', 'G11')], 'results': [], 'resets': []})
+    report = summarize(source, source.parent / 'incomplete-summary')
+    assert len(report['scheduled_slots']) == 8
+    assert all(row['status'] == 'not_run' for row in report['scheduled_slots'])
+    assert report['comparisons'] == []
+    row = report['runs'][0]
+    assert row['semantic_status'] == 'pending_manual_review'
+    assert row['mechanical_status'] is None
+    assert row['repeated_queries'] is None and row['irrelevant_checks'] is None
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_summary_keeps_controller_failure_even_when_child_record_passes(artifacts, exit_code):
+    _, source, build = artifacts
+    directory = build('G00')
+    save(source / 'four-group-controller.json', {
+        'suite': 'e2-fault-pair-v1', 'status': 'failed', 'recovery': 'pending',
+        'order': [{'case': 'case', 'group': 'G00'},
+                  {'case': 'downstream_unreachable', 'group': 'G10'}],
+        'results': [{'case': 'real_model_workflow_case', 'mechanism_group': 'G00', 'status': 'failed',
+                     'result_dir': str(directory)}], 'resets': []})
+    attempt_path = source / 'model-attempt-G00.json'
+    attempt = json.loads(attempt_path.read_text())
+    save(attempt_path, {**attempt, 'exit_code': exit_code})
+    report = summarize(source, source.parent / 'controller-failed-summary')
+    assert [row['status'] for row in report['scheduled_slots']] == ['failed', 'not_run']
+    assert report['runs'][0]['workflow_status'] == ('completed' if exit_code == 0 else 'not_verified')
+    assert report['passed'] is False
+
+
+def test_summary_keeps_failed_slot_without_child_artifacts(artifacts):
+    _, source, _ = artifacts
+    save(source / 'four-group-controller.json', {
+        'suite': 'e2-fault-pair-v1', 'status': 'failed', 'recovery': 'pending',
+        'order': [{'case': 'downstream_unreachable', 'group': 'G00'}],
+        'results': [{'case': 'real_model_workflow_downstream_unreachable',
+            'mechanism_group': 'G00', 'status': 'failed', 'result_dir': str(source / 'missing')}],
+        'resets': []})
+    report = summarize(source, source.parent / 'missing-child-summary')
+    assert report['scheduled_slots'][0]['status'] == 'failed'
+    assert report['passed'] is False
 
 
 @pytest.mark.asyncio
@@ -444,3 +595,113 @@ async def test_four_group_orchestration_consumes_real_child_gate_and_summary(art
     rejected = summarize(source, source.parent / 'joined-summary-without-boundary')
     assert rejected['passed'] is False
     assert all(row['vs_G00'] is None for row in rejected['runs'])
+
+
+
+@pytest.mark.parametrize('mutation', ['none', 'degraded', 'missing', 'hash', 'request', 'summary', 'view', 'bundle_missing', 'bundle_hash'])
+def test_report_generation_record_is_consumed_without_rewriting_legacy(artifacts, mutation):
+    from src.agent.aiops.reporting import build_bundle, render_report, rule_layout
+    _, _, build = artifacts
+    directory = build()
+    config_record = json.loads((directory / 'evaluation-record.json').read_text())
+    config_record['config']['report_model_enabled'] = True
+    config_record['config_sha256'] = hashlib.sha256(json.dumps(config_record['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    save(directory / 'evaluation-record.json', config_record)
+    # An empty statement pool isolates record/view binding; diagnosis gates are separate.
+    diagnosis = {'kind': 'localized_fault', 'recommendations': []}
+    bundle = build_bundle(diagnosis)
+    layout = rule_layout(bundle)
+    rendered = render_report(bundle, layout)
+    (directory / 'report.txt').write_text(rendered, encoding='utf-8')
+    save(directory / 'events.json', [{'type': 'complete', 'response': rendered, 'diagnosis': diagnosis}])
+    report = {'version': 1, 'mode': 'model', 'status': 'ready', 'model_requested': True,
+              'request_numbers': [1], 'report_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
+              'bundle': bundle, 'layout': layout.model_dump(),
+              'input_sha256': hashlib.sha256(json.dumps(bundle, ensure_ascii=False, sort_keys=True,
+                  separators=(',', ':')).encode()).hexdigest()}
+    if mutation == 'degraded': report['status'] = 'degraded'
+    if mutation == 'hash': report['report_sha256'] = 'changed'
+    if mutation == 'request': report['request_numbers'] = [2]
+    if mutation == 'bundle_missing': report.pop('bundle')
+    if mutation == 'bundle_hash': report['bundle']['stop_reason'] = 'tampered after composition'
+    if mutation == 'view':
+        report['bundle'] = {'version': 1}
+        report['layout'] = {}
+    summary = json.loads((directory / 'summary.json').read_text())
+    summary.update(report_model_enabled=True, diagnosis=diagnosis,
+        report_generation={k: v for k, v in report.items() if k not in {'bundle', 'layout'}},
+        report_generation_passed=True)
+    if mutation == 'summary': summary['report_generation']['mode'] = 'rules'
+    save(directory / 'summary.json', summary)
+    if mutation != 'missing': save(directory / 'report-generation.json', report)
+    result = audit_evaluation(directory)
+    assert result['passed'] is (mutation == 'none'), result['issues']
+
+
+@pytest.mark.parametrize('mutation', ['none', 'trivial', 'projection_hash', 'posted_projection',
+    'output_order', 'missing_output', 'missing_contract', 'stripped_metadata', 'unknown_contract',
+    'fixed_order', 'trivial_missing_bundle'])
+def test_core_report_record_binds_projection_output_and_final_layout(artifacts, mutation):
+    from src.agent.aiops import reporting as module
+    _, _, build = artifacts
+    directory = build()
+    config = json.loads((directory / 'evaluation-record.json').read_text())
+    config['config']['report_model_enabled'] = True
+    config['config_sha256'] = hashlib.sha256(json.dumps(config['config'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    save(directory / 'evaluation-record.json', config)
+    diagnosis = {'kind': 'localized_fault', 'recommendations': []}
+    bundle = module.build_bundle(diagnosis)
+    ids = ['arbitrary-a'] if mutation.startswith('trivial') else ['arbitrary-a', 'arbitrary-b']
+    bundle['objects'] = {'obj': {'label': 'downstream', 'scope': {'service': 'downstream'},
+                                'codes': [], 'facts': ids}}
+    bundle['facts'] = {key: {'object_id': 'obj', 'text': key} for key in ids}
+    bundle['facts']['fixed-a'] = {'text': '日志来源说明'}
+    bundle['facts']['fixed-b'] = {'text': '采样范围说明'}
+    projection = module.core_fact_projection(bundle)
+    order = module.CoreFactOrder(core_fact_order=ids[::-1])
+    layout = module.layout_from_core_order(bundle, order)
+    output = {'schema': 'CoreFactOrder', 'status': 'parsed', 'decoded_arguments': order.model_dump(),
+              'parsed_proposal': order.model_dump()}
+    report = {'version': 1, 'mode': 'model', 'status': 'ready', 'model_requested': True,
+        'request_numbers': [1], 'bundle': bundle, 'layout': layout.model_dump(),
+        'input_sha256': module._hash(bundle), 'model_contract': module.MODEL_CONTRACT,
+        'model_input_sha256': module._hash(projection), 'model_outputs': [output]}
+    body = {'model': 'deepseek-flash', 'max_tokens': 10,
+        'messages': [{'role': 'user', 'content': json.dumps(projection)}],
+        'tools': [{'type': 'function', 'function': {'name': 'CoreFactOrder',
+                   'parameters': module.CoreFactOrder.model_json_schema()}}]}
+    if mutation.startswith('trivial'):
+        report.update(mode='rules', request_numbers=[], model_outputs=[], fallback_reason='no_sortable_core_facts')
+        report['layout'] = module.rule_layout(bundle).model_dump()
+    if mutation == 'projection_hash': report['model_input_sha256'] = 'tampered'
+    if mutation == 'posted_projection':
+        posted = deepcopy(projection)
+        posted['core_facts'][0]['text'] = 'different model input'
+        body['messages'][0]['content'] = json.dumps(posted)
+    if mutation == 'output_order':
+        output['parsed_proposal'] = {'core_fact_order': ids}
+        output['decoded_arguments'] = output['parsed_proposal']
+    if mutation == 'missing_output': report['model_outputs'] = []
+    if mutation == 'missing_contract': report.pop('model_contract')
+    if mutation == 'stripped_metadata':
+        for key in ('model_contract', 'model_input_sha256', 'model_outputs'):
+            report.pop(key)
+    if mutation == 'unknown_contract': report['model_contract'] = 'future-unknown'
+    if mutation == 'fixed_order': report['layout']['fact_order'][-2:] = ['fixed-b', 'fixed-a']
+    rendered = module.render_report(bundle, module.ReportLayout(**report['layout']))
+    report['report_sha256'] = hashlib.sha256(rendered.encode()).hexdigest()
+    if mutation == 'trivial_missing_bundle': report.pop('bundle')
+    save(directory / 'model-inputs/1.json', body)
+    cost = json.loads((directory / 'cost.json').read_text())
+    cost['requests'][0]['input_sha256'] = hashlib.sha256((directory / 'model-inputs/1.json').read_bytes()).hexdigest()
+    save(directory / 'cost.json', cost)
+    (directory / 'report.txt').write_text(rendered, encoding='utf-8')
+    save(directory / 'events.json', [{'type': 'complete', 'response': rendered, 'diagnosis': diagnosis}])
+    summary = json.loads((directory / 'summary.json').read_text())
+    summary.update(report_model_enabled=True, diagnosis=diagnosis, report_generation_passed=True,
+        report_generation={key: report[key] for key in ('version', 'mode', 'status', 'model_requested',
+            'request_numbers', 'input_sha256', 'report_sha256')})
+    save(directory / 'summary.json', summary)
+    save(directory / 'report-generation.json', report)
+    result = audit_evaluation(directory)
+    assert result['passed'] is (mutation in {'none', 'trivial'}), result['issues']

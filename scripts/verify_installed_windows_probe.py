@@ -28,8 +28,9 @@ async def main():
             'installed Probe gateway is unavailable at http://127.0.0.1:18767/mcp: '
             + str(error)
         )
-    if len(tools) != 9:
-        raise RuntimeError(f'installed Probe gateway exposed {len(tools)} tools; expected 9')
+    from src.probe.evidence import PROBE_TOOL_OPERATIONS
+    if {tool.name for tool in tools} != set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence'}:
+        raise RuntimeError('installed Probe gateway exposed an unexpected tool catalog')
     tool_map = {t.name: t for t in tools}
 
     def unwrap(value):

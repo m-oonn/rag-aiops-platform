@@ -1,6 +1,7 @@
 import pytest
+import httpx
 
-from scripts.evaluate_windows_probe import classify_report, parse_args, mcp_url
+from scripts.evaluate_windows_probe import classify_report, parse_args, mcp_url, _evaluation_request_api_base
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from scripts.evaluate_windows_probe import preflight
@@ -8,6 +9,21 @@ from scripts.evaluate_windows_probe import read_cost_ledger
 from scripts.evaluate_windows_probe import local_runbook_retrieval, target_catalog
 import json
 from pathlib import Path
+
+
+def test_evaluation_transport_allows_only_configured_primary_and_official_fallback():
+    primary = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    fallback = 'https://api.deepseek.com'
+    assert _evaluation_request_api_base(
+        httpx.URL(primary + '/chat/completions'), primary, fallback) == primary
+    assert _evaluation_request_api_base(
+        httpx.URL(fallback + '/chat/completions'), primary, fallback) == fallback
+    assert _evaluation_request_api_base(
+        httpx.URL('https://api.deepseek.com.evil.example/chat/completions'), primary, fallback) is None
+    assert _evaluation_request_api_base(
+        httpx.URL(fallback + '/chat/completions?redirect=1'), primary, fallback) is None
+    assert _evaluation_request_api_base(
+        httpx.URL(fallback + '/chat/completions'), primary, None) is None
 
 
 @pytest.mark.parametrize('options', [
@@ -135,19 +151,142 @@ def test_settled_cost_can_be_loaded_for_resume_without_changing_history(tmp_path
     assert read_cost_ledger(prior, for_resume=True) == value
 
 
+@pytest.fixture
+def timeout_resume(tmp_path):
+    import hashlib
+    row = {'number': 1, 'reserved_cny': .092916, 'reservation_upper_cny': .092916,
+        'status': 'ReadTimeout', 'error_type': 'ReadTimeout', 'pricing_verified': True}
+    ledger = {'limit_cny': 24.453038, 'reserved_cny': .092916, 'requests': [row]}
+    previous = tmp_path / 'prior.json'
+    previous.write_text(json.dumps(ledger), encoding='utf-8')
+    output = tmp_path / 'run'
+    output.mkdir()
+    value = {'version': 1, 'kind': 'single_historical_read_timeout',
+        'user_authorization': '保留失败与全额预留，只续测一场；新失败即停',
+        'request_number': 1, 'reserved_cny': .092916,
+        'request_sha256': hashlib.sha256(json.dumps(row, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
+        'previous_sha256': hashlib.sha256(previous.read_bytes()).hexdigest(),
+        'output_dir': str(output), 'limit_cny': 24.453038, 'run_limit_cny': 5}
+    authorization = tmp_path / 'authorization.json'
+    authorization.write_text(json.dumps(value), encoding='utf-8')
+    return previous, output, authorization, value, row
+
+
+def test_timeout_resume_preserves_full_reserve_and_new_unknown_still_blocks(timeout_resume):
+    from copy import deepcopy
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    from scripts.evaluate_windows_probe import validate_timeout_authorization
+    previous, output, authorization, _, old = timeout_resume
+    original = previous.read_bytes()
+    with pytest.raises(RuntimeError):
+        read_cost_ledger(previous, for_resume=True)
+    ledger = read_cost_ledger(previous, for_resume=True, timeout_authorization=authorization,
+        output=output, run_limit_cny=5)
+    _, approved = validate_timeout_authorization(authorization, previous, ledger, output, 24.453038, 5)
+    budget = PaidRequestBudget(output, limit_cny=24.453038, run_limit_cny=5)
+    budget.ledger = ledger['requests']
+    budget.inherited_requests = 1
+    budget.reserved = budget.inherited_reserved = ledger['reserved_cny']
+    budget.authorized_historical_timeouts = [deepcopy(approved)]
+    new = budget.reserve({'model': 'deepseek-flash'}, require_known_usage=True)
+    assert new['number'] == 2 and budget.ledger[0] == old
+    with pytest.raises(EvaluationBudgetExceeded) as error:
+        budget.reserve({'model': 'deepseek-flash'}, require_known_usage=True)
+    assert error.value.reason_code == 'previous_request_usage_unknown'
+    assert len(budget.ledger) == 2 and previous.read_bytes() == original
+    assert budget.cost_summary()['estimated_cny_peak'] is None
+    # A changed historical row also loses its exception.
+    new.update(http_status=200, usage={'prompt_tokens': 10, 'completion_tokens': 1})
+    budget.ledger[0]['status'] = 'different_failure'
+    with pytest.raises(EvaluationBudgetExceeded):
+        budget.reserve({'model': 'deepseek-flash'}, require_known_usage=True)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('previous_sha256', 'changed'), ('request_sha256', 'changed'), ('request_number', 2),
+    ('reserved_cny', 0), ('output_dir', 'another-output'), ('limit_cny', 25),
+    ('run_limit_cny', 6), ('kind', 'allow_all_unknown'), ('user_authorization', ''),
+])
+def test_timeout_resume_rejects_mismatched_authorization(timeout_resume, field, value):
+    previous, output, authorization, document, _ = timeout_resume
+    document[field] = value
+    authorization.write_text(json.dumps(document), encoding='utf-8')
+    with pytest.raises(ValueError):
+        read_cost_ledger(previous, for_resume=True, timeout_authorization=authorization,
+            output=output, run_limit_cny=5)
+
+
+def test_timeout_resume_accepts_explicit_ten_cny_run_and_rejects_more(timeout_resume):
+    from scripts.evaluate_windows_probe import validate_timeout_authorization
+    previous, output, authorization, document, _ = timeout_resume
+    with pytest.raises(RuntimeError, match='uncertain cost'):
+        read_cost_ledger(previous, for_resume=True)
+
+    document['run_limit_cny'] = 10
+    authorization.write_text(json.dumps(document), encoding='utf-8')
+    approved_ledger = read_cost_ledger(previous, for_resume=True,
+        timeout_authorization=authorization, output=output, run_limit_cny=10)
+    _, approved = validate_timeout_authorization(
+        authorization, previous, approved_ledger, output, 24.453038, 10)
+    assert approved['number'] == 1
+
+    document['run_limit_cny'] = 10.01
+    authorization.write_text(json.dumps(document), encoding='utf-8')
+    with pytest.raises(ValueError):
+        read_cost_ledger(previous, for_resume=True, timeout_authorization=authorization,
+            output=output, run_limit_cny=10.01)
+
+
+def test_timeout_authorization_does_not_relax_currency_cap(timeout_resume):
+    from copy import deepcopy
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    _, output, _, _, row = timeout_resume
+    budget = PaidRequestBudget(output, limit_cny=.1, run_limit_cny=5)
+    budget.ledger = [deepcopy(row)]
+    budget.inherited_requests = 1
+    budget.inherited_reserved = budget.reserved = row['reserved_cny']
+    budget.authorized_historical_timeouts = [deepcopy(row)]
+    with pytest.raises(EvaluationBudgetExceeded) as error:
+        budget.reserve({'model': 'deepseek-flash', 'max_tokens': 4096}, require_known_usage=True)
+    assert error.value.reason_code == 'cumulative_cost_limit'
+    assert budget.ledger == [row]
+
+
+@pytest.mark.asyncio
+async def test_timeout_authorization_cannot_replay_same_output(timeout_resume):
+    from scripts.evaluate_windows_probe import run_model
+    previous, output, authorization, _, _ = timeout_resume
+    (output / 'timeout-authorization-use.json').write_text('{}')
+    with pytest.raises(RuntimeError, match='already consumed'):
+        await run_model(SimpleNamespace(previous_cost=previous,
+            resume_timeout_authorization=authorization), None, output, [])
+    assert not (output / 'evaluation-record.json').exists()
+
+
 @pytest.mark.parametrize('model', ['deepseek-v4-flash', 'deepseek-flash'])
-def test_explicit_unpriced_mode_never_reuses_legacy_deepseek_rates(tmp_path, model):
+def test_allow_unpriced_mode_still_prices_known_deepseek_models(tmp_path, model):
     from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
     budget = PaidRequestBudget(tmp_path, allow_unpriced_models=True, max_requests=1)
     row = budget.reserve({'model': model, 'max_tokens': 64}, require_known_usage=True)
-    assert row['pricing_verified'] is False and row['reserved_cny'] == 0
+    assert row['pricing_verified'] is True and row['reserved_cny'] > 0
     row.update(http_status=200, usage={'prompt_tokens': 10, 'completion_tokens': 2})
-    assert budget.cost_summary()['estimated_cny_peak'] is None
-    assert budget.cost_summary()['pricing_unknown_requests'] == 1
+    budget.save()
+    assert budget.cost_summary()['estimated_cny_peak'] == pytest.approx(0.000036)
+    assert budget.cost_summary()['pricing_unknown_requests'] == 0
     with pytest.raises(EvaluationBudgetExceeded) as caught:
         budget.reserve({'model': model, 'max_tokens': 64}, require_known_usage=True)
     assert caught.value.reason_code == 'max_requests'
     assert len(budget.ledger) == 1 and budget.blocked_requests[-1]['sent'] is False
+
+
+def test_allow_unpriced_model_does_not_bypass_known_model_cost_limit(tmp_path):
+    from scripts.evaluate_autonomous_investigation import PaidRequestBudget, EvaluationBudgetExceeded
+    budget = PaidRequestBudget(tmp_path, allow_unpriced_models=True, limit_cny=0.000001)
+    with pytest.raises(EvaluationBudgetExceeded) as caught:
+        budget.reserve({'model': 'deepseek-flash', 'max_tokens': 4096})
+    assert caught.value.reason_code == 'cumulative_cost_limit'
+    assert budget.ledger == []
+    assert budget.blocked_requests[-1]['sent'] is False
 
 
 def test_explicit_request_cap_also_limits_legacy_priced_mode(tmp_path):

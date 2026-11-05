@@ -23,6 +23,19 @@ MECHANISM_GROUPS = {'G00': (False, False), 'G10': (True, False),
                     'G01': (False, True), 'G11': (True, True)}
 
 
+def _evaluation_request_api_base(url, primary, fallback=None):
+    for base in (primary, fallback):
+        if not base:
+            continue
+        parsed = urlsplit(base)
+        expected_path = parsed.path.rstrip('/') + '/chat/completions'
+        if (url.scheme == parsed.scheme == 'https' and url.host == parsed.hostname
+                and url.port in (None, parsed.port, 443) and url.path == expected_path
+                and not url.query and not url.fragment and not parsed.username and not parsed.password):
+            return base.rstrip('/')
+    return None
+
+
 def configure_mechanisms(group):
     from src.settings import settings
     from src.agent.aiops.strategies.investigation import mechanism_config
@@ -92,6 +105,10 @@ async def save_mechanism_audit(service, thread_id, expected, output):
         executed_steps=[step for step, _ in values.get('past_steps', [])], execution_records=executions)
     if error:
         audit.update(passed=False, read_error=error)
+    report = (values.get('investigation_memory') or {}).get('report')
+    if report:
+        (output / 'report-generation.json').write_text(json.dumps(redact(report),
+            ensure_ascii=False, indent=2), encoding='utf-8')
     (output / 'mechanism_trace.json').write_text(json.dumps(redact({
         'thread_id': thread_id, 'audit': audit, 'decisions': snapshots,
         'execution_records': executions,
@@ -122,6 +139,8 @@ def classify_report(report: str, diagnosis: dict | None = None) -> str:
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--previous-cost', type=Path)
+    parser.add_argument('--resume-timeout-authorization', type=Path,
+        help='Explicit single-run authorization for one fully reserved historical ReadTimeout')
     parser.add_argument('--run-budget-cny', type=float, help='Equal per-run reservation cap for matched groups')
     parser.add_argument('--isolate-history', action='store_true', help='Exclude shared gateway history from matched group investigations')
     parser.add_argument('--observation-not-before', help='Reject Probe evidence and test-app log rows collected before this run boundary')
@@ -142,8 +161,10 @@ def parse_args(argv=None):
     parser.add_argument('--knowledge-manifest', type=Path, help='Controller-owned fixture baseline to verify before/after execution')
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; use only after explicit user authorization for this run')
+    parser.add_argument('--report-model', action='store_true',
+        help='Opt in to one budgeted report composition; otherwise use deterministic rules')
     parser.add_argument('--allow-unpriced-model', action='store_true',
-        help='Treat requests as unpriced, including known model names; cost remains unknown')
+        help='Allow model names without a verified price; known DeepSeek aliases remain peak-priced')
     parser.add_argument('--max-model-requests', type=int,
         help='Cumulative request cap, including inherited requests')
     parser.add_argument('--run-max-model-requests', type=int,
@@ -155,6 +176,10 @@ def parse_args(argv=None):
     parser.add_argument('--limited-evidence', action='store_true',
         help='Controller-only case: withhold downstream and log observations without changing Probe permissions')
     args = parser.parse_args(argv)
+    if args.resume_timeout_authorization and not (args.run_model and args.previous_cost and args.output_dir):
+        parser.error('timeout authorization requires paid mode, previous cost and a bound output directory')
+    if args.report_model and not args.run_model:
+        parser.error('report-model requires --run-model and explicit paid authorization')
     if not math.isfinite(args.budget_limit_cny) or args.budget_limit_cny <= 0:
         parser.error('budget limit must be finite and positive')
     if args.allow_unpriced_model and not args.run_model:
@@ -184,8 +209,8 @@ def parse_args(argv=None):
     custom_knowledge = args.knowledge_kb_id != 14 or args.knowledge_query != 'localapp availability' or args.knowledge_source is not None
     if custom_knowledge and (not args.knowledge_mcp_url or args.knowledge_disabled or args.run_model):
         parser.error('knowledge scope/query/source options require enabled free MCP preflight')
-    if args.knowledge_manifest and (not args.local_runbooks or not args.knowledge_mcp_url or args.knowledge_disabled):
-        parser.error('knowledge manifest requires enabled fixture runbooks and MCP')
+    if args.knowledge_manifest and (not args.local_runbooks or args.knowledge_disabled):
+        parser.error('knowledge manifest requires enabled runbooks')
     return args
 
 
@@ -213,7 +238,7 @@ async def load_evaluation_tools(cfg, knowledge_url=None, knowledge_kb_id=14):
             'tls_verify': True, 'headers': {'Authorization': 'Bearer ' + cfg.token_file.read_text(encoding='utf-8').strip()}}}
         configs.append(probe_config)
         tools, error = await load_tools_for_config(probe_config)
-        assert error is None and len(tools) == 9, 'Probe tools unavailable'
+        assert error is None and tools, 'Probe tools unavailable'
         assert {tool.name for tool in tools} == set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence'}, 'unexpected Probe tools'
         if knowledge_url:
             knowledge_config = {'knowledge': {'transport': 'streamable_http',
@@ -274,7 +299,8 @@ def local_runbook_retrieval(directory, output):
     if not files:
         raise ValueError('local runbook directory contains no Markdown documents')
     sources = [{'path': path.relative_to(directory).as_posix(),
-        'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
+        'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in sorted(directory.rglob('*'))
+        if path.is_file() and path.suffix.lower() in {'.md', '.jsonl'}]
     trace = []
     def retrieve(query):
         context = local_retrieval.retrieve_local(query)
@@ -291,7 +317,38 @@ def local_runbook_retrieval(directory, output):
         yield retrieve
 
 
-def read_cost_ledger(path, *, for_resume=False, limit_cny=None):
+def validate_timeout_authorization(path, previous_path, ledger, output, limit_cny, run_limit_cny):
+    """Bind a human-approved exception to one immutable timeout and one run."""
+    from scripts.evaluate_autonomous_investigation import model_usage_known
+    value = json.loads(Path(path).read_text(encoding='utf-8'))
+    unknown = [row for row in ledger['requests'] if not model_usage_known(row)]
+    if (value.get('version') != 1 or value.get('kind') != 'single_historical_read_timeout'
+            or not isinstance(value.get('user_authorization'), str) or not value['user_authorization'].strip()
+            or json.loads(Path(previous_path).read_text(encoding='utf-8')) != ledger
+            or value.get('previous_sha256') != hashlib.sha256(Path(previous_path).read_bytes()).hexdigest()
+            or output is None or Path(value.get('output_dir', '')).resolve() != Path(output).resolve()
+            or type(value.get('limit_cny')) not in (int, float) or value['limit_cny'] != limit_cny
+            or value['limit_cny'] != ledger['limit_cny']
+            or type(value.get('run_limit_cny')) not in (int, float)
+            or value['run_limit_cny'] != run_limit_cny or not 0 < value['run_limit_cny'] <= 10
+            or len(unknown) != 1):
+        raise ValueError('timeout authorization does not match ledger, output or budget')
+    row = unknown[0]
+    encoded = json.dumps(row, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    if (type(value.get('request_number')) is not int or value['request_number'] != row['number']
+            or value.get('request_sha256') != hashlib.sha256(encoded).hexdigest()
+            or row.get('status') != 'ReadTimeout' or row.get('error_type') != 'ReadTimeout'
+            or row.get('pricing_verified') is not True or row.get('budget_bound_exceeded')
+            or type(value.get('reserved_cny')) not in (int, float)
+            or not math.isfinite(value['reserved_cny']) or value['reserved_cny'] <= 0
+            or value['reserved_cny'] != row['reserved_cny']
+            or row['reserved_cny'] != row.get('reservation_upper_cny')):
+        raise ValueError('timeout authorization does not match a fully reserved historical ReadTimeout')
+    return value, row
+
+
+def read_cost_ledger(path, *, for_resume=False, limit_cny=None,
+                     timeout_authorization=None, output=None, run_limit_cny=None):
     """Reject incomplete/corrupt accounting instead of resetting the budget."""
     value = json.loads(Path(path).read_text(encoding='utf-8'))
     def amount(number):
@@ -310,7 +367,11 @@ def read_cost_ledger(path, *, for_resume=False, limit_cny=None):
     if not amount(ceiling) or ceiling <= 0:
         raise ValueError('invalid cumulative cost limit')
     from scripts.evaluate_autonomous_investigation import model_usage_known
-    if for_resume and (reserved >= ceiling or any(not model_usage_known(row) for row in rows)):
+    authorized = []
+    if timeout_authorization:
+        _, row = validate_timeout_authorization(timeout_authorization, path, value, output, ceiling, run_limit_cny)
+        authorized = [row]
+    if for_resume and (reserved >= ceiling or any(not model_usage_known(row) and row not in authorized for row in rows)):
         raise RuntimeError('prior scenario has exhausted or uncertain cost; stopping')
     return value
 
@@ -461,6 +522,9 @@ async def main():
 
 
 async def run_model(args, cfg, output, tools, symptom_override=None):
+    if getattr(args, 'resume_timeout_authorization', None) and any(
+            (output / name).exists() for name in ('timeout-authorization-use.json', 'cost.json', 'evaluation-record.json')):
+        raise RuntimeError('single-run timeout authorization already consumed')
     record = EvaluationRecord(ROOT, output, {'mechanism_group': getattr(args, 'mechanism_group', None),
         'target_id': getattr(cfg, 'target_id', None),
         'previous_cost': str(args.previous_cost) if args.previous_cost else None,
@@ -475,17 +539,36 @@ async def run_model(args, cfg, output, tools, symptom_override=None):
         raise
     else:
         summary = json.loads((output / 'summary.json').read_text(encoding='utf-8'))
-        record.finish('completed' if summary.get('workflow_completed') is True else 'incomplete')
+        record.finish('completed' if summary.get('workflow_completed') is True
+            and summary.get('report_generation_passed') is not False else 'incomplete')
 
 
 async def _run_model(args, cfg, output, tools, symptom_override, record):
     if getattr(args, 'mechanism_group', None) and getattr(args, 'knowledge_disabled', False):
         raise ValueError('mechanism groups require unchanged knowledge conditions')
     limit_cny = getattr(args, 'budget_limit_cny', 5)
-    previous = read_cost_ledger(args.previous_cost, for_resume=True, limit_cny=limit_cny) if args.previous_cost else None
+    authorization_path = getattr(args, 'resume_timeout_authorization', None)
+    run_limit = getattr(args, 'run_budget_cny', None)
+    if authorization_path and not args.previous_cost:
+        raise ValueError('timeout authorization requires a previous ledger')
+    previous = read_cost_ledger(args.previous_cost, for_resume=True, limit_cny=limit_cny,
+        timeout_authorization=authorization_path, output=output, run_limit_cny=run_limit) if args.previous_cost else None
+    authorized_rows = []
+    if authorization_path:
+        from copy import deepcopy
+        authorization, authorized_row = validate_timeout_authorization(
+            authorization_path, args.previous_cost, previous, output, limit_cny, run_limit)
+        authorized_rows = [deepcopy(authorized_row)]
+        binding = {'path': str(Path(authorization_path).resolve()),
+            'sha256': hashlib.sha256(Path(authorization_path).read_bytes()).hexdigest()}
+        with (output / 'timeout-authorization-use.json').open('x', encoding='utf-8') as handle:
+            json.dump(binding, handle, ensure_ascii=False, indent=2)
+        record.value['config']['timeout_resume_authorization'] = binding
     from scripts.knowledge_conditions import check_knowledge_conditions
     manifest = getattr(args, 'knowledge_manifest', None)
     knowledge_audit = None
+    if getattr(args, 'local_runbooks', None) and not getattr(args, 'knowledge_mcp_url', None) and not manifest:
+        raise ValueError('local runbooks require a knowledge manifest before model setup')
     if manifest:
         knowledge_audit = check_knowledge_conditions(manifest, args.local_runbooks, output, args.knowledge_mcp_url, 'before')
     import httpx
@@ -519,9 +602,14 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
     max_output_tokens = getattr(args, 'max_output_tokens', 4096)
     allow_unpriced_model = bool(getattr(args, 'allow_unpriced_model', False))
     max_model_requests = getattr(args, 'max_model_requests', None)
+    fallback_api_base = (settings.LLM_FALLBACK_API_BASE
+        if settings.LLM_FALLBACK_ENABLED and settings.RESOLVED_LLM_FALLBACK_API_KEY else None)
+    fallback_model = settings.LLM_FALLBACK_MODEL if fallback_api_base else None
     budget = PaidRequestBudget(output, max_output_tokens=max_output_tokens, limit_cny=limit_cny,
         run_limit_cny=run_limit, allow_unpriced_models=allow_unpriced_model,
-        max_requests=max_model_requests, run_max_requests=getattr(args, 'run_max_model_requests', None))
+        max_requests=max_model_requests, run_max_requests=getattr(args, 'run_max_model_requests', None),
+        api_base=settings.RESOLVED_LLM_API_BASE, fallback_api_base=fallback_api_base,
+        fallback_model=fallback_model)
     budget_stopped = False
     if previous is not None:
         budget.reserved = previous['reserved_cny']
@@ -530,6 +618,7 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         budget.blocked_requests = previous.get('blocked_requests', [])
     prior_requests = len(budget.ledger)
     budget.inherited_requests = prior_requests
+    budget.authorized_historical_timeouts = authorized_rows
     budget_stop_reason = None
     record.value['config'].update(mechanisms=expected_config, business_catalog=json.loads(settings.DIAGNOSTIC_TARGET_CATALOG),
         retry={'sdk_max_retries': 0, 'agent_retry_enabled': settings.ENABLE_LLM_RETRY,
@@ -538,6 +627,10 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             'dependencies': {key: asdict(value) for key, value in cfg.dependencies.items()}},
         tool_names=[tool.name for tool in tools], limited_evidence=getattr(args, 'limited_evidence', False),
         knowledge_disabled=getattr(args, 'knowledge_disabled', False), max_output_tokens=max_output_tokens)
+    report_model_enabled = bool(getattr(args, 'report_model', False))
+    record.value['config'].update(report_model_enabled=report_model_enabled,
+        report_retry={'sdk_max_retries': 0, 'logical_attempts': 1,
+            'structured_format_fallback': False, 'total_timeout_seconds': 60})
     record.value['config']['knowledge_kb_ids'] = knowledge_kb_ids
     record.value['config'].update(run_budget_cny=run_limit, http_timeout_seconds=60,
         allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
@@ -551,17 +644,15 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             self.inner = httpx.AsyncHTTPTransport()
         async def handle_async_request(self, request):
             nonlocal budget_stopped, budget_stop_reason
-            allowed_host = 'api.deepseek.com'
-            if allow_unpriced_model:
-                from urllib.parse import urlsplit
-                allowed_host = urlsplit(settings.RESOLVED_LLM_API_BASE).hostname
-            if request.url.host != allowed_host or not request.url.path.endswith('/chat/completions'):
-                raise RuntimeError('Evaluation permits only the explicitly configured model endpoint')
+            endpoint = _evaluation_request_api_base(
+                request.url, budget.api_base, budget.fallback_api_base)
+            if endpoint is None:
+                raise RuntimeError('Evaluation permits only the configured primary or official DeepSeek fallback endpoint')
             body = json.loads(await request.aread())
             input_dir = output / 'model-inputs'
             input_dir.mkdir(exist_ok=True)
             try:
-                row = budget.reserve(body, require_known_usage=True)
+                row = budget.reserve(body, require_known_usage=True, api_base=endpoint)
             except EvaluationBudgetExceeded as error:
                 budget_stopped = True
                 budget_stop_reason = error.reason_code
@@ -587,21 +678,29 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             await self.inner.aclose()
 
     http = httpx.AsyncClient(transport=BudgetTransport(), timeout=60)
-    def bounded_factory(**kwargs):
-        llm = factory(**kwargs)
-        llm.max_tokens = max_output_tokens
-        # ChatOpenAI keeps retry state on the underlying OpenAI clients;
-        # changing only the wrapper attribute leaves the SDK default (2).
-        llm.max_retries = 0
-        for client_name in ('root_async_client', 'root_client'):
-            client = getattr(llm, client_name, None)
-            if client is not None:
-                client.max_retries = 0
-        llm.http_async_client = http
-        llm.root_async_client._client = http
+    def configure_model_runtime(llm):
+        """Apply evaluation limits to a plain ChatOpenAI or fallback wrapper."""
+        leaves = ([llm.runnable] if hasattr(llm, 'runnable') else [llm])
+        leaves.extend(getattr(llm, 'fallbacks', []) or [])
+        for item in leaves:
+            item.max_tokens = max_output_tokens
+            item.max_retries = 0
+            for client_name in ('root_async_client', 'root_client'):
+                client = getattr(item, client_name, None)
+                if client is not None:
+                    client.max_retries = 0
+            item.http_async_client = http
+            root_async = getattr(item, 'root_async_client', None)
+            if root_async is not None:
+                root_async._client = http
         return llm
-    for module in ('planner', 'executor', 'strategies.investigation'):
-        importlib.import_module('src.agent.aiops.' + module).create_agent_llm = bounded_factory
+
+    def bounded_factory(**kwargs):
+        return configure_model_runtime(factory(**kwargs))
+    runtime_stack = ExitStack()
+    for module in ('planner', 'executor', 'strategies.investigation', 'reporting'):
+        runtime_stack.enter_context(patch.object(importlib.import_module('src.agent.aiops.' + module),
+            'create_agent_llm', bounded_factory))
     trace = []
     wrapped = trace_evaluation_tools(tools, cfg.target_id, output, trace,
         getattr(args, 'observation_not_before', None))
@@ -629,6 +728,10 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
     executor._tools_cache.clear()
     executor._tools_cache_at.clear()
     knowledge_stack = ExitStack()
+    knowledge_stack.enter_context(runtime_stack)
+    if report_model_enabled:
+        from src.agent.aiops.reporting import report_model_session
+        knowledge_stack.enter_context(report_model_session(output, lambda: budget.ledger))
     if args.local_runbooks:
         retrieve = knowledge_stack.enter_context(local_runbook_retrieval(args.local_runbooks, output))
         knowledge_stack.enter_context(patch.object(importlib.import_module('src.agent.aiops.planner'),
@@ -664,8 +767,21 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
         workflow_completed = (bool(final) and any(e.get('type') == 'complete' for e in events)
             and not failure and not execution_error and not budget_stopped
             and not any(e.get('type') == 'error' for e in events))
+        budget_scope = {
+            'per_run_request_limit': 'this_run',
+            'per_run_cost_limit': 'this_run',
+            'max_requests': 'cumulative',
+            'cumulative_cost_limit': 'cumulative',
+            'previous_request_usage_unknown': 'inherited_ledger',
+            'usage_exceeded_reservation_bound': 'this_run',
+            'unpriced_model': 'request_validation',
+        }.get(budget_stop_reason) if budget_stop_reason else None
         thread_id = next((e.get('thread_id') for e in reversed(events) if e.get('thread_id')), None)
         mechanism_audit = await save_mechanism_audit(service, thread_id, expected_config, output)
+        report_path = output / 'report-generation.json'
+        report_generation = json.loads(report_path.read_text(encoding='utf-8')) if report_path.exists() else None
+        report_generation_passed = (report_generation.get('status') == 'ready'
+            if report_generation else not report_model_enabled)
         if manifest:
             knowledge_audit = check_knowledge_conditions(manifest, args.local_runbooks, output, args.knowledge_mcp_url, 'after')
         (output / 'report.txt').write_text(final, encoding='utf-8')
@@ -673,9 +789,15 @@ async def _run_model(args, cfg, output, tools, symptom_override, record):
             'tool_calls': [t['tool'] for t in trace], 'validated_live_returns': sum(t['validated_live_evidence'] for t in trace),
             'has_final_report': bool(final), 'report_kind': classify_report(final, diagnosis), 'diagnosis': diagnosis,
             'workflow_completed': workflow_completed, 'investigation_failure': failure,
+            'report_model_enabled': report_model_enabled,
+            'report_generation': ({key: report_generation.get(key) for key in (
+                'version', 'mode', 'status', 'model_requested', 'fallback_reason',
+                'input_sha256', 'report_sha256', 'request_numbers')} if report_generation else None),
+            'report_generation_passed': report_generation_passed,
             'error_events': sum(event.get('type') == 'error' for event in events),
             'requires_manual_review': bool(final), 'model_requests': len(budget.ledger),
             'budget_stopped': budget_stopped, 'budget_stop_reason': budget_stop_reason,
+            'budget_stop_scope': budget_scope,
             'mechanism_group': group, 'mechanism_audit': mechanism_audit,
             'knowledge_conditions': knowledge_audit,
             'execution_error': execution_error,

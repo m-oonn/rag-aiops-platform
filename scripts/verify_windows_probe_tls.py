@@ -135,7 +135,8 @@ async def verify(output):
                 'url': f'https://127.0.0.1:{port}/mcp', 'tls_verify': True,
                 'headers': {'Authorization': 'Bearer ' + token}}}
             tools, error = await load_tools_for_config(config)
-            assert error is None and len(tools) == 9, 'TLS MCP tool loading failed'
+            from src.probe.evidence import PROBE_TOOL_OPERATIONS
+            assert error is None and {tool.name for tool in tools} == set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence'}, 'TLS MCP tool loading failed'
             inventory = next(tool for tool in tools if tool.name == 'probe_inventory')
             raw = None
             for attempt in range(30):

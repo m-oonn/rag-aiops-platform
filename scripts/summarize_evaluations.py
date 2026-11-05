@@ -99,10 +99,27 @@ def summarize(source, output):
         except (OSError, ValueError):
             summary = {}
         behavior = (summary.get('mechanism_audit') or {}).get('behavior') or {}
+        try:
+            mechanical = json.loads((directory / 'mechanical-review.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            mechanical = {}
+        try:
+            tools = json.loads((directory / 'tool_trace.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            tools = []
         row = {'directory': str(directory), 'case': attempt.get('case', summary.get('scenario')),
             'group': attempt.get('mechanism_group', summary.get('mechanism_group')),
             'controller_case_verified': bool(attempt.get('case')),
             'audit': audit, 'diagnosis_review': 'pending', 'diagnostic_correctness_verified': False,
+            'workflow_status': mechanical.get('workflow_status', 'completed' if summary.get('has_final_report')
+                and summary.get('workflow_completed') is not False and audit['passed'] else 'not_verified'),
+            'result_level_status': mechanical.get('result_level_status'),
+            'report_kind': summary.get('report_kind'), 'mechanical_status': mechanical.get('mechanical_status'),
+            'semantic_status': 'pending_manual_review',
+            'report_generation_status': (summary.get('report_generation') or {}).get('status', 'unknown'),
+            'report_generation_mode': (summary.get('report_generation') or {}).get('mode', 'unknown'),
+            'tool_sequence': [{key: tool.get(key) for key in ('tool', 'arguments', 'status')} for tool in tools],
+            'repeated_queries': None, 'irrelevant_checks': None,
             'mechanism_behavior': {key: behavior.get(key) for key in (
                 'status', 'opportunities', 'executed_changes', 'executed_checks', 'blocked_events', 'no_opportunity')},
             'vs_G00': None}
@@ -117,12 +134,26 @@ def summarize(source, output):
             except (ValueError, TypeError, KeyError):
                 audit['issues'].append('controller attempt timing or group invalid')
                 audit['passed'] = False
+        if 'workflow_status' not in mechanical and not audit['passed']:
+            row['workflow_status'] = 'not_verified'
         rows.append(row)
     issues = ['invalid or duplicate controller attempt: ' + p for p in invalid_attempts]
+    scheduled_slots = []
     for path in source.rglob('four-group-controller.json'):
         try:
             suite = json.loads(path.read_text(encoding='utf-8'))
             order, results = suite['order'], suite['results']
+            for position, item in enumerate(order, 1):
+                matches = [row for row in rows if (row['case'], row['group']) == (item['case'], item['group'])
+                    and Path(row['directory']).is_relative_to(path.parent)]
+                controller_results = [result for result in results
+                    if (str(result.get('case', '')).removeprefix('real_model_workflow_'),
+                        result.get('mechanism_group', result.get('group'))) == (item['case'], item['group'])]
+                controller_failed = any(result.get('status') == 'failed' for result in controller_results)
+                scheduled_slots.append({**item, 'position': position, 'controller': str(path),
+                    'status': ('passed' if matches[0]['audit']['passed'] and not controller_failed else 'failed') if len(matches) == 1
+                    else ('ambiguous' if matches else 'failed' if controller_results else 'not_run'),
+                    'directory': matches[0]['directory'] if len(matches) == 1 else None})
             expected = Counter((item['case'], item['group']) for item in order)
             resets = Counter((item['case'], item['group']) for item in suite['resets'])
             from scripts.verify_windows_local_faults import four_group_cases
@@ -173,6 +204,9 @@ def summarize(source, output):
         if not all(r['audit']['passed'] for r in subset):
             issues.append('incomplete record set: ' + str(case))
             continue
+        if any(len(r['audit']['comparison_config'].get('model_channels', [])) > 1 for r in subset):
+            issues.append('mixed model channels: ' + str(case))
+            continue
         if not all(r['controller_case_verified'] for r in subset):
             issues.append('controller scenario mapping required: ' + str(case))
             continue
@@ -187,7 +221,19 @@ def summarize(source, output):
                 'this_run_reserved_cny_delta': current['this_run_cost']['reserved_cny'] - base['this_run_cost']['reserved_cny'],
                 'run_model_duration_delta_ms': current['duration_ms'] - base['duration_ms'],
                 'causal_overhead_estimated': False}
-    result = {'runs': rows, 'issues': issues, 'passed': bool(rows) and not issues and all(r['audit']['passed'] for r in rows),
+    comparisons = []
+    if not issues:
+        for case in sorted({row['case'] for row in rows}, key=str):
+            groups = {row['group']: row for row in rows if row['case'] == case}
+            for group, baseline_group in [('G10', 'G00'), ('G01', 'G00'), ('G11', 'G10'), ('G11', 'G01')]:
+                current, base = groups[group]['audit'], groups[baseline_group]['audit']
+                comparisons.append({'case': case, 'group': group, 'baseline_group': baseline_group,
+                    'request_delta': current['this_run_cost']['requests'] - base['this_run_cost']['requests'],
+                    'reserved_cny_delta': current['this_run_cost']['reserved_cny'] - base['this_run_cost']['reserved_cny'],
+                    'duration_delta_ms': current['duration_ms'] - base['duration_ms'],
+                    'causal_effect_verified': False})
+    result = {'runs': rows, 'scheduled_slots': scheduled_slots, 'comparisons': comparisons,
+        'issues': issues, 'passed': bool(rows) and not issues and all(r['audit']['passed'] for r in rows),
         'human_reviewed': 0, 'diagnostic_accuracy': None, 'model_calls_this_summary': 0,
         'scope': 'engineering comparison; not independent trials or diagnostic effect'}
     if issues:

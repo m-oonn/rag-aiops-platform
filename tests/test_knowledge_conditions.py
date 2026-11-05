@@ -70,8 +70,12 @@ async def test_controller_requires_matching_completed_knowledge_audit(tmp_path, 
         return SimpleNamespace(wait=lambda: 0)
     # This test isolates the knowledge gate; full artifact validation has its own joined tests.
     from scripts import evaluation_record
-    monkeypatch.setattr(evaluation_record, 'audit_evaluation', lambda *args, **kwargs:
-        {'passed': True, 'this_run_cost': {'requests': 1}})
+    import hashlib
+    def audit_evaluation(directory, **kwargs):
+        symptom = next(tmp_path.glob('symptom-*.txt'))
+        return {'passed': True, 'this_run_cost': {'requests': 1},
+            'comparison_config': {'symptom_sha256': hashlib.sha256(symptom.read_bytes()).hexdigest()}}
+    monkeypatch.setattr(evaluation_record, 'audit_evaluation', audit_evaluation)
     monkeypatch.setattr(controller, 'review_model_artifacts', lambda *a: {'passed': True, 'workflow_status': 'completed'})
     if audit == 'valid':
         result = await controller.evaluate_model_case(tmp_path, 'normal', launch, knowledge_url='http://127.0.0.1:9200/mcp')

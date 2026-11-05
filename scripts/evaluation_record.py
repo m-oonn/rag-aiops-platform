@@ -85,7 +85,7 @@ class EvaluationRecord:
 def audit_evaluation(directory, *, expected_root=None, previous=None):
     """Read-only integrity gate; passing never grades diagnostic correctness."""
     from scripts.evaluate_autonomous_investigation import PaidRequestBudget
-    from scripts.evaluate_windows_probe import read_cost_ledger, MECHANISM_GROUPS
+    from scripts.evaluate_windows_probe import read_cost_ledger, validate_timeout_authorization, MECHANISM_GROUPS
     directory = Path(directory).resolve()
     issues = []
     def fail(message):
@@ -147,6 +147,17 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
             fail('prior ledger prefix changed')
         budget = PaidRequestBudget(directory, limit_cny=cost['limit_cny'])
         budget.ledger = cost['requests']
+        authorization = config.get('timeout_resume_authorization')
+        authorized_unknown = 0
+        if authorization:
+            authorization_path = Path(authorization['path'])
+            if hashlib.sha256(authorization_path.read_bytes()).hexdigest() != authorization.get('sha256'):
+                fail('timeout authorization fingerprint mismatch')
+            if load('timeout-authorization-use.json') != authorization:
+                fail('timeout authorization use binding differs')
+            validate_timeout_authorization(authorization_path, config['previous_cost'], previous,
+                directory, config['budget_limit_cny'], config.get('run_budget_cny'))
+            authorized_unknown = 1
         scopes = {'cumulative': budget.cost_summary(), 'this_run': budget.cost_summary(len(prior))}
         if summary.get('cost_scope') != scopes:
             fail('cost scopes disagree with ledger')
@@ -157,7 +168,7 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
                 or summary.get('model_requests') != len(cost['requests'])
                 or config.get('budget_limit_cny') != cost['limit_cny']):
             fail('summary budget differs from ledger')
-        if scopes['this_run']['requests'] <= 0 or scopes['cumulative']['usage_unknown_requests']:
+        if scopes['this_run']['requests'] <= 0 or scopes['cumulative']['usage_unknown_requests'] != authorized_unknown:
             fail('no new requests or uncertain usage')
         run_cap = config.get('run_budget_cny')
         if run_cap is not None and (type(run_cap) not in (int, float) or not math.isfinite(run_cap)
@@ -181,7 +192,7 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
                     fail('unpriced run missing cumulative request cap')
                 if any(row.get('pricing_verified') is not False for row in cost['requests'][len(prior):]):
                     fail('unpriced run reused verified pricing')
-        inputs, models = set(), []
+        inputs, models, channels = set(), [], []
         for row in cost['requests'][len(prior):]:
             validate_timing(row)
             name = row['input_file']
@@ -198,6 +209,9 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
             models.append({k: body.get(k) for k in ('model', 'temperature', 'top_p', 'max_tokens',
                 'stream', 'thinking', 'reasoning_effort', 'seed', 'presence_penalty', 'frequency_penalty')})
             models[-1]['served_model'] = row.get('served_model')
+            channel = {key: row.get(key) for key in ('api_base', 'model', 'served_model')}
+            if channel not in channels:
+                channels.append(channel)
         trace = load('tool_trace.json')
         # Older records lack this field and remain read-only compatible.
         if 'knowledge_kb_ids' in config:
@@ -252,12 +266,80 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
         if (not summary.get('has_final_report') or summary.get('workflow_completed') is False
                 or any(summary.get(k) for k in ('error_events', 'execution_error', 'budget_stopped', 'investigation_failure'))):
             fail('summary workflow incomplete')
+        report_summary = summary.get('report_generation')
+        if report_summary is not None or config.get('report_model_enabled') is True:
+            report = load('report-generation.json')
+            if (not isinstance(report_summary, dict)
+                    or report.get('version') != 1 or report.get('status') != 'ready'
+                    or summary.get('report_generation_passed') is not True
+                    or any(report.get(key) != value for key, value in (report_summary or {}).items())
+                    or report.get('model_requested') is not bool(config.get('report_model_enabled'))
+                    or report.get('report_sha256') != hashlib.sha256(complete['response'].encode()).hexdigest()):
+                fail('report generation incomplete or inconsistent')
+            request_numbers = report.get('request_numbers', [])
+            if (len(request_numbers) != len(set(request_numbers))
+                    or not set(request_numbers) <= {row['number'] for row in cost['requests'][len(prior):]}
+                    or (report.get('mode') == 'model' and not request_numbers)):
+                fail('report request references invalid')
+            report_inputs = [load(row['input_file']) for row in cost['requests'][len(prior):]
+                if row['number'] in request_numbers]
+            outputs = report.get('model_outputs', [])
+            core_requests = [body for body in report_inputs if any(
+                tool.get('function', {}).get('name') == 'CoreFactOrder'
+                for tool in body.get('tools', []))]
+            new_contract = ('model_contract' in report or 'model_input_sha256' in report
+                or core_requests or any(row.get('schema') == 'CoreFactOrder' for row in outputs))
+            if (report.get('mode') == 'model' or new_contract) and report.get('bundle') is None:
+                fail('model report statement bundle missing')
+            if report.get('bundle') is not None:
+                from src.agent.aiops.reporting import (MODEL_CONTRACT, CoreFactOrder, ReportLayout,
+                    core_fact_projection, layout_from_core_order, render_report, rule_layout)
+                bundle, layout = report['bundle'], ReportLayout(**report['layout'])
+                digest = hashlib.sha256(json.dumps(bundle, ensure_ascii=False, sort_keys=True,
+                    separators=(',', ':')).encode()).hexdigest()
+                if report.get('input_sha256') != digest:
+                    fail('report bundle fingerprint mismatch')
+                if new_contract:
+                    if report.get('model_contract') != MODEL_CONTRACT:
+                        fail('report model contract missing or unsupported')
+                    projection = core_fact_projection(bundle)
+                    projection_digest = hashlib.sha256(json.dumps(projection, ensure_ascii=False,
+                        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                    if report.get('model_input_sha256') != projection_digest:
+                        fail('report model projection fingerprint mismatch')
+                    if report.get('mode') == 'model':
+                        if len(core_requests) != len(report_inputs):
+                            fail('report model request contract differs')
+                        for body in report_inputs:
+                            messages = [row for row in body.get('messages', []) if row.get('role') == 'user']
+                            if len(messages) != 1 or json.loads(messages[0]['content']) != projection:
+                                fail('report model request projection differs')
+                        parsed = [row for row in outputs if row.get('schema') == 'CoreFactOrder'
+                            and row.get('status') == 'parsed']
+                        if len(parsed) != 1:
+                            fail('report core ordering output missing or ambiguous')
+                        else:
+                            order = CoreFactOrder.model_validate(parsed[0]['parsed_proposal'])
+                            if (parsed[0].get('decoded_arguments') != order.model_dump()
+                                    or layout_from_core_order(bundle, order) != layout):
+                                fail('report core ordering and final layout disagree')
+                    elif (report.get('mode') != 'rules' or request_numbers or outputs
+                            or len(projection['allowed_core_fact_ids']) >= 2
+                            or report.get('fallback_reason') != 'no_sortable_core_facts'
+                            or layout != rule_layout(bundle)):
+                        fail('report core ordering rule bypass invalid')
+                advice = [bundle['actions'][key]['recommendation'] for key in layout.action_order]
+                if (render_report(bundle, layout) != complete['response']
+                        or advice != (complete.get('diagnosis') or {}).get('recommendations')
+                        or advice != (summary.get('diagnosis') or {}).get('recommendations')):
+                    fail('report view and diagnosis disagree')
         comparable = dict(config)
         comparable.pop('previous_cost', None)
         comparable.pop('mechanism_group', None)
         comparable.pop('observation_not_before', None)
         comparable['mechanisms'] = {k: v for k, v in mechanism.items() if k not in {'hypothesis_protection', 'contradiction_trigger'}}
         comparable['model_parameters'] = sorted({json.dumps(m, sort_keys=True) for m in models})
+        comparable['model_channels'] = sorted(channels, key=lambda item: json.dumps(item, sort_keys=True))
         comparable['knowledge_mode'] = summary.get('knowledge_mode')
         knowledge = summary.get('knowledge_conditions') or {}
         if summary.get('knowledge_mode') != 'disabled':
@@ -268,6 +350,23 @@ def audit_evaluation(directory, *, expected_root=None, previous=None):
                     or after.get('expected_sha256') != after.get('actual_sha256')):
                 fail('knowledge conditions not verified')
             comparable['knowledge_sha256'] = after.get('actual_sha256')
+            if summary.get('knowledge_mode') == 'local_runbooks':
+                baseline = load('knowledge-baseline.json')
+                digest = baseline.pop('sha256')
+                actual_digest = hashlib.sha256(json.dumps(baseline, ensure_ascii=False,
+                    sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+                if (baseline.get('version') != 2 or baseline.get('mode') != 'local_runbooks'
+                        or not baseline.get('sources') or digest != actual_digest
+                        or digest != after.get('actual_sha256')
+                        or any(row.get('mode') != 'local_runbooks' or row.get('endpoint')
+                               or row.get('baseline_file') != 'knowledge-baseline.json' for row in (before, after))
+                        or any(sources.get(name) != sha for name, sha in baseline.get('implementations', {}).items())
+                        or not {'src/agent/aiops/local_retrieval.py', 'scripts/evaluate_windows_probe.py',
+                                'scripts/knowledge_conditions.py'} <= baseline.get('implementations', {}).keys()):
+                    fail('local knowledge baseline not verified')
+                trace_path = directory / 'knowledge_trace.json'
+                if trace_path.exists() and load(trace_path.name).get('sources') != baseline.get('sources'):
+                    fail('local knowledge retrieval sources differ from baseline')
         result.update(source_signature=record['source'], comparison_config=comparable, observation_not_before=boundary,
             this_run_cost=scopes['this_run'], duration_ms=record['elapsed_ms'])
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:

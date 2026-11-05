@@ -4,6 +4,7 @@ Only owned loopback application processes are stopped. Installed Probe and
 business configuration are untouched. Foreground Probe uses current identity.
 """
 import argparse
+import hashlib
 import asyncio
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -15,13 +16,15 @@ import sqlite3
 import socket
 import subprocess
 import sys
+import threading
 import time
+import traceback
 import uuid
 import psutil
 import shutil
 import secrets
 from urllib.error import HTTPError, URLError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -75,48 +78,104 @@ def four_group_conditions(out):
     return {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
-def get_local(port, timeout=2):
+def get_local(port, timeout=2, *, path='/health', request_id=None):
     try:
-        response = build_opener(ProxyHandler({})).open(f'http://127.0.0.1:{port}/health', timeout=timeout)
+        request = Request(f'http://127.0.0.1:{port}{path}',
+            headers={'X-Request-ID': request_id} if request_id else {})
+        response = build_opener(ProxyHandler({})).open(request, timeout=timeout)
     except HTTPError as exc:
         response = exc
     with response:
         return response.code, response.read(2048).decode('utf-8')
 
 
-def serve(port, log, downstream, mode_file):
+def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None):
+    # Opt-in fixture: this application's connection settings are loaded only at startup.
+    loaded = None
+    upstream_timeout = 0.5
+    instance = uuid.uuid4().hex
+    if runtime_config is not None:
+        source = runtime_config.read_bytes()
+        parsed = json.loads(source)
+        downstream = parsed['downstream_port']
+        upstream_timeout = parsed.get('upstream_timeout_seconds', 0.5)
+        if type(upstream_timeout) not in (int, float) or not 0 < upstream_timeout <= 3:
+            raise ValueError('invalid upstream_timeout_seconds')
+        if downstream is not None and (type(downstream) is not int or not 1 <= downstream <= 65535):
+            raise ValueError('invalid downstream_port')
+        loaded = {'source': str(runtime_config.resolve()),
+            'source_sha256': hashlib.sha256(source).hexdigest(), 'loading': 'startup'}
+
+    def emit(event):
+        with log.open('a', encoding='utf-8') as handle:
+            handle.write(json.dumps({'at': datetime.now(timezone.utc).isoformat(),
+                'pid': os.getpid(), 'instance_id': instance, **event}) + '\n')
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
 
         def do_GET(self):
-            mode = mode_file.read_text(encoding='utf-8').strip()
+            started = time.monotonic()
+            request_id = self.headers.get('X-Request-ID') or uuid.uuid4().hex
+            connection_error = None
+            config_bytes = mode_file.read_bytes()
+            mode = config_bytes.decode('utf-8').strip()
             status, body = 200, 'healthy'
             detail, error_type = '', None
+            configuration = None
             if mode.startswith('{'):
+                parsed = None
                 try:
                     # The controller may inject invalid application configuration.
-                    int(json.loads(mode)['max_attempts'])
+                    parsed = json.loads(mode)
+                    int(parsed['max_attempts'])
                     mode = 'normal'
                 except (ValueError, TypeError, KeyError) as exc:
                     status, body = 503, 'temporarily unavailable'
                     detail, error_type = 'invalid max_attempts configuration', type(exc).__name__
+                    configuration = {'source': str(mode_file.resolve()), 'field': 'max_attempts',
+                        'value': parsed.get('max_attempts') if isinstance(parsed, dict) else None,
+                        'value_present': isinstance(parsed, dict) and 'max_attempts' in parsed,
+                        'expected': 'integer-convertible',
+                        'source_sha256': hashlib.sha256(config_bytes).hexdigest()}
             if error_type:
                 pass
             elif mode == 'http_error':
                 status, body = 503, 'temporarily unavailable'
             elif mode == 'application_error':
                 status, body = 500, 'request failed'
+            elif runtime_config is not None and self.path == '/live':
+                status, body = 200, 'alive'
             elif downstream is not None:
                 try:
-                    status, body = get_local(downstream, timeout=0.5)
-                except (URLError, OSError):
+                    if runtime_config is not None:
+                        status, body = get_local(downstream, timeout=upstream_timeout, path=self.path, request_id=request_id)
+                    else:
+                        status, body = get_local(downstream, timeout=0.5)
+                except (URLError, OSError) as exc:
                     status, body = 503, 'temporarily unavailable'
                     detail = 'upstream connection failed'
+                    connection_error = getattr(exc, 'reason', exc)
+            elif runtime_config is not None and self.path == '/api/availability':
+                body = json.dumps({'sku': 'demo-item', 'available': True})
+            if runtime_config is not None:
+                emit({'event': 'request_completed', 'request_id': request_id, 'path': self.path,
+                    'status': status, 'detail': detail or body,
+                    'duration_ms': round((time.monotonic() - started) * 1000, 3),
+                    'configuration': loaded,
+                    'upstream': {'host': '127.0.0.1', 'port': downstream},
+                    **({'error_type': type(connection_error).__name__,
+                        'errno': getattr(connection_error, 'errno', None)} if connection_error else {})})
+                self.send_response(status)
+                self.send_header('X-Request-ID', request_id)
+                self.end_headers()
+                self.wfile.write(body.encode())
+                return
             with log.open('a', encoding='utf-8') as handle:
                 handle.write(json.dumps({'at': datetime.now(timezone.utc).isoformat(),
                     'pid': os.getpid(), 'status': status, 'detail': detail or body,
-                    **({'error_type': error_type} if error_type else {})}) + '\n')
+                    **({'error_type': error_type, 'configuration': configuration} if error_type else {})}) + '\n')
             self.send_response(status)
             self.end_headers()
             self.wfile.write(body.encode())
@@ -131,11 +190,33 @@ def serve(port, log, downstream, mode_file):
     except OSError as exc:
         server.server_close()
         with log.open('a', encoding='utf-8') as handle:
-            handle.write(json.dumps({'pid': os.getpid(), 'error': 'bind_failed',
+            handle.write(json.dumps({'at': datetime.now(timezone.utc).isoformat(),
+                'pid': os.getpid(), 'error': 'bind_failed',
                 'errno': exc.errno, 'port': port}) + '\n')
         raise
     with server:
+        if runtime_config is not None:
+            emit({'event': 'service_started', 'listen_port': port, 'configuration': loaded,
+                'upstream': {'host': '127.0.0.1', 'port': downstream}})
+        if stop_file is not None:
+            def watch_stop_request():
+                while True:
+                    if stop_file.exists():
+                        with log.open('a', encoding='utf-8') as handle:
+                            handle.write(json.dumps({'at': datetime.now(timezone.utc).isoformat(),
+                                'pid': os.getpid(), 'event': 'shutdown_requested',
+                                'reason': 'controlled_stop',
+                                'stop_request': {'channel': 'file_presence',
+                                    'path': str(stop_file.resolve()),
+                                    'mtime_ns': stop_file.stat().st_mtime_ns,
+                                    'initiator': 'unknown'}}) + '\n')
+                        server.shutdown()
+                        return
+                    time.sleep(0.05)
+            threading.Thread(target=watch_stop_request, daemon=True).start()
         server.serve_forever(poll_interval=0.1)
+    if runtime_config is not None:
+        emit({'event': 'service_exited', 'reason': 'shutdown_completed'})
 
 
 def free_port():
@@ -406,7 +487,7 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
         'application_exit': ['localized_fault'],
         'port_conflict': ['localized_fault', 'confirmed_cause'], 'missing_evidence': ['unlocated', 'localized_fault']}
     allowed = {'probe_inventory', 'probe_resource_snapshot', 'probe_service_status', 'probe_process_snapshot',
-        'probe_port_snapshot', 'probe_event_log', 'probe_text_log', 'probe_dependency_probe',
+        'probe_port_snapshot', 'probe_event_log', 'probe_text_log', 'probe_config_snapshot', 'probe_dependency_probe',
         'probe_list_evidence', 'search_knowledge_base', 'read_run_evidence'}
     # Model citations are produced from the persisted, redacted evidence view.
     # The tool trace contains a serialized transport representation instead;
@@ -446,6 +527,9 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
         'no_unapproved_tool': bool(trace) and all(row.get('tool') in allowed for row in trace),
         'has_live_observation': any(row.get('validated_live_evidence') for row in trace),
         'evidence_for_assertion': diagnosis.get('kind') == 'unlocated' or bool(citations)}
+    report = summary.get('report_generation')
+    if report is not None or summary.get('report_model_enabled') is True:
+        gates['report_generation'] = (isinstance(report, dict) and report.get('status') == 'ready')
     mechanical_passed = all(gates.values())
     level_matches = diagnosis.get('kind') in expected[case]
     completed = (summary.get('has_final_report') is True
@@ -456,10 +540,12 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
         and any(event.get('type') == 'complete' and bool(str(event.get('response') or '').strip())
                 for event in events))
     return {'passed': mechanical_passed, 'gates': gates,
+        'report_generation_status': report.get('status', 'unknown') if isinstance(report, dict) else 'unknown',
         'mechanical_status': 'passed' if mechanical_passed else 'failed',
         'workflow_status': 'completed' if completed else 'incomplete',
         'result_level_status': 'passed' if level_matches else 'failed',
         'semantic_status': 'pending_manual_review', 'capability_passed': False,
+        'capability_explanation': '待人工语义审核；capability_passed=false 表示尚未完成能力验收，不表示已证明诊断失败。流程、结果层与机械审核分别查看对应状态。',
         'recommendation_status': 'pending_manual_review' if recommendations else 'not_provided',
         'expected_result_levels': expected[case], 'level_matches_scenario': level_matches,
         'manual_verdict': 'pending', 'allowed_manual_verdicts': ['correct_localization', 'correct_healthy_within_scope', 'honest_unlocated', 'wrong_cause_or_false_positive', 'incomplete'],
@@ -520,7 +606,7 @@ def _citation_in_evidence(quote, evidence_text):
     return quote in json.dumps(decoded, ensure_ascii=False, sort_keys=True)
 
 
-async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=None, previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral'):
+async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=None, previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, run_max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral', after_case=None):
     """Controller keeps the scenario order outside the investigation context."""
     order = list(suite or ['normal', 'downstream_unreachable'])
     secrets.SystemRandom().shuffle(order)
@@ -537,9 +623,10 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
             options = {'isolate_history': True, 'observation_not_before': observation_boundary}
             if mechanism_group is not None:
                 options['mechanism_group'] = mechanism_group
-            if allow_unpriced_model or max_model_requests is not None or max_output_tokens != 4096:
+            if (allow_unpriced_model or max_model_requests is not None
+                    or run_max_model_requests is not None or max_output_tokens != 4096):
                 options.update(allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
-                    max_output_tokens=max_output_tokens)
+                    run_max_model_requests=run_max_model_requests, max_output_tokens=max_output_tokens)
             if budget_limit_cny != 5:
                 options['budget_limit_cny'] = budget_limit_cny
             if run_budget_cny is not None:
@@ -552,6 +639,8 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
             if result.get('status') != 'passed' or result.get('workflow_completed') is not True:
                 raise RuntimeError('blind model child failed mechanical gates')
             previous = Path(result['cost_file'])
+            if after_case is not None:
+                await after_case(result)
     except Exception as exc:
         controller['failure'] = {'case': case, 'status': 'incomplete', 'exception_type': type(exc).__name__,
             'failed_at': datetime.now(timezone.utc).isoformat()}
@@ -569,7 +658,52 @@ async def evaluate_blind_cases(out, launch, set_case, knowledge_url=None, suite=
     return results
 
 
-async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_cost, budget_limit_cny, run_budget_cny, suite='baseline-v1', *, allow_unpriced_model=False, max_model_requests=None, run_max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral'):
+async def await_manual_config_repair(out, result, mode_file, app_port, dep_port, wait_seconds):
+    """Observe an external edit before cleanup; never edit configuration or infer a human actor."""
+    path = out / 'manual-repair.json'
+    initial = mode_file.read_bytes()
+    record = {'status': 'awaiting_manual_action', 'config_path': str(mode_file.resolve()),
+        'report_path': str(Path(result['result_dir']) / 'report.txt'),
+        'entry_url': f'http://127.0.0.1:{app_port}/health',
+        'downstream_url': f'http://127.0.0.1:{dep_port}/health',
+        'started_at': datetime.now(timezone.utc).isoformat(), 'wait_seconds': wait_seconds,
+        'initial_sha256': hashlib.sha256(initial).hexdigest(),
+        'human_confirmation': None, 'controller_repair_performed': False,
+        'business_retest': None}
+    def save():
+        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+    save()
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        try:
+            current = mode_file.read_bytes()
+            if current != initial:
+                parsed = json.loads(current.decode('utf-8-sig'))
+                value = parsed.get('max_attempts')
+                if isinstance(value, bool) or not isinstance(value, (int, str)):
+                    raise ValueError('not an integer configuration')
+                int(value)
+                downstream = await asyncio.to_thread(get_local, dep_port)
+                entry = await asyncio.to_thread(get_local, app_port)
+                record.update(status='external_edit_retested',
+                    observed_sha256=hashlib.sha256(current).hexdigest(),
+                    business_retest={'downstream': {'status': downstream[0], 'body': downstream[1]},
+                        'entry': {'status': entry[0], 'body': entry[1]},
+                        'passed': downstream == entry == (200, 'healthy')})
+                save()
+                if record['business_retest']['passed']:
+                    break
+        except (ValueError, OSError, URLError) as exc:
+            record['last_observation_error'] = type(exc).__name__
+        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+    else:
+        record['status'] = 'pending_manual_acceptance_timeout'
+    record['ended_at'] = datetime.now(timezone.utc).isoformat()
+    save()
+    return record
+
+
+async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_cost, budget_limit_cny, run_budget_cny, suite='baseline-v1', *, allow_unpriced_model=False, max_model_requests=None, run_max_model_requests=None, max_output_tokens=4096, symptom_profile='neutral', selected_order=None):
     """Same controller-owned environment, serial fresh children; no implicit paid entry."""
     import hashlib
     import math
@@ -585,24 +719,30 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
     if (max_model_requests is None) != (run_max_model_requests is None):
         raise ValueError('four-group request limits require both cumulative and per-run caps')
     previous = read_cost_ledger(previous_cost, for_resume=True, limit_cny=budget_limit_cny)
-    # Reserve the same opportunity for every group before touching the business.
     cases = four_group_cases(suite)
     symptom_sha256 = hashlib.sha256(symptom_text(symptom_profile).encode('utf-8')).hexdigest()
     if run_budget_cny is not None and (type(run_budget_cny) not in (int, float)
             or not math.isfinite(run_budget_cny) or run_budget_cny <= 0):
         raise ValueError('invalid per-run reservation cap')
-    if run_budget_cny is not None and budget_limit_cny - previous['reserved_cny'] < len(cases) * 4 * run_budget_cny:
+    full_order = four_group_order(suite)
+    order = full_order if selected_order is None else selected_order
+    allowed = {(item['case'], item['group']) for item in full_order}
+    keys = [(item.get('case'), item.get('group')) for item in order]
+    if not order or any(key not in allowed for key in keys) or len(set(keys)) != len(keys):
+        raise ValueError('four-group selected order must contain unique slots from the suite')
+    if run_budget_cny is not None and budget_limit_cny - previous['reserved_cny'] < len(order) * run_budget_cny:
         raise RuntimeError('insufficient cumulative allowance for equal four-group caps')
     if run_max_model_requests is not None and (max_model_requests is None
-            or max_model_requests - len(previous['requests']) < len(cases) * 4 * run_max_model_requests):
+            or max_model_requests - len(previous['requests']) < len(order) * run_max_model_requests):
         raise RuntimeError('insufficient cumulative requests for equal four-group caps')
     def conditions():
         return four_group_conditions(out)
     fixed = conditions()
-    order = four_group_order(suite)
     record = {'version': 4, 'suite': suite, 'scenario_cases': list(cases),
         'order': order, 'conditions_sha256': fixed, 'results': [],
         'started_at': utc_now(), 'ended_at': None, 'recovery': 'pending', 'status': 'started',
+        'scheduled_slot_count': len(order), 'suite_slot_count': len(full_order),
+        'suite_complete': len(order) == len(full_order),
         'run_budget_cny': run_budget_cny, 'budget_limit_cny': budget_limit_cny,
         'allow_unpriced_model': allow_unpriced_model, 'max_model_requests': max_model_requests,
         'run_max_model_requests': run_max_model_requests, 'max_output_tokens': max_output_tokens,
@@ -655,6 +795,8 @@ async def evaluate_four_groups(out, launch, set_case, knowledge_url, previous_co
                 raise ValueError('four-group thread missing or reused')
             threads.add(thread)
             integrity = result['record_integrity']
+            if len(integrity.get('comparison_config', {}).get('model_channels', [])) > 1:
+                raise ValueError('four-group child mixed model channels; artifacts preserved')
             if options and any(integrity['comparison_config'].get(key) != value
                     for key, value in options.items() if key != 'isolate_history'):
                 raise ValueError('four-group child request limits or pricing mode differ')
@@ -697,6 +839,7 @@ async def preflight_four_group_scenarios(out, tools, target, log, set_case, suit
         'started_at': utc_now(), 'status': 'started', 'recovery': 'pending',
         'model_calls': 0, 'group_labels_only': True, 'mechanism_effectiveness_verified': False}
     path = out / 'four-group-scenario-preflight.json'
+    lifecycle_observations = []
 
     def save():
         path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -706,6 +849,16 @@ async def preflight_four_group_scenarios(out, tools, target, log, set_case, suit
             raise ValueError('shared configuration or knowledge changed')
         await set_case('normal')
         snapshot = await set_case(case)
+        if case == 'downstream_unreachable':
+            from src.probe.evidence import validate_tool_evidence
+            raw = await tools['probe_text_log'].ainvoke({
+                'service': 'downstream', 'path': str(out / 'downstream.log'), 'lines': 100})
+            item = validate_tool_evidence(raw, tool_name='probe_text_log', target_id=target)
+            events = [json.loads(line) for line in item['payload'].get('lines', [])]
+            if not any(event.get('event') == 'shutdown_requested'
+                    and event.get('reason') == 'controlled_stop' for event in events):
+                raise RuntimeError('Probe could not read the downstream shutdown lifecycle event')
+            lifecycle_observations.append({'case': case, 'raw_hash': item.get('raw_hash')})
         if four_group_conditions(out) != fixed:
             raise ValueError('reset changed shared configuration or knowledge')
         return snapshot
@@ -714,7 +867,8 @@ async def preflight_four_group_scenarios(out, tools, target, log, set_case, suit
     try:
         result = await verify_boundary_rounds(tools, target, out / 'scenario-windows', log, reset,
             scenarios=[item['case'] for item in order])
-        report.update(status='passed', observations=result['evidence_count'], rounds=result['rounds'])
+        report.update(status='passed', observations=result['evidence_count'], rounds=result['rounds'],
+            lifecycle_observations=lifecycle_observations)
     except BaseException as exc:
         report.update(status='failed', error_type=type(exc).__name__)
         raise
@@ -731,11 +885,12 @@ async def preflight_four_group_scenarios(out, tools, target, log, set_case, suit
             report['ended_at'] = utc_now()
             save()
     return {'case': 'four_group_scenario_preflight', 'status': report['status'], 'suite': suite,
-        'rounds': report['rounds'], 'evidence_count': report['observations'], 'model_calls': 0,
+        'rounds': report['rounds'], 'evidence_count': report['observations'],
+        'lifecycle_observations': len(lifecycle_observations), 'model_calls': 0,
         'autonomous_model_investigation': False, 'mechanism_effectiveness_verified': False}
 
 
-async def verify(out, evaluation_preflight=False, run_model=False, model_stage='smoke', previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, smoke_case=None, four_group_suite='baseline-v1', scenario_preflight=False, run_max_model_requests=None, symptom_profile='neutral'):
+async def verify(out, evaluation_preflight=False, run_model=False, model_stage='smoke', previous_cost=None, mechanism_group=None, budget_limit_cny=5, run_budget_cny=None, allow_unpriced_model=False, max_model_requests=None, max_output_tokens=4096, smoke_case=None, four_group_suite='baseline-v1', scenario_preflight=False, run_max_model_requests=None, symptom_profile='neutral', four_group_slots=None, manual_repair_wait_seconds=0):
     four_group_cases(four_group_suite)
     if scenario_preflight and (run_model or evaluation_preflight):
         raise ValueError('scenario preflight is a separate free mode')
@@ -774,13 +929,14 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
     dep_log = out / 'downstream.log'
     dep_log.touch()
     app_mode, dep_mode = out / 'app.mode', out / 'downstream.mode'
-    app_mode.write_text('normal', encoding='utf-8')
+    app_mode.write_text(json.dumps({'max_attempts': 3}), encoding='utf-8')
     dep_mode.write_text('normal', encoding='utf-8')
     (out / 'config.toml').write_text('\n'.join([f"target_id = '{target}'",
         f"gateway_url = 'ws://127.0.0.1:{gateway_port}/probe/ws'",
         f"token_file = '{(out / 'token').as_posix()}'", 'baseline_interval_seconds = 60',
         '[services.localapp]', "kind = 'process'",
         "process_names = ['python.exe']", f"text_logs = ['{log.as_posix()}']",
+        f"config_file = '{app_mode.as_posix()}'", "config_keys = ['max_attempts']",
         f"process_args = ['--mode-file', '{app_mode}']",
         '[services.downstream]', "kind = 'process'", "process_names = ['python.exe']",
         f"process_args = ['--mode-file', '{dep_mode}']", f"text_logs = ['{dep_log.as_posix()}']",
@@ -789,24 +945,66 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
         '[dependencies.downstream]', "host = '127.0.0.1'", f'port = {dep_port}',
         "health_scheme = 'http'", "health_path = '/health'"]), encoding='utf-8')
     owned, records, cases = [], [], []
+    process_records, process_handles = [], []
+    controller_stop_ids = set()
     report = {'ok': False, 'model_calls': None if run_model else 0, 'target_id': target, 'cases': cases,
         'probe_identity': 'temporary foreground current-account probe, not installed LocalService',
         'model_investigation': 'requested_not_started' if run_model else 'not_run', 'ports': ports, 'errors': []}
     with ExitStack() as stack:
         def launch(args, name):
-            handle = stack.enter_context((out / (name + '.stderr')).open('wb'))
-            proc = subprocess.Popen([sys.executable, *args], cwd=ROOT, env=env,
-                stdout=handle, stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            started_at = datetime.now(timezone.utc).isoformat()
+            output_path = out / (name + '.stderr')
+            command = [sys.executable, *args]
+            lifecycle = {'name': name, 'command': command, 'cwd': str(ROOT),
+                'output_file': str(output_path.relative_to(out)), 'started_at': started_at,
+                'status': 'starting', 'pid': None, 'ended_at': None, 'exit_code': None}
+            process_records.append(lifecycle)
+            (out / 'process-lifecycle.json').write_text(
+                json.dumps(process_records, ensure_ascii=False, indent=2), encoding='utf-8')
+            handle = stack.enter_context(output_path.open('wb'))
+            try:
+                proc = subprocess.Popen(command, cwd=ROOT, env=env,
+                    stdout=handle, stderr=subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            except BaseException as exc:
+                lifecycle.update(status='start_failed', ended_at=datetime.now(timezone.utc).isoformat(),
+                    error_type=type(exc).__name__, error=str(exc)[:300])
+                (out / 'process-lifecycle.json').write_text(
+                    json.dumps(process_records, ensure_ascii=False, indent=2), encoding='utf-8')
+                raise
+            lifecycle.update(status='running', pid=proc.pid)
+            process_handles.append((proc, lifecycle))
             owned.append(proc)
+            (out / 'process-lifecycle.json').write_text(
+                json.dumps(process_records, ensure_ascii=False, indent=2), encoding='utf-8')
             return proc
+
+        process_stop_files = {}
+
+        def stop_owned(proc, *, graceful=False):
+            controller_stop_ids.add(id(proc))
+            stop_file = process_stop_files.get(proc.pid) if graceful else None
+            if stop_file is not None and proc.poll() is None:
+                stop_file.touch()
+                try:
+                    proc.wait(timeout=5)
+                    return
+                except subprocess.TimeoutExpired:
+                    pass
+            stop(proc)
 
         def application(port, mode, name, dependency=None):
             app_log = log if port == app_port else dep_log
             args = [str(Path(__file__).resolve()), '--serve', str(port), '--log', str(app_log), '--mode-file', str(mode)]
             if dependency is not None:
                 args += ['--downstream', str(dependency)]
+            else:
+                stop_file = out / (name + '.stop')
+                stop_file.unlink(missing_ok=True)
+                args += ['--stop-file', str(stop_file)]
             proc = launch(args, name)
+            if dependency is None:
+                process_stop_files[proc.pid] = stop_file
             wait_listener(port, proc)
             return proc
 
@@ -822,7 +1020,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             client = MultiServerMCPClient({'probe': {'transport': 'streamable_http',
                 'url': f'http://127.0.0.1:{gateway_port}/mcp', 'headers': {'Authorization': 'Bearer ' + token}}})
             tools = {tool.name: tool for tool in await client.get_tools()}
-            assert len(tools) == 9
+            from src.probe.evidence import PROBE_TOOL_OPERATIONS
+            assert set(tools) == set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence'}
             assert not any(name in tools for name in ('probe_exec', 'probe_restart_service', 'probe_write_file'))
             from src.agent.mcp_client import load_tools_for_config, close_client_for_config
             knowledge_server = launch([str(ROOT / 'scripts/verify_windows_probe_graph.py'),
@@ -886,7 +1085,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 result = json.loads((result_dir / 'preflight.json').read_text(encoding='utf-8'))
                 assert result['ok'] and result['model_calls'] == 0 and result['evidence_count'] == 5
                 assert not (result_dir / 'cost.json').exists(), 'free preflight entered paid budget path'
-                assert len(result['tool_names']) == 10
+                assert set(result['tool_names']) == set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence', 'search_knowledge_base'}
                 assert result['knowledge_mcp']['transport'] == 'streamable_http_loopback'
                 assert not result['knowledge_mcp']['autonomously_selected']
                 tool_trace = json.loads((result_dir / 'tool_trace.json').read_text(encoding='utf-8'))
@@ -917,18 +1116,19 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             blocker = None
             async def set_model_case(case):
                 nonlocal dep, app, blocker
-                if blocker and blocker.poll() is None:
-                    stop(blocker)
-                blocker = None
-                if app.poll() is None:
-                    stop(app)
-                if dep.poll() is None:
-                    stop(dep)
-                app_mode.write_text(json.dumps({'max_attempts': 'invalid'}) if case == 'application_config_error'
-                    else 'application_error' if case in {'application_error', 'missing_evidence'} else 'normal', encoding='utf-8')
-                dep_mode.write_text('normal', encoding='utf-8')
                 log.write_text('', encoding='utf-8')
                 dep_log.write_text('', encoding='utf-8')
+                if blocker and blocker.poll() is None:
+                    stop_owned(blocker)
+                blocker = None
+                if app.poll() is None:
+                    stop_owned(app)
+                if dep.poll() is None:
+                    stop_owned(dep, graceful=(case == 'downstream_unreachable'))
+                app_mode.write_text(json.dumps({'max_attempts': 'invalid'}) if case == 'application_config_error'
+                    else 'application_error' if case in {'application_error', 'missing_evidence'}
+                    else json.dumps({'max_attempts': 3}), encoding='utf-8')
+                dep_mode.write_text('normal', encoding='utf-8')
                 if case == 'downstream_unreachable':
                     pass
                 else:
@@ -971,6 +1171,13 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                         logs = (await query('probe_text_log', {'service': 'localapp', 'path': str(log), 'lines': 100},
                             'controller-' + case))['payload']
                         entries = [json.loads(line) for line in logs['lines']]
+                        if case == 'application_config_error':
+                            snapshot = (await query('probe_config_snapshot', {'service': 'localapp'},
+                                'controller-' + case))['payload']
+                            assert snapshot['values'] == {'max_attempts': 'invalid'}
+                            assert snapshot['source_sha256'] == hashlib.sha256(app_mode.read_bytes()).hexdigest()
+                            assert any(row.get('configuration', {}).get('source_sha256') == snapshot['source_sha256']
+                                for row in entries)
                         expected_detail = ('upstream connection failed' if case == 'downstream_unreachable'
                             else 'invalid max_attempts configuration')
                         app_owners = {row['pid'] for row in listening_rows([app_port])}
@@ -1002,7 +1209,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                         knowledge_config['knowledge']['url'], previous_cost, budget_limit_cny, run_budget_cny,
                         suite=four_group_suite, allow_unpriced_model=allow_unpriced_model,
                         max_model_requests=max_model_requests, run_max_model_requests=run_max_model_requests,
-                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile))
+                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile,
+                        selected_order=four_group_slots))
                 elif model_stage == 'knowledge-control':
                     previous = previous_cost
                     modes = [False, True]
@@ -1017,12 +1225,17 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     await set_model_case('normal')
                 else:
                     suite = ['application_error', 'application_exit', 'port_conflict', 'missing_evidence'] if model_stage == 'extended' else ([smoke_case] if smoke_case else None)
+                    async def manual_repair(result):
+                        report['manual_repair'] = await await_manual_config_repair(
+                            out, result, app_mode, app_port, dep_port, manual_repair_wait_seconds)
                     cases.extend(await evaluate_blind_cases(out, launch, set_model_case,
                         knowledge_url=knowledge_config['knowledge']['url'], suite=suite, previous_cost=previous_cost,
                         mechanism_group=mechanism_group, budget_limit_cny=budget_limit_cny,
                         run_budget_cny=run_budget_cny,
                         allow_unpriced_model=allow_unpriced_model, max_model_requests=max_model_requests,
-                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile))
+                        run_max_model_requests=run_max_model_requests,
+                        max_output_tokens=max_output_tokens, symptom_profile=symptom_profile,
+                        after_case=manual_repair if manual_repair_wait_seconds else None))
             from scripts.verify_windows_probe_graph import verify_graph
             if evaluation_preflight and not run_model:
                 from scripts.verify_probe_mechanisms import verify_mechanism_groups
@@ -1042,7 +1255,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             assert dep_logs['payload']['lines']
             assert all(json.loads(line)['pid'] in dep_pids for line in dep_logs['payload']['lines'])
             cases.append({'case': 'separate_process_and_log_identities', 'status': 'passed', 'model_calls': 0})
-            stop(app)
+            stop_owned(app)
             exited, _ = await observe('application_exit')
             assert exited['app_tcp'] == 'failed' and exited['dependency_http'] == 200
             assert app.poll() is not None
@@ -1053,7 +1266,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             recovered, _ = await observe('application_recovered')
             assert recovered['app_http'] == 200
             recovered['status'] = 'passed'
-            stop(dep)
+            stop_owned(dep)
             down, logs = await observe('downstream_unreachable')
             assert app.poll() is None and down['app_tcp'] == 'ok' and down['app_http'] == 503
             assert down['dependency_tcp'] == 'failed' and 'upstream connection failed' in str(logs)
@@ -1116,8 +1329,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             error, logs = await observe('application_error')
             assert error['app_http'] == 500 and error['dependency_http'] == 200 and 'request failed' in str(logs)
             error['status'] = 'passed'
-            app_mode.write_text('normal', encoding='utf-8')
-            stop(app)
+            app_mode.write_text(json.dumps({'max_attempts': 3}), encoding='utf-8')
+            stop_owned(app)
             blocker = application(app_port, dep_mode, 'port-owner')
             failed = launch([str(Path(__file__).resolve()), '--serve', str(app_port), '--log', str(log),
                 '--mode-file', str(app_mode), '--downstream', str(dep_port)], 'bind-failure')
@@ -1132,7 +1345,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 'owner_found': found, 'owner_pids': [row['pid'] for row in owners],
                 'ports_truncated': bool(snapshot.get('truncated'))})
             assert 'bind_failed' in str(logs)
-            stop(blocker)
+            stop_owned(blocker)
             app = application(app_port, app_mode, 'final-application', dep_port)
             final, _ = await observe('final_recovery')
             assert final['app_http'] == final['dependency_http'] == 200
@@ -1216,7 +1429,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 f'asyncio.run(run_probe(lambda: Path({str(out / "stop-probe")!r}).exists()))'], 'probe-reconnected')
             await wait_probe('probe_reconnected')
             cases.append({'case': 'probe_disconnect_reconnect', 'status': 'passed'})
-            stop(gateway)
+            stop_owned(gateway)
             gateway = launch(['-m', 'uvicorn', 'mcp_servers.probe_gateway:app', '--host', '127.0.0.1',
                 '--port', str(gateway_port)], 'gateway-restarted')
             wait_listener(gateway_port, gateway)
@@ -1237,7 +1450,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             report['ledger_reopened'] = True
             report['ok'] = all(case['status'] == 'passed' for case in cases)
         except Exception as exc:
-            report['errors'].append({'type': type(exc).__name__, 'message': str(exc)[:300]})
+            report['errors'].append({'type': type(exc).__name__, 'message': str(exc)[:300],
+                'traceback': traceback.format_exc(limit=12)[-8000:]})
         finally:
             (out / 'stop-probe').touch()
             if probe and probe.poll() is None:
@@ -1245,7 +1459,20 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     await asyncio.to_thread(probe.wait, 20)
                 except subprocess.TimeoutExpired:
                     report['errors'].append({'type': 'cleanup', 'message': 'probe did not stop gracefully'})
+            pre_cleanup = {id(proc): proc.poll() for proc in owned}
             report.update(cleanup_owned(owned, ports))
+            ended_at = datetime.now(timezone.utc).isoformat()
+            for proc, lifecycle in process_handles:
+                before_cleanup = pre_cleanup[id(proc)]
+                controller_stopped = id(proc) in controller_stop_ids or before_cleanup is None
+                lifecycle.update(status=('stopped_by_controller' if controller_stopped
+                    else 'exited_before_cleanup'), ended_at=ended_at,
+                    exit_code=proc.poll(),
+                    controller_stop_requested=controller_stopped)
+            (out / 'process-lifecycle.json').write_text(
+                json.dumps(process_records, ensure_ascii=False, indent=2), encoding='utf-8')
+            report['process_lifecycle_file'] = 'process-lifecycle.json'
+            report['process_lifecycle_count'] = len(process_records)
             report['errors'].extend(report['cleanup_errors'])
             if run_model:
                 report['cost_records'] = []
@@ -1271,11 +1498,15 @@ def main():
     parser.add_argument('--log', type=Path)
     parser.add_argument('--mode-file', type=Path)
     parser.add_argument('--downstream', type=int)
+    parser.add_argument('--stop-file', type=Path)
+    parser.add_argument('--runtime-config', type=Path, help='Disposable fixture startup connection configuration')
     parser.add_argument('--evaluation-preflight', action='store_true')
     parser.add_argument('--scenario-preflight', action='store_true',
         help='Free mode: real scenario resets and Probe isolation in the four-group schedule, no Agent decisions')
     parser.add_argument('--four-group-suite', choices=list(FOUR_GROUP_SUITES), default='baseline-v1',
         help='Explicit versioned scenario suite; e2-fault-pair-v1 runs two same-entry-503 faults across four groups')
+    parser.add_argument('--four-group-slot', action='append', metavar='CASE/GROUP',
+        help='Run selected four-group slots only, e.g. downstream_unreachable/G10; repeat per slot')
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; requires separate explicit authorization for cases and cumulative budget')
     parser.add_argument('--model-stage', choices=['smoke', 'extended', 'knowledge-control', 'four-groups'], default='smoke')
@@ -1297,12 +1528,32 @@ def main():
         help='Model input profile; candidate-opportunity is for targeted mechanism pre-experiments')
     parser.add_argument('--mechanism-group', choices=['G00', 'G10', 'G01', 'G11'])
     parser.add_argument('--smoke-review', type=Path, help='Human review JSON with smoke_passed=true, required before extended cases')
+    parser.add_argument('--manual-repair-wait-seconds', type=int, default=0,
+        help='Keep the single config-error business alive for a bounded human repair window, then always clean up')
     args = parser.parse_args()
+    if args.manual_repair_wait_seconds and (not 1 <= args.manual_repair_wait_seconds <= 900
+            or not args.run_model or args.model_stage != 'smoke' or args.smoke_case != 'application_config_error'):
+        parser.error('manual repair window requires one paid config-error smoke, 1..900 seconds')
     import math
     if args.scenario_preflight and (args.run_model or args.evaluation_preflight):
         parser.error('scenario-preflight cannot be combined with model or full evaluation modes')
     if args.four_group_suite != 'baseline-v1' and not (args.scenario_preflight or args.model_stage == 'four-groups'):
         parser.error('four-group-suite requires scenario-preflight or model-stage four-groups')
+    four_group_slots = None
+    if args.four_group_slot:
+        if args.model_stage != 'four-groups' or not args.run_model:
+            parser.error('four-group-slot requires a paid four-groups run')
+        slots = []
+        for value in args.four_group_slot:
+            case, separator, group = value.partition('/')
+            if not separator or group not in {'G00', 'G10', 'G01', 'G11'}:
+                parser.error('four-group-slot must use CASE/GROUP with a valid group')
+            slots.append({'case': case, 'group': group})
+        slot_keys = [(item['case'], item['group']) for item in slots]
+        allowed_slots = {(item['case'], item['group']) for item in four_group_order(args.four_group_suite)}
+        if len(set(slot_keys)) != len(slot_keys) or any(key not in allowed_slots for key in slot_keys):
+            parser.error('four-group-slot values must be unique slots in the selected suite')
+        four_group_slots = slots
     if not math.isfinite(args.budget_limit_cny) or args.budget_limit_cny <= 0:
         parser.error('budget limit must be finite and positive')
     if args.allow_unpriced_model and (not args.run_model or args.model_stage not in {'smoke', 'four-groups'}):
@@ -1314,8 +1565,8 @@ def main():
     for cap in (args.max_model_requests, args.run_max_model_requests):
         if cap is not None and cap <= 0:
             parser.error('request caps must be positive')
-    if args.run_max_model_requests is not None and args.model_stage != 'four-groups':
-        parser.error('controller per-run request cap requires four-groups')
+    # A per-run request cap is also valid for a single smoke/extended child;
+    # the cumulative cap remains the separate task-wide ceiling.
     if args.model_stage == 'four-groups' and args.allow_unpriced_model and args.run_max_model_requests is None:
         parser.error('unpriced four-groups require a per-run request cap')
     if args.smoke_case and args.model_stage != 'smoke':
@@ -1327,7 +1578,7 @@ def main():
                 or not math.isfinite(args.run_budget_cny) or args.run_budget_cny <= 0))):
         parser.error('four-groups requires explicit paid mode, per-run cap and no single-group override')
     if args.serve is not None:
-        serve(args.serve, args.log, args.downstream, args.mode_file)
+        serve(args.serve, args.log, args.downstream, args.mode_file, args.stop_file, args.runtime_config)
         return 0
     if args.run_model and args.model_stage in {'extended', 'four-groups'}:
         if not args.smoke_review or json.loads(args.smoke_review.read_text(encoding='utf-8')).get('smoke_passed') is not True:
@@ -1342,7 +1593,8 @@ def main():
         run_max_model_requests=args.run_max_model_requests,
         max_output_tokens=args.max_output_tokens, smoke_case=args.smoke_case,
         four_group_suite=args.four_group_suite, scenario_preflight=args.scenario_preflight,
-        symptom_profile=args.symptom_profile))
+        symptom_profile=args.symptom_profile, four_group_slots=four_group_slots,
+        manual_repair_wait_seconds=args.manual_repair_wait_seconds))
     print(json.dumps({'directory': str(out), **report}, ensure_ascii=False))
     return 0 if report['ok'] else 1
 

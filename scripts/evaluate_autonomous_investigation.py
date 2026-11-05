@@ -20,6 +20,14 @@ FLASH_PRICING = {
     'source': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing',
     'basis': 'Flash peak, cache miss; official legacy v4-flash alias billed as Flash',
 }
+ALIYUN_FLASH_MODEL = 'deepseek-v4.1-flash-1017'
+ALIYUN_FLASH_BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+ALIYUN_FLASH_PRICING = {
+    'input_cny_per_million': 2, 'output_cny_per_million': 8,
+    'verified_on': '2026-11-03',
+    'source': 'https://help.aliyun.com/zh/model-studio/model-pricing',
+    'basis': 'DashScope Beijing, peak, cache miss; deepseek-v4.1-flash-1017',
+}
 
 
 class EvaluationBudgetExceeded(RuntimeError):
@@ -38,7 +46,14 @@ def model_usage_known(row):
 class PaidRequestBudget:
     # Reserve input UTF-8 bytes + 8192 for token/protocol overhead, then settle usage.
     def __init__(self, output, max_output_tokens=2048, limit_cny=5, run_limit_cny=None,
-                 allow_unpriced_models=False, max_requests=None, run_max_requests=None):
+                 allow_unpriced_models=False, max_requests=None, run_max_requests=None, api_base=None,
+                 fallback_api_base=None, fallback_model=None):
+        self.api_base = (api_base or 'https://api.deepseek.com').rstrip('/')
+        self.pricing = ALIYUN_FLASH_PRICING if self.api_base == ALIYUN_FLASH_BASE else FLASH_PRICING
+        candidate_fallback = (fallback_api_base or '').rstrip('/')
+        self.fallback_api_base = (candidate_fallback if candidate_fallback == 'https://api.deepseek.com'
+                                  and fallback_model in {'deepseek-v4-flash', 'deepseek-flash'} else None)
+        self.fallback_model = fallback_model if self.fallback_api_base else None
         if isinstance(limit_cny, bool) or not isinstance(limit_cny, (int, float)) or not math.isfinite(limit_cny) or limit_cny <= 0:
             raise ValueError('invalid cumulative cost limit')
         self.output = output
@@ -59,6 +74,12 @@ class PaidRequestBudget:
         self.reserved = 0.0
         self.ledger = []
         self.blocked_requests = []
+        self.authorized_historical_timeouts = []
+
+    def usage_unknown_without_authorization(self, row):
+        return (not model_usage_known(row) and not (
+            type(row.get('number')) is int and 0 < row['number'] <= self.inherited_requests
+            and row in self.authorized_historical_timeouts))
 
     def reject(self, body, reason_code, message):
         self.blocked_requests.append({'request_number': len(self.ledger) + 1,
@@ -67,17 +88,28 @@ class PaidRequestBudget:
         self.save()
         raise EvaluationBudgetExceeded(reason_code, message)
 
-    def reserve(self, body, *, require_known_usage=False):
+    def reserve(self, body, *, require_known_usage=False, api_base=None):
         # Real transports must stop even when a planner/executor swallowed the last error.
-        if require_known_usage and any(not model_usage_known(row) for row in self.ledger):
+        if require_known_usage and any(self.usage_unknown_without_authorization(row) for row in self.ledger):
             self.reject(body, 'previous_request_usage_unknown',
                 'A prior model request failed or has unknown usage; stopping further sends')
         if any(row.get('budget_bound_exceeded') for row in self.ledger):
             self.reject(body, 'usage_exceeded_reservation_bound',
                 'Reported model usage exceeded the reserved token bound; stopping further sends')
         model = body.get('model', '')
-        # An explicit unpriced run must not inherit legacy rates by model name.
-        priced_model = model in {'deepseek-v4-flash', 'deepseek-flash'} and not self.allow_unpriced_models
+        endpoint = (api_base or self.api_base).rstrip('/')
+        # Known DeepSeek aliases stay priced even when unknown models are explicitly allowed.
+        primary_aliyun = endpoint == ALIYUN_FLASH_BASE
+        official_fallback = (endpoint == self.fallback_api_base and model == self.fallback_model
+                             and endpoint is not None)
+        official_primary = (endpoint == self.api_base
+                            and endpoint in {'https://api.deepseek.com', 'https://api.deepseek.com/v1'})
+        if primary_aliyun and model != ALIYUN_FLASH_MODEL:
+            self.reject(body, 'model_not_allowed', 'Aliyun evaluation is locked to the selected model')
+        priced_model = ((primary_aliyun and model == ALIYUN_FLASH_MODEL)
+            or (official_fallback)
+            or (official_primary
+                and model in {'deepseek-v4-flash', 'deepseek-flash'}))
         if not priced_model and not self.allow_unpriced_models:
             self.reject(body, 'unpriced_model', 'Pricing not verified for configured model')
         if self.max_requests is not None and len(self.ledger) >= self.max_requests:
@@ -89,8 +121,9 @@ class PaidRequestBudget:
         body.pop('max_completion_tokens', None)
         body['max_tokens'] = output_upper
         body['stream'] = False
-        reserve = (input_upper * FLASH_PRICING['input_cny_per_million']
-                   + output_upper * FLASH_PRICING['output_cny_per_million']) / 1_000_000 if priced_model else 0.0
+        rates = ALIYUN_FLASH_PRICING if primary_aliyun else FLASH_PRICING
+        reserve = (input_upper * rates['input_cny_per_million']
+                   + output_upper * rates['output_cny_per_million']) / 1_000_000 if priced_model else 0.0
         if (self.run_limit_cny is not None
                 and self.reserved - self.inherited_reserved + reserve > self.run_limit_cny):
             self.reject(body, 'per_run_cost_limit', 'Per-run reservation limit reached')
@@ -98,11 +131,11 @@ class PaidRequestBudget:
             self.reject(body, 'cumulative_cost_limit',
                 f'{self.limit_cny:g} CNY request reservation limit reached')
         self.reserved += reserve
-        row = {'number':len(self.ledger)+1,'model':model,'input_token_upper':input_upper,
+        row = {'number':len(self.ledger)+1,'model':model,'api_base':endpoint,'input_token_upper':input_upper,
                'output_token_upper':output_upper,'reserved_cny':reserve,'status':'reserved',
                'pricing_verified': priced_model}
         if priced_model:
-            row.update(pricing=dict(FLASH_PRICING), reservation_upper_cny=reserve)
+            row.update(pricing=dict(rates), reservation_upper_cny=reserve)
         self.ledger.append(row)
         self.save()
         return row
@@ -127,7 +160,7 @@ class PaidRequestBudget:
             'blocked_requests': self.blocked_requests,
             'request_limits': self.request_limits(),
             'rate_basis':'New priced rows use per-row CNY peak rates; historical rates and unknown costs remain unchanged',
-            'pricing_source': FLASH_PRICING['source'],
+            'pricing_source': self.pricing['source'],
         },ensure_ascii=False,indent=2),encoding='utf-8')
 
     def cost_summary(self, start_index=0):
@@ -231,7 +264,7 @@ async def main():
     settings.ENABLE_HITL = False
     settings.ENABLE_STEP_SNAPSHOTS = True
     settings.DIAGNOSTIC_TARGET_CATALOG = json.dumps({'target_id':'test-target','services':{'orders':{'entrypoint':'http://test-target:18080/health','dependencies':['database']}}})
-    budget=PaidRequestBudget(output)
+    budget=PaidRequestBudget(output, api_base=settings.RESOLVED_LLM_API_BASE)
     class BudgetTransport(httpx.AsyncBaseTransport):
         def __init__(self): self.inner=httpx.AsyncHTTPTransport()
         async def handle_async_request(self,request):

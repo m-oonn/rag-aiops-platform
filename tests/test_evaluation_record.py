@@ -11,8 +11,10 @@ from scripts.evaluate_windows_probe import trace_evaluation_tools
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('provider', ['deepseek', 'aliyun'])
 @pytest.mark.parametrize('kind', ['plan', 'decision', 'invalid_decision'])
-async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budget(tmp_path, monkeypatch, kind):
+@pytest.mark.parametrize('resume_timeout', [False, True])
+async def test_deepseek_formal_runner_serializes_full_schemas_with_priced_budget(tmp_path, monkeypatch, kind, provider, resume_timeout):
     import importlib
     import httpx
     from unittest.mock import AsyncMock
@@ -31,8 +33,11 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
     for name in ['PROBE_ENABLED', 'PROBE_TARGET_ID', 'DIAGNOSTIC_TARGET_CATALOG',
             'PROBE_EVIDENCE_DIR', 'TERMCP_ENABLED', 'ENABLE_HITL', 'ENABLE_LLM_RETRY']:
         monkeypatch.setattr(settings, name, getattr(settings, name))
-    for name, value in {'LLM_API_BASE': 'https://api.deepseek.com', 'LLM_API_KEY': 'synthetic-only',
-            'AGENT_MODEL': 'deepseek-v4-flash', 'AGENT_DISABLE_THINKING': True}.items():
+    base = 'https://dashscope.aliyuncs.com/compatible-mode/v1' if provider == 'aliyun' else 'https://api.deepseek.com'
+    model = 'deepseek-v4.1-flash-1017' if provider == 'aliyun' else 'deepseek-v4-flash'
+    for name, value in {'LLM_API_BASE': base, 'LLM_API_KEY': 'synthetic-only',
+                'AGENT_MODEL': model, 'AGENT_DISABLE_THINKING': True,
+                'LLM_FALLBACK_ENABLED': False}.items():
         monkeypatch.setattr(settings, name, value)
     monkeypatch.delenv('AGENT_MODEL', raising=False)
     monkeypatch.setattr(executor, '_tools_cache', {})
@@ -47,11 +52,14 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
             'check': {'next_check': '检查依赖', 'next_tools': ['probe_dependency_probe']}}]})
 
     async def respond(request):
-        assert str(request.url) == 'https://api.deepseek.com/chat/completions'
+        assert str(request.url) == base + '/chat/completions'
         body = json.loads(request.content)
         calls.append(body)
-        assert body['model'] == 'deepseek-v4-flash'
-        assert body['thinking'] == {'type': 'disabled'}
+        assert body['model'] == model
+        if provider == 'aliyun':
+            assert body['enable_thinking'] is False and 'thinking' not in body
+        else:
+            assert body['thinking'] == {'type': 'disabled'} and 'enable_thinking' not in body
         assert body['max_tokens'] == 4096 and body['stream'] is False
         if len(calls) == 1:
             assert body['tool_choice']['function']['name'] == schema.__name__
@@ -65,7 +73,7 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
             assert kind == 'invalid_decision' and 'tools' not in body
             message = {'role': 'assistant', 'content': json.dumps(value)}
         return httpx.Response(200, json={'id': 'offline', 'object': 'chat.completion',
-            'created': 0, 'model': 'deepseek-flash', 'usage': {'prompt_tokens': 10, 'completion_tokens': 2},
+            'created': 0, 'model': model, 'usage': {'prompt_tokens': 10, 'completion_tokens': 2},
             'choices': [{'index': 0, 'message': message,
                 'finish_reason': 'tool_calls' if len(calls) == 1 else 'stop'}]})
 
@@ -92,14 +100,37 @@ async def test_deepseek_formal_runner_serializes_full_schemas_with_unpriced_budg
     symptom_file = tmp_path / 'symptom.txt'
     symptom_file.write_text('fixed test symptom', encoding='utf-8')
     args = SimpleNamespace(previous_cost=None, local_runbooks=None, knowledge_mcp_url=None, symptom_file=symptom_file,
-        mechanism_group=None, knowledge_disabled=False, allow_unpriced_model=True, max_model_requests=2)
+        mechanism_group=None, knowledge_disabled=False, allow_unpriced_model=False, max_model_requests=None,
+        run_budget_cny=5)
+    if resume_timeout:
+        old = {'number': 1, 'status': 'ReadTimeout', 'error_type': 'ReadTimeout',
+            'pricing_verified': True, 'reserved_cny': .092916, 'reservation_upper_cny': .092916}
+        previous = tmp_path / 'prior.json'
+        previous.write_text(json.dumps({'limit_cny': 5, 'reserved_cny': .092916, 'requests': [old]}))
+        authorization = tmp_path / 'authorization.json'
+        authorization.write_text(json.dumps({'version': 1, 'kind': 'single_historical_read_timeout',
+            'user_authorization': '一次授权', 'previous_sha256': hashlib.sha256(previous.read_bytes()).hexdigest(),
+            'request_number': 1, 'request_sha256': hashlib.sha256(json.dumps(old, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
+            'reserved_cny': .092916, 'limit_cny': 5, 'run_limit_cny': 5, 'output_dir': str(tmp_path)}))
+        args.previous_cost = previous
+        args.resume_timeout_authorization = authorization
     cfg = ProbeConfig('test-target', 'ws://127.0.0.1:18767/probe/ws', tmp_path / 'token')
     await evaluation.run_model(args, cfg, tmp_path, [])
     assert len(calls) == (2 if kind == 'invalid_decision' else 1)
     cost = json.loads((tmp_path / 'cost.json').read_text())
-    assert all(row['pricing_verified'] is False for row in cost['requests'])
+    new_rows = cost['requests'][int(resume_timeout):]
+    assert all(row['pricing_verified'] is True and row['reserved_cny'] > 0
+        for row in new_rows)
+    assert all(('help.aliyun.com' in row['pricing']['source']) == (provider == 'aliyun')
+        for row in new_rows)
+    if resume_timeout:
+        assert cost['requests'][0] == old
+        assert (tmp_path / 'timeout-authorization-use.json').exists()
+    assert cost['request_limits']['max_requests'] is None
+    assert cost['request_limits']['run_max_requests'] is None
     summary = json.loads((tmp_path / 'summary.json').read_text())
-    assert summary['cost_scope']['this_run']['estimated_cny_peak'] is None
+    assert summary['cost_scope']['this_run']['estimated_cny_peak'] == pytest.approx(
+        len(calls) * 0.000036)
     assert summary['workflow_completed'] is (kind != 'invalid_decision')
     record = json.loads((tmp_path / 'evaluation-record.json').read_text())
     assert record['status'] == ('incomplete' if kind == 'invalid_decision' else 'completed')
@@ -233,6 +264,7 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
     from src.agent.aiops import graph, planner, executor
     from src.probe.windows.config import ProbeConfig
     from src.settings import settings
+    monkeypatch.setattr(settings, 'LLM_API_BASE', 'https://api.deepseek.com')
     modules = [planner, executor, importlib.import_module('src.agent.aiops.strategies.investigation')]
     for module in modules:
         monkeypatch.setattr(module, 'create_agent_llm', module.create_agent_llm)
@@ -344,7 +376,8 @@ async def test_model_http_attempts_are_bound_to_inputs_and_preserve_prior_ledger
             if mode == 'request_cap_retry':
                 expected = {'max_requests': 10, 'run_max_requests': 1, 'inherited_requests': 1}
                 assert cost['request_limits'] == summary['request_limits'] == expected
-                assert summary['cost_scope']['this_run']['estimated_cny_peak'] is None
+                assert summary['cost_scope']['this_run']['estimated_cny_peak'] == pytest.approx(0.000036)
+                assert summary['budget_stop_scope'] == 'this_run'
             if mode == 'connect_retry':
                 assert cost['requests'][-1]['status'] == 'ConnectError'
         return
