@@ -11,7 +11,7 @@ from typing import Any
 PROTOCOL_VERSION = "probe.v1"
 OPERATIONS = {
     "inventory", "resources", "services", "processes", "ports",
-    "event_logs", "text_logs", "dependency_probe",
+    "event_logs", "text_logs", "dependency_probe", "configuration",
 }
 CAPABILITIES = tuple(sorted(OPERATIONS))
 MAX_PROCESS_ROWS = 256

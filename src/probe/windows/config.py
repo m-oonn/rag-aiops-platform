@@ -32,6 +32,8 @@ class ServiceConfig:
     text_logs: tuple[str, ...] = ()
     kind: str = 'windows_service'
     process_args: tuple[str, ...] = ()
+    config_file: str | None = None
+    config_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,11 +149,20 @@ def load_config(path: str | Path) -> ProbeConfig:
         kind = table.get('kind', 'windows_service')
         if kind not in ('windows_service', 'process'):
             raise ProbeConfigError(f'services.{name}.kind must be windows_service or process')
+        config_file = table.get('config_file')
+        config_keys = _string_tuple(table.get('config_keys'), f'services.{name}.config_keys')
+        if bool(config_file) != bool(config_keys):
+            raise ProbeConfigError('config_file and config_keys must be configured together')
+        if config_file is not None:
+            config_file = _validate_path_pattern(config_file)
+            if any(char in config_file for char in '*?['):
+                raise ProbeConfigError('configuration file must be an exact path')
         services[name] = ServiceConfig(
             service_name=str(table.get("service_name") or name) if kind == 'windows_service' else '',
             kind=kind,
             process_names=_string_tuple(table.get("process_names"), f"services.{name}.process_names"),
             process_args=_string_tuple(table.get("process_args"), f"services.{name}.process_args"),
+            config_file=config_file, config_keys=config_keys,
             log_channels=_string_tuple(table.get("log_channels"), f"services.{name}.log_channels"),
             log_providers=_string_tuple(table.get("log_providers"), f"services.{name}.log_providers"),
             text_logs=tuple(_validate_path_pattern(x) for x in _string_tuple(table.get("text_logs"), f"services.{name}.text_logs")),
@@ -160,7 +171,7 @@ def load_config(path: str | Path) -> ProbeConfig:
     return ProbeConfig(target_id, gateway_url, token_file, Path(ca) if ca else None, interval, services, dependencies)
 
 
-def allowed_text_path(config: ProbeConfig, service: str, requested: str) -> bool:
+def allowed_text_path(config: ProbeConfig, service: str, requested: str, *, patterns=None) -> bool:
     """Match a fixed directory and filename; links/reparse paths fail closed."""
     cfg = config.service(service)
     try:
@@ -174,7 +185,7 @@ def allowed_text_path(config: ProbeConfig, service: str, requested: str) -> bool
             return False
     except OSError:
         return False
-    for pattern in cfg.text_logs:
+    for pattern in cfg.text_logs if patterns is None else patterns:
         configured = Path(pattern)
         try:
             if any(p.is_symlink() or (p.lstat().st_file_attributes & 0x400 if os.name == "nt" else False)

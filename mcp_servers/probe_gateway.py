@@ -225,8 +225,21 @@ async def probe_event_log(service: str, since_minutes: int = 60, limit: int = 20
 
 
 @mcp.tool()
+async def probe_config_snapshot(service: str) -> dict[str, Any]:
+    """Read selected keys from one explicitly configured JSON file, with source hash.
+
+    Accepts a configured service name only; no caller-selected paths or keys.
+    A snapshot proves current file contents, not change history or causality.
+    """
+    return await _tool('configuration', {'service': service})
+
+
+@mcp.tool()
 async def probe_text_log(service: str, path: str, lines: int = 100) -> dict[str, Any]:
-    """Tail an allow-listed text log path."""
+    """Tail an allow-listed text log path. service is a configured service name;
+    path must be a concrete path published in inventory configured_services[service].text_logs,
+    never a service name or business-catalog log_refs entry. Read inventory first if unknown.
+    """
     return await _tool("text_logs", {"service": service, "path": path, "lines": max(1, min(lines, 1000))})
 
 

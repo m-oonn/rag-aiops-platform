@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fnmatch
 import glob
+import hashlib
 import os
 import platform
 import socket
@@ -55,7 +56,10 @@ class WindowsCollector:
                 "process_names": list(cfg.process_names), "event_logs_available": bool(cfg.log_channels),
                 "process_identity_configured": bool(cfg.process_args),
                 "text_logs_available": bool(cfg.text_logs),
-                "text_logs": list(cfg.text_logs)} for name, cfg in self.config.services.items()},
+                "text_logs": list(cfg.text_logs),
+                "configuration_available": bool(cfg.config_file and cfg.config_keys),
+                "configuration_file": cfg.config_file,
+                "configuration_keys": list(cfg.config_keys)} for name, cfg in self.config.services.items()},
             "configured_dependencies": sorted(self.config.dependencies),
         })
 
@@ -254,7 +258,17 @@ class WindowsCollector:
                                                  "line_limit": lines, "error": "file not found"})
         if not allowed_text_path(self.config, name, selected_path):
             raise ProbeConfigError("matched log file is outside the configured allow-list")
-        with open(selected_path, "rb") as handle:
+        raw, actual, size, _ = self._read_allowed_bytes(name, selected_path, tail=True)
+        text = redact(raw.decode("utf-8", errors="replace")).splitlines()
+        selected = text[-lines:]
+        return self._evidence("text_logs", {"service": name, "path": actual,
+                                             "line_limit": lines, "lines": selected},
+                              truncated=size > MAX_TEXT_BYTES or len(text) > lines or any(x in path for x in "*?["))
+
+    def _read_allowed_bytes(self, name, path, *, patterns=None, tail=False):
+        if not allowed_text_path(self.config, name, path, patterns=patterns):
+            raise ProbeConfigError('file path is outside the configured allow-list')
+        with open(path, "rb") as handle:
             # Validate the opened handle, so a link swapped during open cannot escape.
             if os.name == "nt":
                 import msvcrt
@@ -264,16 +278,36 @@ class WindowsCollector:
                     actual = actual[4:]
             else:
                 actual = str(Path(f"/proc/self/fd/{handle.fileno()}").resolve(strict=True))
-            if not allowed_text_path(self.config, name, actual):
+            if not allowed_text_path(self.config, name, actual, patterns=patterns):
                 raise ProbeConfigError("opened log file is outside the configured allow-list")
             size = handle.seek(0, os.SEEK_END)
-            handle.seek(max(0, size - MAX_TEXT_BYTES))
-            raw = handle.read(MAX_TEXT_BYTES)
-        text = redact(raw.decode("utf-8", errors="replace")).splitlines()
-        selected = text[-lines:]
-        return self._evidence("text_logs", {"service": name, "path": actual,
-                                             "line_limit": lines, "lines": selected},
-                              truncated=size > MAX_TEXT_BYTES or len(text) > lines or any(x in path for x in "*?["))
+            handle.seek(max(0, size - MAX_TEXT_BYTES) if tail else 0)
+            raw = handle.read(MAX_TEXT_BYTES if tail else MAX_TEXT_BYTES + 1)
+            modified = os.fstat(handle.fileno()).st_mtime_ns
+        return raw, actual, size, modified
+
+    def configuration(self, name: str) -> dict[str, Any]:
+        cfg = self.config.service(name)
+        body = {'service': name}
+        if not cfg.config_file or not cfg.config_keys:
+            return self._evidence('configuration', {**body, 'error': 'configuration_not_configured'})
+        try:
+            raw, actual, size, modified = self._read_allowed_bytes(
+                name, cfg.config_file, patterns=(cfg.config_file,))
+        except FileNotFoundError:
+            return self._evidence('configuration', {**body, 'error': 'file_not_found'})
+        if size > MAX_TEXT_BYTES or len(raw) > MAX_TEXT_BYTES:
+            return self._evidence('configuration', {**body, 'error': 'configuration_too_large'})
+        body.update(path=actual, source_sha256=hashlib.sha256(raw).hexdigest(), modified_at_ns=modified)
+        try:
+            parsed = json.loads(raw.decode('utf-8'))
+            if not isinstance(parsed, dict):
+                raise ValueError('not an object')
+        except (ValueError, UnicodeError):
+            return self._evidence('configuration', {**body, 'error': 'invalid_json_object'})
+        return self._evidence('configuration', {**body,
+            'values': {key: parsed[key] for key in cfg.config_keys if key in parsed},
+            'missing_keys': [key for key in cfg.config_keys if key not in parsed]})
 
     def dependency_probe(self, name: str) -> dict[str, Any]:
         cfg = self.config.dependency(name)
@@ -324,6 +358,10 @@ class WindowsCollector:
         }
 
     def collect(self, operation: str, params: dict[str, Any]) -> dict[str, Any]:
+        if operation == 'configuration':
+            if set(params) != {'service'} or not isinstance(params['service'], str):
+                raise ProbeConfigError('configuration accepts only a configured service name')
+            return self.configuration(params['service'])
         if operation == "inventory": return self.inventory()
         if operation == "resources": return self.resources()
         if operation == "services": return self.services(str(params.get("service")))

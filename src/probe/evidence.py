@@ -16,6 +16,7 @@ PROBE_TOOL_OPERATIONS = {
     'probe_service_status': 'services', 'probe_process_snapshot': 'processes',
     'probe_port_snapshot': 'ports', 'probe_event_log': 'event_logs',
     'probe_text_log': 'text_logs', 'probe_dependency_probe': 'dependency_probe',
+    'probe_config_snapshot': 'configuration',
 }
 
 
