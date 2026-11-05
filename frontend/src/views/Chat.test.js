@@ -37,14 +37,14 @@ async function mountChat() {
 }
 
 describe('Chat.vue', () => {
-  it('uses GLM when the model-list endpoint is unavailable', async () => {
+  it('uses Aliyun DeepSeek when the model-list endpoint is unavailable', async () => {
     api.get.mockImplementation((url) => url === '/health/models'
       ? Promise.reject(new Error('offline model list'))
       : Promise.resolve({ data: [] }))
     const wrapper = await mountChat()
     await flushPromises()
-    expect(wrapper.vm.selectedModel).toBe('glm-5.3-flash')
-    expect(wrapper.vm.availableModels).toEqual([{ id: 'glm-5.3-flash', name: 'GLM-5.3-Flash' }])
+    expect(wrapper.vm.selectedModel).toBe('deepseek-v4.1-flash-1017')
+    expect(wrapper.vm.availableModels).toEqual([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek-V4.1-Flash-1017' }])
     wrapper.unmount()
   })
 

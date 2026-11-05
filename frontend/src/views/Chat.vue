@@ -442,9 +442,9 @@ const fetchModels = async () => {
   } catch (e) {
     // 降级：API 不可用时提供与 .env AVAILABLE_MODELS 一致的模型
     availableModels.value = [
-      { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash' },
+      { id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek-V4.1-Flash-1017' },
     ]
-    selectedModel.value = 'glm-5.3-flash'
+    selectedModel.value = 'deepseek-v4.1-flash-1017'
   }
 }
 

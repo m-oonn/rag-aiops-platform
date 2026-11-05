@@ -35,9 +35,14 @@ class Settings(BaseSettings):
     #   LLM_API_BASE: 显式指定时优先于各供应商默认地址(DASHSCOPE_API_BASE / deepseek 默认)
     #   LLM_API_KEY : 显式指定时优先;否则依次回退 DEEPSEEK_API_KEY → DASHSCOPE_API_KEY
     # 兼容性: 两者都不设置时,行为与旧版完全一致(走 DASHSCOPE_API_BASE + DASHSCOPE_API_KEY)。
-    LLM_API_BASE: Optional[str] = "https://www.rightapi.ai/v1"  # 当前默认兼容服务；凭据只从私有配置读取
+    LLM_API_BASE: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 当前默认兼容服务；凭据只从私有配置读取
     LLM_API_KEY: Optional[str] = None      # OpenAI兼容服务凭据，只保存于私有配置
     DEEPSEEK_API_KEY: Optional[str] = None # 备选变量名(给只认这个名字的场景)
+    # 主兼容服务发生瞬态故障时的官方 DeepSeek 兜底；没有密钥时自动禁用。
+    LLM_FALLBACK_API_BASE: Optional[str] = "https://api.deepseek.com"
+    LLM_FALLBACK_API_KEY: Optional[str] = None
+    LLM_FALLBACK_MODEL: Optional[str] = "deepseek-v4-flash"
+    LLM_FALLBACK_ENABLED: bool = True
 
     # 模型与向量维度必须匹配现有索引；价格、额度及供应商可用性需单独核实。
     # 换embedding必须核对MILVUS_DIMENSION及现有索引；不自动重建。
@@ -48,32 +53,32 @@ class Settings(BaseSettings):
     # 与 EMBEDDING_API_KEY 同时配置时优先启用, 否则回退 DashScope(见 src/embedding/__init__.py)
     EMBEDDING_API_BASE: Optional[str] = None
     EMBEDDING_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "glm-5.3-flash"  # RAG默认模型；可用性以所选供应商实测为准
+    LLM_MODEL: str = "deepseek-v4.1-flash-1017"  # RAG默认模型；可用性以所选供应商实测为准
     # Agent使用OpenAI兼容工厂；默认值不代表供应商当前提供该模型或存在免费额度。
-    # 普通问答与Agent默认统一GLM；实验profile仍可独立覆盖。
-    AGENT_MODEL: str = "glm-5.3-flash"  # Agent主推理；实际兼容性需按供应商验证
-    AGENT_MODEL_SIMPLE: str = "glm-5.3-flash"  # 简单意图、分类与路由
+    # 普通问答与Agent默认统一阿里云 DeepSeek；实验profile仍可独立覆盖。
+    AGENT_MODEL: str = "deepseek-v4.1-flash-1017"  # Agent主推理；实际兼容性需按供应商验证
+    AGENT_MODEL_SIMPLE: str = "deepseek-v4.1-flash-1017"  # 简单意图、分类与路由
 
     # —— Agent 是否关闭模型 thinking 模式(2026-10-10 新增)——
     # 背景: DeepSeek thinking 模型拒绝"强制 tool_choice",导致 with_structured_output
     # (method="function_calling") 400 报错并降级成正则抠 JSON。实测关闭 thinking 后
     # 原生强制工具调用直接可用(见 scripts/_probe_structured_fix2.py 结论)。
     # 仅对支持的供应商(DeepSeek)生效;换回保留推理能力的模型时置 False 即可。
-    AGENT_DISABLE_THINKING: bool = False
+    AGENT_DISABLE_THINKING: bool = True
 
     # —— 证据裁判 LLM（动态分类策略用）——
     # 开启后 EvidenceJudge 用 LLM 语义判断观测对假设的支持/矛盾关系，
     # 可理解同义词、否定句与隐含证据（修复对抗测试 synonym_blind / negation_trap）。
     # 默认关闭：保证单测确定性；开启后 LLM 不可用/失败会自动降级到规则关键词。
     ENABLE_LLM_EVIDENCE_JUDGE: bool = False
-    EVIDENCE_LLM_MODEL: str = "glm-5.3-flash"  # 仅裁判开关启用时使用
+    EVIDENCE_LLM_MODEL: str = "deepseek-v4.1-flash-1017"  # 仅裁判开关启用时使用
 
     # 前端RAG模型白名单与显示名逐项对应；不表示当前供应商可用性或免费额度。
     AVAILABLE_MODELS: str = (
-        "glm-5.3-flash"
+        "deepseek-v4.1-flash-1017"
     )
     MODEL_DISPLAY_NAMES: str = (
-        "GLM-5.3-Flash"
+        "DeepSeek-V4.1-Flash-1017"
     )
 
     MILVUS_HOST: str = "localhost"
@@ -346,6 +351,11 @@ class Settings(BaseSettings):
     def RESOLVED_LLM_API_KEY(self) -> Optional[str]:
         """解析后的 LLM API Key。优先级: LLM_API_KEY → DEEPSEEK_API_KEY → DASHSCOPE_API_KEY。"""
         return self.LLM_API_KEY or self.DEEPSEEK_API_KEY or self.DASHSCOPE_API_KEY
+
+    @property
+    def RESOLVED_LLM_FALLBACK_API_KEY(self) -> Optional[str]:
+        """官方 DeepSeek 兜底密钥；显式兜底密钥优先，其次复用 DEEPSEEK_API_KEY。"""
+        return self.LLM_FALLBACK_API_KEY or self.DEEPSEEK_API_KEY
 
     model_config = SettingsConfigDict(
         env_file=".env",

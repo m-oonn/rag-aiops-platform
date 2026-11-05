@@ -122,7 +122,8 @@ def build_inventory(root=ROOT):
         warnings.append('test_profile_invalid')
     if profile and profile.get('AGENT_MODEL') != current.AGENT_MODEL:
         warnings.append('test_profile_requires_explicit_launcher')
-    if profile and profile.get('AGENT_MODEL') not in {'deepseek-v4-flash', 'deepseek-flash'}:
+    if profile and profile.get('AGENT_MODEL') not in {
+            'deepseek-v4.1-flash-1017', 'deepseek-v4-flash', 'deepseek-flash'}:
         warnings.append('test_provider_pricing_and_evaluation_transport_not_verified')
     if not current.PROBE_ENABLED:
         warnings.append('regular_startup_probe_disabled')

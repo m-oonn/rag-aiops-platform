@@ -8,7 +8,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 FIELDS = {'LLM_API_BASE', 'LLM_API_KEY', 'AGENT_MODEL', 'AGENT_MODEL_SIMPLE',
-          'AGENT_DISABLE_THINKING', 'EVIDENCE_LLM_MODEL'}
+          'AGENT_DISABLE_THINKING', 'EVIDENCE_LLM_MODEL', 'DEEPSEEK_API_KEY',
+          'LLM_FALLBACK_API_BASE', 'LLM_FALLBACK_API_KEY', 'LLM_FALLBACK_MODEL',
+          'LLM_FALLBACK_ENABLED'}
 COMMANDS = {'scripts/evaluate_windows_probe.py', 'scripts/verify_windows_local_faults.py',
             'scripts/evaluate_autonomous_investigation.py', 'scripts/replay_model_request.py'}
 

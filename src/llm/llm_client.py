@@ -2,6 +2,8 @@ from typing import List, Optional, Tuple
 from langchain_community.chat_models import ChatTongyi
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
+import httpx
 from src.settings import settings
 from src.utils.logger import logger
 
@@ -11,6 +13,16 @@ import time
 _QWEN_PREFIXES = ("qwen", "text-embedding")
 
 _DEFAULT_TEMPERATURE = 0.7
+
+_FALLBACK_EXCEPTIONS = (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+)
 
 
 def _is_qwen_model(model: str) -> bool:
@@ -51,7 +63,10 @@ class LLMClient:
         配置对齐 src/agent/aiops_llm.py: 60s 超时、UA 防挂起、thinking 按开关禁用。
         """
         extra_body = {"thinking": {"type": "disabled"}} if settings.AGENT_DISABLE_THINKING else None
-        return ChatOpenAI(
+        if (settings.AGENT_DISABLE_THINKING and settings.RESOLVED_LLM_API_BASE.rstrip('/')
+                == 'https://dashscope.aliyuncs.com/compatible-mode/v1'):
+            extra_body = {"enable_thinking": False}
+        primary = ChatOpenAI(
             model=model,
             temperature=temperature,
             api_key=settings.RESOLVED_LLM_API_KEY,
@@ -61,6 +76,26 @@ class LLMClient:
             extra_body=extra_body,
             default_headers={"User-Agent": "Python-urllib/3.13"},
         )
+        fallback_key = settings.RESOLVED_LLM_FALLBACK_API_KEY
+        fallback_base = (settings.LLM_FALLBACK_API_BASE or '').rstrip('/')
+        fallback_model = settings.LLM_FALLBACK_MODEL
+        if (settings.LLM_FALLBACK_ENABLED and fallback_key and fallback_base and fallback_model
+                and fallback_base != settings.RESOLVED_LLM_API_BASE.rstrip('/')
+                and not model.lower().startswith(_QWEN_PREFIXES)):
+            fallback_extra = {"thinking": {"type": "disabled"}}
+            fallback = ChatOpenAI(
+                model=fallback_model,
+                temperature=temperature,
+                api_key=fallback_key,
+                base_url=fallback_base,
+                streaming=True,
+                request_timeout=60,
+                extra_body=fallback_extra,
+                default_headers={"User-Agent": "Python-urllib/3.13"},
+            )
+            logger.warning("[llm] RAG主通道失败时启用官方 DeepSeek 兜底: %s", fallback_model)
+            return primary.with_fallbacks([fallback], exceptions_to_handle=_FALLBACK_EXCEPTIONS)
+        return primary
 
     def _get_llm(self, model: Optional[str] = None, temperature: Optional[float] = None):
         """获取指定模型 + 温度的 LLM 实例，支持 Qwen 和非 Qwen 模型。

@@ -8,6 +8,8 @@ RESOLVED_LLM_API_BASE/KEY。RAG的LLMClient按模型前缀选ChatTongyi或ChatOp
 import asyncio
 
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
+import httpx
 
 from src.settings import settings
 from src.utils.logger import logger
@@ -19,6 +21,7 @@ def create_agent_llm(
     temperature: float = 0.0,
     streaming: bool = False,
     callbacks: list | None = None,
+    max_retries: int | None = None,
 ) -> ChatOpenAI:
     """创建运维 Agent 用的 ChatOpenAI 实例(compatible-mode)。
 
@@ -41,24 +44,22 @@ def create_agent_llm(
         if m is not None:
             cbs.append(m)
 
-    # thinking 模式会拒绝"强制 tool_choice",使 with_structured_output(method=
-    # "function_calling") 报 400 并降级成正则抠 JSON;关闭后原生强制工具调用可用。
-    # 供应商相关参数(DeepSeek 认 thinking.type),换供应商时置 AGENT_DISABLE_THINKING=False。
-    extra_body = {"thinking": {"type": "disabled"}} if settings.AGENT_DISABLE_THINKING else None
-
-    return ChatOpenAI(
-        model=model or os.environ.get("AGENT_MODEL", settings.AGENT_MODEL),
-        temperature=temperature,
-        streaming=streaming,
-        base_url=settings.RESOLVED_LLM_API_BASE,
-        api_key=settings.RESOLVED_LLM_API_KEY,
-        request_timeout=60,  # 网络慢/额度受限时快速失败,避免诊断链路被 LLM 卡死
-        extra_body=extra_body,
-        # 关键修复: httpx 默认 UA(python-httpx/x.y.z) 被 DashScope 拒绝导致读超时挂起,
-        # 模拟 Python-urllib UA 后 0.6s 即通。所有 Agent LLM 调用必须携带该 UA。
-        default_headers={"User-Agent": "Python-urllib/3.13"},
-        callbacks=cbs or None,
-    )
+    primary_model = model or os.environ.get("AGENT_MODEL", settings.AGENT_MODEL)
+    primary = _build_compatible_llm(primary_model, temperature,
+        base_url=settings.RESOLVED_LLM_API_BASE, api_key=settings.RESOLVED_LLM_API_KEY,
+        streaming=streaming, callbacks=cbs, max_retries=max_retries)
+    fallback_key = settings.RESOLVED_LLM_FALLBACK_API_KEY
+    fallback_base = (settings.LLM_FALLBACK_API_BASE or '').rstrip('/')
+    fallback_model = settings.LLM_FALLBACK_MODEL
+    if (settings.LLM_FALLBACK_ENABLED and fallback_key and fallback_base and fallback_model
+            and fallback_base != settings.RESOLVED_LLM_API_BASE.rstrip('/')
+            and not primary_model.lower().startswith(('qwen', 'text-embedding'))):
+        fallback = _build_compatible_llm(fallback_model, temperature,
+            base_url=fallback_base, api_key=fallback_key,
+            streaming=streaming, callbacks=cbs, max_retries=max_retries)
+        logger.warning('[llm] 主通道失败时启用官方 DeepSeek 兜底: %s', fallback_model)
+        return primary.with_fallbacks([fallback], exceptions_to_handle=_FALLBACK_EXCEPTIONS)
+    return primary
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -75,6 +76,16 @@ _RETRYABLE_EXC_NAMES = frozenset({
     "TimeoutError", "ConnectError", "RemoteProtocolError",
 })
 
+_FALLBACK_EXCEPTIONS = (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+)
+
 
 def _is_retryable_error(e: Exception) -> bool:
     """判定异常是否属于「瞬态、可重试」类（429/5xx/连接超时）。
@@ -88,6 +99,30 @@ def _is_retryable_error(e: Exception) -> bool:
     if isinstance(status, int) and status in _RETRYABLE_STATUS:
         return True
     return type(e).__name__ in _RETRYABLE_EXC_NAMES
+
+
+def _build_compatible_llm(model: str, temperature: float, *, base_url: str,
+                          api_key: str | None, streaming: bool = False,
+                          callbacks: list | None = None, max_retries: int | None = None):
+    """Build one OpenAI-compatible client with provider-specific thinking flags."""
+    extra_body = None
+    if settings.AGENT_DISABLE_THINKING:
+        if base_url.rstrip('/') == 'https://dashscope.aliyuncs.com/compatible-mode/v1':
+            extra_body = {"enable_thinking": False}
+        else:
+            extra_body = {"thinking": {"type": "disabled"}}
+    return ChatOpenAI(
+        model=model,
+        temperature=temperature,
+        streaming=streaming,
+        api_key=api_key,
+        base_url=base_url,
+        request_timeout=60,
+        extra_body=extra_body,
+        default_headers={"User-Agent": "Python-urllib/3.13"},
+        callbacks=callbacks or None,
+        **({'max_retries': max_retries} if max_retries is not None else {}),
+    )
 
 
 async def ainvoke_with_retry(
