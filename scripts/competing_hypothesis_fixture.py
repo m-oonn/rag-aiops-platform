@@ -31,7 +31,8 @@ def _request(port: int, *, path='/health') -> tuple[int, bytes]:
 class CompetingFaultFixture:
     """Start independent processes with a controller-only fault selection."""
 
-    def __init__(self, fault: str, output: Path | None = None, *, stop_mode: str = 'terminate'):
+    def __init__(self, fault: str, output: Path | None = None, *, stop_mode: str = 'terminate',
+                 startup_configuration: bool = False):
         if fault not in {"normal", "localapp_unavailable", "downstream_unreachable", "downstream_bind_failed", "localapp_wrong_endpoint"}:
             raise ValueError("unsupported competing fault")
         if stop_mode not in {'terminate', 'request'}:
@@ -49,7 +50,7 @@ class CompetingFaultFixture:
         self.process_pids = {}
         self._handles = []
         self._reservation = None
-        self.startup_configuration = fault == 'localapp_wrong_endpoint'
+        self.startup_configuration = startup_configuration or fault == 'localapp_wrong_endpoint'
         self.obsolete_port = free_port()
         while self.obsolete_port in ports:
             self.obsolete_port = free_port()
@@ -194,6 +195,25 @@ class CompetingFaultFixture:
             else:
                 stop(process)
             self._start('localapp')
+
+    def trigger_business_request(self):
+        """Create a real edge request after reset, before any Agent observation."""
+        import uuid
+        request_id = uuid.uuid4().hex
+        started_at = utc_now()
+        status, _ = get_local(self.edge_port, path='/api/availability', request_id=request_id)
+        if status != (200 if self.fault == 'normal' else 503):
+            raise RuntimeError('business request did not reproduce the selected condition')
+        events = {}
+        if self.startup_configuration:
+            for name in ('edge', 'localapp'):
+                rows = [json.loads(line) for line in (self.output / (name + '.log')).read_text(encoding='utf-8').splitlines()]
+                matches = [row for row in rows if row.get('request_id') == request_id]
+                if len(matches) != 1 or matches[0]['status'] != status or matches[0]['at'] < self.boundary:
+                    raise RuntimeError('current business request is missing from the application logs')
+                events[name] = matches[0]['at']
+        return {'request_id': request_id, 'started_at': started_at, 'completed_at': utc_now(),
+                'http_status': status, 'log_times': events}
 
     def observe_controller_side(self) -> dict:
         """Return direct fixture checks; these are never Agent evidence."""

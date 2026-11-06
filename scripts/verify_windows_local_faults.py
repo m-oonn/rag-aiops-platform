@@ -9,6 +9,7 @@ import asyncio
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
@@ -78,15 +79,22 @@ def four_group_conditions(out):
     return {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
-def get_local(port, timeout=2, *, path='/health', request_id=None):
+def get_local(port, timeout=2, *, path='/health', request_id=None, trace=None):
+    connection = HTTPConnection('127.0.0.1', port, timeout=timeout)
+    trace = trace if trace is not None else {}
+    trace.update(timeout_seconds=timeout, phase='connect', connection_established=False)
     try:
-        request = Request(f'http://127.0.0.1:{port}{path}',
-            headers={'X-Request-ID': request_id} if request_id else {})
-        response = build_opener(ProxyHandler({})).open(request, timeout=timeout)
-    except HTTPError as exc:
-        response = exc
-    with response:
-        return response.code, response.read(2048).decode('utf-8')
+        connection.connect()
+        trace.update(connection_established=True, phase='send_request')
+        connection.request('GET', path, headers={'X-Request-ID': request_id} if request_id else {})
+        trace['phase'] = 'receive_headers'
+        response = connection.getresponse()
+        trace.update(response_status=response.status, phase='read_body')
+        body = response.read(2048).decode('utf-8')
+        trace['phase'] = 'completed'
+        return response.status, body
+    finally:
+        connection.close()
 
 
 def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None):
@@ -119,6 +127,7 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
             started = time.monotonic()
             request_id = self.headers.get('X-Request-ID') or uuid.uuid4().hex
             connection_error = None
+            upstream_trace = {}
             config_bytes = mode_file.read_bytes()
             mode = config_bytes.decode('utf-8').strip()
             status, body = 200, 'healthy'
@@ -150,10 +159,11 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
             elif downstream is not None:
                 try:
                     if runtime_config is not None:
-                        status, body = get_local(downstream, timeout=upstream_timeout, path=self.path, request_id=request_id)
+                        status, body = get_local(downstream, timeout=upstream_timeout, path=self.path,
+                            request_id=request_id, trace=upstream_trace)
                     else:
                         status, body = get_local(downstream, timeout=0.5)
-                except (URLError, OSError) as exc:
+                except (URLError, OSError, HTTPException) as exc:
                     status, body = 503, 'temporarily unavailable'
                     detail = 'upstream connection failed'
                     connection_error = getattr(exc, 'reason', exc)
@@ -165,6 +175,7 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
                     'duration_ms': round((time.monotonic() - started) * 1000, 3),
                     'configuration': loaded,
                     'upstream': {'host': '127.0.0.1', 'port': downstream},
+                    **({'upstream_request': upstream_trace} if upstream_trace else {}),
                     **({'error_type': type(connection_error).__name__,
                         'errno': getattr(connection_error, 'errno', None)} if connection_error else {})})
                 self.send_response(status)

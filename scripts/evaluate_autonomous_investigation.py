@@ -71,12 +71,16 @@ class PaidRequestBudget:
         self.run_max_requests = run_max_requests
         self.inherited_requests = 0
         self.inherited_reserved = 0.0
+        self.allow_inherited_unknown = False
         self.reserved = 0.0
         self.ledger = []
         self.blocked_requests = []
         self.authorized_historical_timeouts = []
 
     def usage_unknown_without_authorization(self, row):
+        if (self.allow_inherited_unknown and type(row.get('number')) is int
+                and 0 < row['number'] <= self.inherited_requests):
+            return False
         return (not model_usage_known(row) and not (
             type(row.get('number')) is int and 0 < row['number'] <= self.inherited_requests
             and row in self.authorized_historical_timeouts))

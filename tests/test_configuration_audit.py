@@ -62,6 +62,17 @@ def test_launcher_check_is_explicit_subprocess_and_does_not_call_model(monkeypat
     assert fake.call_count == 1
 
 
+def test_launcher_accepts_controlled_competing_scenario_evaluation(monkeypatch):
+    fake = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(launcher, 'profile_environment', lambda path: {'AGENT_MODEL': 'test'})
+    monkeypatch.setattr(launcher.subprocess, 'run', fake)
+    command = ['--profile', 'profile.env', '--', 'scripts/verify_competing_hypothesis_scenario.py',
+        '--run-model', '--fault-pair', 'endpoint']
+    assert launcher.main(command) == 0
+    assert fake.call_args.args[0][1:] == command[3:]
+    assert fake.call_args.kwargs['env'] == {'AGENT_MODEL': 'test'}
+
+
 def test_launcher_selects_dedicated_profile_without_changing_default(tmp_path, monkeypatch):
     path = tmp_path / 'deepseek.env'
     path.write_text('LLM_API_BASE=https://api.deepseek.com\nLLM_API_KEY=private-test-key\n'

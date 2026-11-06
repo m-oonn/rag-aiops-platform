@@ -10,6 +10,24 @@ import pytest
 from scripts import verify_windows_local_faults as module
 
 
+@pytest.mark.parametrize('failure', ['connect', 'receive_headers', 'read_body'])
+def test_upstream_trace_preserves_actual_timeout_phase(monkeypatch, failure):
+    connection = Mock()
+    response = connection.getresponse.return_value
+    response.status = 503
+    failing_call = {'connect': connection.connect, 'receive_headers': connection.getresponse,
+        'read_body': response.read}[failure]
+    failing_call.side_effect = TimeoutError('test timeout')
+    monkeypatch.setattr(module, 'HTTPConnection', Mock(return_value=connection))
+    trace = {}
+    with pytest.raises(TimeoutError):
+        module.get_local(1234, timeout=0.5, trace=trace)
+    assert trace['phase'] == failure
+    assert trace['connection_established'] is (failure != 'connect')
+    assert trace.get('response_status') == (503 if failure == 'read_body' else None)
+    connection.close.assert_called_once()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('changed', [False, True])
 async def test_manual_window_observes_external_repair_and_never_edits_config(tmp_path, monkeypatch, changed):

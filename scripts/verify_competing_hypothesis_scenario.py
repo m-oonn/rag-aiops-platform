@@ -266,6 +266,59 @@ async def run_paid_endpoint_evaluation(*, launch, output, config, symptom, runbo
         'cost_file': str(cost_path) if cost_path.exists() else None}
 
 
+def write_scenario_files(output, fixture, gateway_port, target, token, canary, fault_pair):
+    """Share the same Probe allowlist and reference corpus with the persistent environment."""
+    config = output / 'config.toml'
+    (output / 'token').write_text(token, encoding='utf-8')
+    (output / 'controller-only.json').write_text(json.dumps({'answer_canary': canary}), encoding='utf-8')
+    if fault_pair == 'endpoint':
+        (output / 'controller-only.json').write_text(json.dumps({'answer_canary': canary,
+            'hidden_fault': fixture.fault,
+            'root_cause': {'localapp_wrong_endpoint': 'localapp loaded an obsolete downstream endpoint at startup',
+                'downstream_unreachable': 'downstream stopped after a controlled stop request',
+                'normal': 'no injected fault'}.get(fixture.fault, fixture.fault),
+            'actual_loaded_port': fixture.obsolete_port if fixture.fault == 'localapp_wrong_endpoint' else fixture.downstream_port,
+            'registered_downstream_port': fixture.downstream_port,
+            'unknown': ['who changed the configuration', 'why the obsolete value was deployed']},
+            ensure_ascii=False, indent=2), encoding='utf-8')
+    lines = [f"target_id = '{target}'", f"gateway_url = 'ws://127.0.0.1:{gateway_port}/probe/ws'",
+        f"token_file = '{(output / 'token').as_posix()}'", 'baseline_interval_seconds = 60']
+    for name in ('edge', 'localapp', 'downstream'):
+        lines += [f'[services.{name}]', "kind = 'process'", "process_names = ['python.exe']",
+            f'process_args = {json.dumps(list(fixture.process_identity(name)))}',
+            f"text_logs = ['{(fixture.output / (name + '.log')).as_posix()}']"]
+        if fault_pair == 'endpoint' and name == 'localapp':
+            lines += [f"config_file = '{fixture.connection_config.as_posix()}'",
+                "config_keys = ['downstream_port', 'upstream_timeout_seconds']"]
+    for name, port in (('edge', fixture.edge_port), ('localapp', fixture.localapp_port),
+                       ('downstream', fixture.downstream_port)):
+        lines += [f'[dependencies.{name}]', "host = '127.0.0.1'", f'port = {port}', "health_scheme = 'http'"]
+        if fault_pair == 'endpoint':
+            lines += ["health_path = '/api/availability'"]
+    if fault_pair == 'endpoint':
+        configured_port = fixture.obsolete_port if fixture.fault == 'localapp_wrong_endpoint' else fixture.downstream_port
+        lines += ['[dependencies.localapp_upstream]', "host = '127.0.0.1'", f'port = {configured_port}',
+            "health_scheme = 'http'", "health_path = '/api/availability'"]
+    config.write_text('\n'.join(lines), encoding='utf-8')
+    symptom = symptom_text('candidate-opportunity').replace('localapp', 'edge')
+    if fault_pair == 'endpoint':
+        symptom = 'edge 的 /api/availability 业务请求失败，请只读调查原因；引用证据，说明处理和复测方法及仍未知之处。'
+        if fixture.fault == 'normal':
+            symptom = '检查 edge 的 /api/availability 业务链路是否正常；引用证据，说明检查范围及仍未知之处。'
+        (output / 'runbooks').mkdir(exist_ok=True)
+        (output / 'runbooks' / 'topology.md').write_text(
+            '业务链路为 edge → localapp → downstream。/live 仅检查本进程存活；/api/availability 是业务接口。'
+            '依赖登记中的 downstream 是当前服务地址；localapp_upstream 是应用配置的连接目标。'
+            'localapp 连接配置在启动时加载，磁盘修改需要经人工审核后重启应用才生效。'
+            '用日志中的进程实例、配置哈希和请求编号核对实际加载及请求。不要仅凭 HTTP 状态码归因。', encoding='utf-8')
+        from scripts.knowledge_conditions import knowledge_conditions
+        (output / 'knowledge-manifest.json').write_text(json.dumps(
+            knowledge_conditions(output / 'runbooks', mode='local_runbooks'),
+            ensure_ascii=False, indent=2), encoding='utf-8')
+    (output / 'symptom.txt').write_text(symptom, encoding='utf-8')
+    return config, symptom
+
+
 async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_model=False,
                  previous_cost=None, timeout_authorization=None):
     if fault_pair not in {'layers', 'causes', 'endpoint'} or (fault_pair in {'causes', 'endpoint'} and stop_mode != 'request'):
@@ -293,49 +346,8 @@ async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_mode
     gateway_port = free_port()
     while gateway_port in (fixture.edge_port, fixture.localapp_port, fixture.downstream_port, fixture.obsolete_port):
         gateway_port = free_port()
-    config = output / 'config.toml'
-    (output / 'token').write_text(token, encoding='utf-8')
-    (output / 'controller-only.json').write_text(json.dumps({'answer_canary': canary}), encoding='utf-8')
-    if fault_pair == 'endpoint':
-        (output / 'controller-only.json').write_text(json.dumps({'answer_canary': canary,
-            'hidden_fault': 'localapp_wrong_endpoint',
-            'root_cause': 'localapp loaded an obsolete downstream endpoint at startup',
-            'actual_loaded_port': fixture.obsolete_port, 'registered_downstream_port': fixture.downstream_port,
-            'unknown': ['who changed the configuration', 'why the obsolete value was deployed']},
-            ensure_ascii=False, indent=2), encoding='utf-8')
-    lines = [f"target_id = '{target}'", f"gateway_url = 'ws://127.0.0.1:{gateway_port}/probe/ws'",
-        f"token_file = '{(output / 'token').as_posix()}'", 'baseline_interval_seconds = 60']
-    for name in ('edge', 'localapp', 'downstream'):
-        lines += [f'[services.{name}]', "kind = 'process'", "process_names = ['python.exe']",
-            f'process_args = {json.dumps(list(fixture.process_identity(name)))}',
-            f"text_logs = ['{(fixture.output / (name + '.log')).as_posix()}']"]
-        if fault_pair == 'endpoint' and name == 'localapp':
-            lines += [f"config_file = '{fixture.connection_config.as_posix()}'",
-                "config_keys = ['downstream_port', 'upstream_timeout_seconds']"]
-    for name, port in (('edge', fixture.edge_port), ('localapp', fixture.localapp_port),
-                       ('downstream', fixture.downstream_port)):
-        lines += [f'[dependencies.{name}]', "host = '127.0.0.1'", f'port = {port}', "health_scheme = 'http'"]
-        if fault_pair == 'endpoint':
-            lines += ["health_path = '/api/availability'"]
-    if fault_pair == 'endpoint':
-        lines += ['[dependencies.localapp_upstream]', "host = '127.0.0.1'", f'port = {fixture.obsolete_port}',
-            "health_scheme = 'http'", "health_path = '/api/availability'"]
-    config.write_text('\n'.join(lines), encoding='utf-8')
+    config, symptom = write_scenario_files(output, fixture, gateway_port, target, token, canary, fault_pair)
     config_hash = hashlib.sha256(config.read_bytes()).hexdigest()
-    symptom = symptom_text('candidate-opportunity').replace('localapp', 'edge')
-    if fault_pair == 'endpoint':
-        symptom = 'edge 的 /api/availability 业务请求失败，请只读调查原因；引用证据，说明处理和复测方法及仍未知之处。'
-        (output / 'runbooks').mkdir()
-        (output / 'runbooks' / 'topology.md').write_text(
-            '业务链路为 edge → localapp → downstream。/live 仅检查本进程存活；/api/availability 是业务接口。'
-            '依赖登记中的 downstream 是当前服务地址；localapp_upstream 是应用配置的连接目标。'
-            'localapp 连接配置在启动时加载，磁盘修改需要经人工审核后重启应用才生效。'
-            '用日志中的进程实例、配置哈希和请求编号核对实际加载及请求。不要仅凭 HTTP 状态码归因。', encoding='utf-8')
-        from scripts.knowledge_conditions import knowledge_conditions
-        (output / 'knowledge-manifest.json').write_text(json.dumps(
-            knowledge_conditions(output / 'runbooks', mode='local_runbooks'),
-            ensure_ascii=False, indent=2), encoding='utf-8')
-    (output / 'symptom.txt').write_text(symptom, encoding='utf-8')
     env = {**os.environ, 'PROBE_TOKEN': token, 'RAG_AIOPS_PROBE_CONFIG': str(config)}
     owned, observations = [], []
     report = {'status': 'started', 'started_at': utc_now(), 'model_calls': 0,
@@ -363,6 +375,8 @@ async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_mode
             return process
         try:
             with fixture:
+                if fault_pair == 'endpoint':
+                    report['business_request'] = fixture.trigger_business_request()
                 gateway = launch(['-m', 'uvicorn', 'mcp_servers.probe_gateway:app', '--host',
                     '127.0.0.1', '--port', str(gateway_port)], 'gateway')
                 wait_listener(gateway_port, gateway)
@@ -386,6 +400,7 @@ async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_mode
                     if run_model:
                         if fault_pair == 'endpoint':
                             boundary = fixture.reset('localapp_wrong_endpoint')
+                            report['model_business_request'] = fixture.trigger_business_request()
                         else:
                             boundary = fixture.boundary
                         model_result = await run_paid_endpoint_evaluation(
@@ -394,6 +409,7 @@ async def verify(output, *, stop_mode='terminate', fault_pair='layers', run_mode
                             previous_cost=previous_cost, timeout_authorization=timeout_authorization,
                             boundary=boundary)
                         report['model_evaluation'] = model_result
+                        report['model_calls'] = model_result['new_request_count']
                         save()
                     faults = (('downstream_unreachable', 'downstream_bind_failed') if fault_pair == 'causes'
                               else (() if fault_pair == 'endpoint' else ('localapp_unavailable', 'downstream_unreachable')))

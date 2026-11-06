@@ -12,7 +12,8 @@ FIELDS = {'LLM_API_BASE', 'LLM_API_KEY', 'AGENT_MODEL', 'AGENT_MODEL_SIMPLE',
           'LLM_FALLBACK_API_BASE', 'LLM_FALLBACK_API_KEY', 'LLM_FALLBACK_MODEL',
           'LLM_FALLBACK_ENABLED'}
 COMMANDS = {'scripts/evaluate_windows_probe.py', 'scripts/verify_windows_local_faults.py',
-            'scripts/evaluate_autonomous_investigation.py', 'scripts/replay_model_request.py'}
+            'scripts/evaluate_autonomous_investigation.py', 'scripts/replay_model_request.py',
+            'scripts/verify_competing_hypothesis_scenario.py'}
 
 
 def profile_environment(path, inherited=None):
