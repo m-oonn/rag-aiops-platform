@@ -1137,6 +1137,70 @@ def _valid_citations(citations, records):
     )
 
 
+def _health_dependency_coverage(state, records, decision):
+    """Report latest allow-listed dependency observations and proposal citations."""
+    resolution = state.get('target_resolution') or {}
+    current = current_probe_records(records)
+    scoped = {key: record for key, record in current.items()
+              if in_business_scope(json.loads(record['payload']), resolution, current)}
+    aliases = {record.get('legacy_id'): key for key, record in records.items()}
+
+    def valid_ids(citations):
+        result = set()
+        for citation in citations:
+            evidence_id = aliases.get(citation.evidence_id, citation.evidence_id)
+            normalized = Citation(evidence_id=evidence_id, quote=citation.quote)
+            if _valid_citations([normalized], records):
+                result.add(evidence_id)
+        return result
+
+    supporting_ids = valid_ids(decision.supporting_evidence)
+    alternative_ids = valid_ids([citation for alternative in decision.alternatives
+                                 for citation in alternative.evidence])
+    dependencies = []
+    for dependency in resolution.get('allowed_dependencies', []):
+        observations = []
+        for evidence_id, record in scoped.items():
+            raw = json.loads(record['payload'])
+            body = raw.get('payload') or {}
+            if raw.get('operation') == 'dependency_probe' and body.get('dependency') == dependency:
+                observations.append((evidence_id, raw, body))
+        if not observations:
+            dependencies.append({'dependency': dependency, 'status': 'not_collected',
+                                 'evidence_ids': [], 'observed': {}})
+            continue
+
+        evidence_id, raw, body = observations[-1]
+        http = body.get('http') if isinstance(body.get('http'), dict) else {}
+        observed = {}
+        if body.get('tcp') in {'ok', 'failed'}:
+            observed['tcp'] = body['tcp']
+        if type(http.get('status')) is int:
+            observed['http_status'] = http['status']
+        if http.get('error'):
+            observed['http_error_present'] = True
+        complete = (not raw.get('truncated') and not body.get('error')
+                    and (observed.get('tcp') == 'failed'
+                         or (observed.get('tcp') == 'ok'
+                             and ('http_status' in observed or 'http_error_present' in observed))))
+        supporting_cited = evidence_id in supporting_ids
+        alternative_cited = evidence_id in alternative_ids
+        abnormal = bool(observed.get('tcp') == 'failed' or observed.get('http_error_present')
+                        or (type(observed.get('http_status')) is int
+                            and observed['http_status'] >= 400))
+        status = ('collected_incomplete' if not complete else
+                  'valid_collected_as_excluded_alternative' if abnormal and alternative_cited else
+                  'collected_contradicts_proposed_conclusion' if abnormal else
+                  'valid_collected_and_supporting_cited' if supporting_cited else
+                  'valid_collected_but_supporting_uncited')
+        dependencies.append({'dependency': dependency, 'status': status,
+            'evidence_ids': [evidence_id], 'observed': observed,
+            'supporting_cited': supporting_cited, 'alternative_cited': alternative_cited})
+    return {'dependencies': dependencies,
+        'note': '只表示最新允许范围内的采集完整性和模型提议引用情况；不证明健康、整体正常或因果。'
+                '完整异常观测未被当作待排除故障解释时标为 collected_contradicts_proposed_conclusion。'}
+
+
 def _condition_citations(condition, key, record):
     value = json.loads(record['payload'])
     if condition.operation == 'text_logs':
@@ -3334,13 +3398,20 @@ class InvestigationStrategy(BaseReplanStrategy):
             if (decision.outcome == 'healthy' and not result.get('plan')
                     and result.get('diagnosis', {}).get('kind') == 'unlocated'
                     and not result['investigation_memory']['hypothesis_tracking']['identity_issues']):
+                dependency_coverage = _health_dependency_coverage(state, current_records, decision)
                 health_correction = {'attempts': 1, 'status': 'requested',
                     'rejected_model_suggestion': redact(decision.model_dump()),
                     'validation_issues': result['diagnosis']['validation_issues'],
                     'conclusion_requirements': {'supporting_evidence_required': True,
                         'alternatives_required': True, 'scope_required': True,
-                        'missing_dependency_citations': (state.get('target_resolution') or {}).get('allowed_dependencies', []),
+                        'missing_dependency_citations': [item['dependency'] for item
+                            in dependency_coverage['dependencies']
+                            if item['status'] == 'valid_collected_but_supporting_uncited'],
+                        'dependencies_contradicting_conclusion': [item['dependency'] for item
+                            in dependency_coverage['dependencies']
+                            if item['status'] == 'collected_contradicts_proposed_conclusion'],
                         'required_service_process_citations': (state.get('target_resolution') or {}).get('allowed_services', [])},
+                    'dependency_evidence_coverage': dependency_coverage,
                     'validated_alternatives': result['diagnosis']['alternatives'],
                     'target_resolution': redact(state.get('target_resolution') or {})}
                 saved_ids = {item['id'] for item in (memory.get('hypothesis_tracking') or {}).get('candidates', [])}
@@ -3353,6 +3424,11 @@ class InvestigationStrategy(BaseReplanStrategy):
                      'observed_condition的explanation必须逐字等于operation/object_name: field == JSON值，'
                      '例如 services/orders: state == "stopped"，不要填自然语言。'
                      '每个allowed_services都要有配置身份进程或运行状态；缺项请给具体检查。'
+                     '先按反馈中的依赖证据覆盖表区分有效已采集、主引用遗漏、异常或不完整、尚未采集；'
+                     '覆盖表只报告采集与引用情况，不代表依赖健康、整体正常或因果。'
+                     '已有有效观测但缺主引用时，使用原证据ID与原文引用；异常/不完整或尚未采集时，说明限制或提出具体合法检查；不得重复已完成检查。'
+                     '状态为collected_contradicts_proposed_conclusion的依赖，其完整异常观测与当前正常结论不一致，'
+                     '不能当作已被排除的解释；必须把它作为待排除故障解释并给出真实ID与逐字引用，或如实未定位。'
                      'alternatives仅放要排除的故障解释；正常条件已被支持的证据放supporting_evidence，'
                      'supporting_evidence和alternatives都不能留空，必须填写真实ID与逐字引用；'
                      '若尚未检查某个登记服务的进程，先提出该服务的probe_process_snapshot具体检查。'

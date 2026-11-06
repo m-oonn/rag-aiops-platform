@@ -378,6 +378,141 @@ async def test_healthy_decision_does_not_reuse_success_superseded_by_newer_faile
 
 
 @pytest.mark.asyncio
+async def test_health_feedback_distinguishes_dependency_evidence_coverage(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    target = settings.PROBE_TARGET_ID
+    current = state()
+    current['target_resolution'] = {
+        'status': 'resolved', 'target_id': target,
+        'allowed_services': [],
+        'allowed_dependencies': ['edge', 'downstream', 'localapp', 'localapp_upstream'],
+    }
+    edge = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'edge', 'tcp': 'ok', 'http': {'status': 200}})
+    downstream = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'tcp': 'ok', 'http': {'status': 200}})
+    localapp = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'localapp', 'tcp': 'unknown', 'error': 'ReadTimeout'})
+    current['raw_evidence'].extend((name, item) for name, item in [
+        ('edge probe', json.dumps(edge)), ('downstream probe', json.dumps(downstream)),
+        ('localapp probe', json.dumps(localapp)),
+    ])
+    records = module.evidence_index(current)
+    edge_id = next(key for key, record in records.items()
+                   if json.loads(record['payload']).get('payload', {}).get('dependency') == 'edge')
+    invalid = decision(outcome='healthy', conclusion_level='healthy_within_scope',
+        scope='当前采样窗口内的四个登记依赖',
+        supporting_evidence=[module.Citation(evidence_id=edge_id,
+            quote='"operation": "dependency_probe"')])
+    invoke = AsyncMock(side_effect=[invalid, invalid])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    assert result['diagnosis']['kind'] == 'unlocated'
+    # The second invocation receives coverage derived from the first proposal,
+    # before the existing validator can add any display-only citations.
+    feedback = json.loads(invoke.call_args_list[1].args[3]['health_feedback'])
+    rows = {row['dependency']: row for row in feedback['dependency_evidence_coverage']['dependencies']}
+    assert rows['edge']['status'] == 'valid_collected_and_supporting_cited'
+    assert rows['downstream']['status'] == 'valid_collected_but_supporting_uncited'
+    assert rows['downstream']['alternative_cited'] is False
+    assert rows['localapp']['status'] == 'collected_incomplete'
+    assert rows['localapp_upstream']['status'] == 'not_collected'
+    assert feedback['conclusion_requirements']['missing_dependency_citations'] == ['downstream']
+    assert feedback['conclusion_requirements']['dependencies_contradicting_conclusion'] == []
+    assert '不证明健康、整体正常或因果' in feedback['dependency_evidence_coverage']['note']
+    assert current['raw_evidence'][-3][1] == json.dumps(edge)
+
+
+@pytest.mark.asyncio
+async def test_collected_failing_dependency_blocks_healthy_conclusion(monkeypatch):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    target = settings.PROBE_TARGET_ID
+    current = state()
+    current['target_resolution'] = {
+        'status': 'resolved', 'target_id': target,
+        'allowed_services': [], 'allowed_dependencies': ['edge', 'downstream'],
+    }
+    edge = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'edge', 'tcp': 'ok', 'http': {'status': 200}})
+    downstream = evidence(target_id=target, operation='dependency_probe', payload={
+        'dependency': 'downstream', 'tcp': 'failed'})
+    current['raw_evidence'].extend((name, json.dumps(item)) for name, item in [
+        ('edge probe', edge), ('downstream probe', downstream),
+    ])
+    records = module.evidence_index(current)
+    edge_id = next(key for key, record in records.items()
+                   if json.loads(record['payload']).get('payload', {}).get('dependency') == 'edge')
+    invalid = decision(outcome='healthy', conclusion_level='healthy_within_scope',
+        scope='当前采样窗口内的两个登记依赖',
+        supporting_evidence=[module.Citation(evidence_id=edge_id,
+            quote='"operation": "dependency_probe"')])
+    invoke = AsyncMock(side_effect=[invalid, invalid])
+    monkeypatch.setattr(module, 'ainvoke_structured', invoke)
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    # A complete failing observation preempts the healthy claim deterministically,
+    # so no health correction is even attempted and no conclusion is invented.
+    assert invoke.await_count == 1
+    assert result['diagnosis']['kind'] == 'localized_fault'
+    assert not result['diagnosis'].get('root_cause_code')
+    assert result['plan'] == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_coverage_distinguishes_contradiction_and_excluded_alternative():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    target = settings.PROBE_TARGET_ID
+    current = state()
+    current['target_resolution'] = {
+        'status': 'resolved', 'target_id': target,
+        'allowed_services': [], 'allowed_dependencies': ['edge', 'downstream', 'localapp',
+                                                         'localapp_upstream'],
+    }
+    records_payload = [
+        ('edge', {'dependency': 'edge', 'tcp': 'ok', 'http': {'status': 200}}),
+        ('downstream', {'dependency': 'downstream', 'tcp': 'failed'}),
+        ('localapp', {'dependency': 'localapp', 'tcp': 'failed'}),
+    ]
+    current['raw_evidence'].extend((name, json.dumps(evidence(
+        target_id=target, operation='dependency_probe', payload=payload)))
+        for name, payload in records_payload)
+    records = module.evidence_index(current)
+    ids = {json.loads(record['payload']).get('payload', {}).get('dependency'): key
+           for key, record in records.items()}
+    proposal = decision(outcome='healthy', conclusion_level='healthy_within_scope',
+        scope='当前采样窗口内的四个登记依赖',
+        supporting_evidence=[module.Citation(evidence_id=ids['edge'],
+            quote='"operation": "dependency_probe"')],
+        alternatives=[module.Alternative(explanation='localapp 探活失败可能是采样波动',
+            status='excluded', claim_type='observed_condition',
+            evidence=[module.Citation(evidence_id=ids['localapp'],
+                quote='"operation": "dependency_probe"')])])
+
+    coverage = module._health_dependency_coverage(current, records, proposal)
+
+    rows = {row['dependency']: row for row in coverage['dependencies']}
+    assert rows['edge']['status'] == 'valid_collected_and_supporting_cited'
+    assert rows['downstream']['status'] == 'collected_contradicts_proposed_conclusion'
+    assert rows['downstream']['observed'] == {'tcp': 'failed'}
+    assert rows['downstream']['supporting_cited'] is False
+    assert rows['localapp']['status'] == 'valid_collected_as_excluded_alternative'
+    assert rows['localapp']['alternative_cited'] is True
+    assert rows['localapp_upstream']['status'] == 'not_collected'
+    # The table reports only collection and citation state, never health or cause.
+    assert '不证明健康、整体正常或因果' in coverage['note']
+    assert 'configured_downstream_endpoint_mismatch' not in json.dumps(coverage, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
 async def test_plan_exhaustion_selects_a_new_check(monkeypatch):
     invoke = AsyncMock(return_value=decision(next_check="核实依赖监听端口"))
     monkeypatch.setattr(module, "ainvoke_structured", invoke)
