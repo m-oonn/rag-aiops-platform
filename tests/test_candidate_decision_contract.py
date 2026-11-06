@@ -18,6 +18,21 @@ from src.agent.aiops.strategies import investigation as inv
 from tests.test_concrete_investigation_checks import state, decision, decide
 
 
+def _proposal(payload):
+    for alternative in payload.get('alternatives', []):
+        alternative.setdefault('evidence', [])
+        alternative.setdefault('limitation', '')
+        alternative.setdefault('critical', True)
+        alternative.setdefault('noncritical_reason', '')
+        alternative.setdefault('condition', None)
+        alternative.setdefault('claim_type', 'causal_explanation')
+    return inv.InvestigationProposal.model_validate(payload)
+
+
+def _model_alternative(**values):
+    return inv.ModelAlternative.model_validate(inv.Alternative(**values).model_dump())
+
+
 def test_live_contract_requires_explicit_list_but_legacy_and_empty_remain_valid():
     assert inv.InvestigationDecision(hypothesis='unknown').alternatives == []
     with pytest.raises(ValidationError):
@@ -26,8 +41,20 @@ def test_live_contract_requires_explicit_list_but_legacy_and_empty_remain_valid(
     assert 'alternatives' in inv.InvestigationProposal.model_json_schema()['required']
 
 
+def test_live_alternative_contract_requires_claim_fields_omitted_by_model():
+    schema = inv.InvestigationProposal.model_json_schema()
+    alternative = schema['$defs']['ModelAlternative']
+    assert {'evidence', 'limitation', 'critical', 'noncritical_reason', 'condition', 'claim_type'} <= set(alternative['required'])
+    with pytest.raises(ValidationError):
+        inv.InvestigationProposal.model_validate({'hypothesis': 'unknown', 'alternatives': [
+            {'explanation': 'dependency_probe/downstream: tcp == "failed"', 'status': 'excluded'}]})
+    legacy = inv.InvestigationDecision(hypothesis='unknown', alternatives=[
+        inv.Alternative(explanation='old saved claim', status='unresolved')])
+    assert legacy.alternatives[0].condition is None
+
+
 def test_completed_alternatives_do_not_require_executable_check_fields():
-    proposal = inv.InvestigationProposal.model_validate({
+    proposal = _proposal({
         'hypothesis': 'downstream 连通层失败',
         'next_check': '继续调查',
         'alternatives': [
@@ -58,8 +85,8 @@ def test_completed_status_does_not_hide_an_incomplete_new_check(status, executio
     check[execution_field] = (['probe_text_log'] if execution_field == 'next_tools' else
                               {'probe_text_log': {'service': 'edge', 'path': 'D:/edge.log', 'lines': 100}})
     proposal = inv.InvestigationProposal(hypothesis='unknown', alternatives=[
-        inv.Alternative(explanation='edge explanation', status=status,
-                        check=inv.CandidateCheck(**check))])
+        _model_alternative(explanation='edge explanation', status=status,
+                           check=inv.CandidateCheck(**check))])
 
     missing = inv._incomplete_check_contract_fields(proposal, include_alternatives=True)
 
@@ -75,7 +102,7 @@ async def test_unverified_completed_claim_with_execution_intent_gets_one_correct
         'kind': 'process', 'text_logs_available': True, 'text_logs': ['D:/edge.log']}}}))
     arguments = {'probe_text_log': {'service': 'edge', 'path': 'D:/edge.log', 'lines': 100}}
     partial = inv.InvestigationProposal(hypothesis='unknown', alternatives=[
-        inv.Alternative(explanation='edge internal error', status=status,
+        _model_alternative(explanation='edge internal error', status=status,
             check=inv.CandidateCheck(next_check='inspect edge log',
                 next_tools=['probe_text_log'], next_arguments=arguments))])
     corrected = inv.InvestigationProposal(hypothesis='unknown', alternatives=[],
@@ -96,6 +123,36 @@ async def test_unverified_completed_claim_with_execution_intent_gets_one_correct
     assert not trace[0]['guard_result']['plan']
     assert not result['investigation_memory']['root_cause']
     assert result['investigation_memory']['outcome'] == 'investigating'
+
+
+@pytest.mark.asyncio
+async def test_pseudo_tool_argument_key_gets_one_correction_when_declared_tool_is_available(monkeypatch):
+    current = state(('inventory', {'configured_services': {'edge': {
+        'kind': 'process', 'text_logs_available': True, 'text_logs': ['D:/edge.log']}}}))
+    current['investigation_tools'] = [{'name': 'probe_port_snapshot', 'description': 'read port'}]
+    malformed = inv.InvestigationProposal(hypothesis='port may be unavailable', alternatives=[
+        _model_alternative(explanation='ports/9000: listening == false', status='unresolved',
+            claim_type='observed_condition', condition=inv.ObservationCondition(
+                operation='ports', object_name='9000', field='listening', expected=False),
+            check=inv.CandidateCheck(next_check='check port', next_tools=['probe_port_snapshot'],
+                next_arguments={'probe_port_snapshot_9000': {'local_port': 9000}},
+                discriminating_question='Is port 9000 listening?',
+                expected_observation='A listener would contradict the condition.'))])
+    corrected = inv.InvestigationProposal(hypothesis='port may be unavailable', alternatives=[],
+        next_check='check port 9000', next_tools=['probe_port_snapshot'],
+        next_arguments={'probe_port_snapshot': {'local_port': 9000}},
+        discriminating_question='Is port 9000 listening?',
+        expected_observation='A listener contradicts the hypothesis.')
+    model = AsyncMock(side_effect=[malformed, corrected])
+    monkeypatch.setattr(inv, 'create_agent_llm', lambda **kwargs: object())
+    monkeypatch.setattr(inv, 'ainvoke_structured', model)
+
+    result = await inv.InvestigationStrategy().decide(current)
+
+    assert model.await_count == 2
+    assert result['plan'] == ['check port 9000']
+    assert [item['purpose'] for item in result['investigation_memory']['decision_trace']['attempts']] == [
+        'initial', 'check_correction']
 
 
 @pytest.mark.asyncio
@@ -153,7 +210,7 @@ async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract
             'question': 'edge 入口自身故障还是转发 localapp 失败？'}],
     }
     edge_log = {'probe_text_log': {'service': 'edge', 'path': 'D:/edge.log', 'lines': 100}}
-    partial = inv.InvestigationProposal.model_validate({
+    partial = _proposal({
         'hypothesis': 'edge 入口自身故障，需要读取 edge 日志区分自身错误与转发失败',
         'hypothesis_id': edge_id,
         'alternatives': [
@@ -229,7 +286,7 @@ async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract
 @pytest.mark.asyncio
 async def test_valid_saved_candidate_fallback_does_not_add_contract_correction(monkeypatch):
     current = state()
-    proposal = inv.InvestigationProposal.model_validate({
+    proposal = _proposal({
         'hypothesis': '原因仍需检查', 'alternatives': [
             {'explanation': 'downstream TCP不可达', 'status': 'unresolved',
              'condition': {'operation': 'dependency_probe', 'object_name': 'downstream',

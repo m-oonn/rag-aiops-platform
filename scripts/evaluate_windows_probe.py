@@ -286,11 +286,14 @@ def business_catalog(cfg):
         dependency = cfg.dependencies.get(name)
         entries = {}
         if dependency and dependency.health_scheme:
-            entries[f'{dependency.health_scheme}://{dependency.host}:{dependency.port}{dependency.health_path}'] = name
+            host = f'[{dependency.host}]' if ':' in dependency.host else dependency.host
+            entries[f'{dependency.health_scheme}://{host}:{dependency.port}{dependency.health_path}'] = name
         services[name] = {
             'aliases': ['测试应用'] if name == 'localapp' else [],
             'entries': entries,
             'probe_service': name,
+            'expected_ports': [dependency.port] if dependency and dependency.host.lower() in {
+                'localhost', '127.0.0.1', '::1'} else [],
             'log_refs': [name],
             'dependency_services': dependency_services,
             'dependencies': dependencies,

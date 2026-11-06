@@ -102,6 +102,10 @@ def resolve_target(raw, query, inventory, target_id, aliases='{}'):
     result['dependency_services'] = {dep: ref for dep, ref in service.dependency_services.items()
         if dep in result['allowed_dependencies'] and ref in configured}
     result['allowed_services'] = sorted(set(result['allowed_services']) | set(result['dependency_services'].values()))
+    # Retain registered ports for explicitly mapped, allow-listed dependency services.
+    for related_name, related in catalog.services.items():
+        if related.probe_service in result['dependency_services'].values():
+            result['services'][related_name] = related.model_dump()
     if len(result['dependency_services']) != len(service.dependency_services):
         result['mismatches'].append('部分依赖服务映射未同时满足业务范围和 Probe 白名单，不能执行对应检查')
     return result

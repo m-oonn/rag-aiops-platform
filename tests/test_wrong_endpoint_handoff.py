@@ -23,10 +23,27 @@ def reader_state():
     current['evidence_events'] = [{'evidence_id': EID, 'kind': raw['operation'],
         'target_id': raw['target_id'], 'raw_hash': raw['raw_hash'], 'collected_at': raw['collected_at']}]
     current['investigation_tools'].append({'name': 'read_run_evidence'})
-    current['_probe_check_contract_version'] = 3
     current['investigation_memory'] = decision(next_check='read stored log', next_tools=['read_run_evidence'],
         next_arguments={'read_run_evidence': {'evidence_id': EID, 'query': 'business', 'limit': 200}}).model_dump()
     return current
+
+
+def test_completed_configuration_remains_readable_in_agenda_after_raw_context_rolls_over():
+    current = state(('configuration', {'service': 'localapp', 'path': 'D:/connection.json',
+        'source_sha256': 'loaded-config-hash', 'values': {'downstream_port': 5153}, 'missing_keys': []}),
+        *[('ports', {'local_port': 6000 + index, 'ports': [], 'matched_count': 0}) for index in range(9)])
+    current['investigation_tools'].append({'name': 'probe_config_snapshot'})
+    current['investigation_memory'] = decision(next_check='核对已有配置',
+        next_tools=['probe_config_snapshot'], next_arguments={'probe_config_snapshot': {'service': 'localapp'}}).model_dump()
+    records = inv.evidence_index(current)
+    assert 'e1.1' not in list(records)[-8:]
+    assert inv.investigation_context(current, records)['e1.1']['citation_snippets']
+    memory = inv._decision_memory_context(current['investigation_memory'], current, records)
+    progress = memory['decision_agenda']['checks'][0]['progress'][0]
+    assert progress['evidence_ids'] == ['e1.1']
+    assert progress['observation'] == {'path': 'D:/connection.json',
+        'source_sha256': 'loaded-config-hash', 'values': {'downstream_port': 5153}, 'missing_keys': []}
+    assert '加载' in progress['remaining_unknown']
 
 
 def test_reader_contract_accepts_existing_evidence_and_rejects_bad_arguments():
@@ -40,6 +57,25 @@ def test_reader_contract_accepts_existing_evidence_and_rejects_bad_arguments():
         assert inv.followup_check_error(altered, current)
     old = {**current, '_probe_check_contract_version': 2}
     assert '不存在的 Probe 工具名' in inv.followup_check_error(check, old)
+
+
+@pytest.mark.parametrize('runtime_version,saved_version,expected', [
+    (None, None, 3), (None, 1, 1), (None, 2, 2), (None, 3, 3),
+    (1, 3, 1), (2, 3, 2), (3, 2, 3),
+])
+def test_reader_contract_uses_saved_version_and_explicit_runtime_override(
+        runtime_version, saved_version, expected):
+    current = reader_state()
+    if runtime_version is not None:
+        current['_probe_check_contract_version'] = runtime_version
+    if saved_version is not None:
+        current['investigation_memory']['hypothesis_tracking'] = {'check_contract_version': saved_version}
+    check = inv.CandidateCheck.model_validate(current['investigation_memory']).model_dump()
+    candidate = {'explanation': 'check original log fields', 'condition': None, 'check': check}
+
+    assert inv.probe_check_contract_version(current) == expected
+    assert bool(inv.followup_check_error(check, current)) is (expected < 3)
+    assert bool(inv._candidate_check_rejection(candidate, current, inv.evidence_index(current))) is (expected < 3)
 
 
 @pytest.mark.asyncio
@@ -82,7 +118,6 @@ def test_reader_audit_requires_exact_evidence_and_page(change):
 
 def test_saved_candidate_does_not_resample_completed_query_but_explicit_repeat_still_works():
     current = state(('dependency_probe', {'dependency': 'entry', 'tcp': 'failed'}))
-    current['_probe_check_contract_version'] = 3
     check = inv.CandidateCheck.model_validate(decision(next_check='consume entry result',
         repeat_reason='已有结果，用于核验该有限条件', repeat_evidence_ids=['e1.1']).model_dump()).model_dump()
     candidate = {'id': 'saved', 'status': 'active', 'birth_step': 0, 'explanation': 'entry unavailable',

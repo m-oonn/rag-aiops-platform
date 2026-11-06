@@ -86,7 +86,8 @@ def build_bundle(diagnosis, *, records=None, resolution=None):
     advice = diagnosis.get('recommendations', [])
     notes = diagnosis.get('observation_notes', [])
     if records is not None:
-        for item in [*findings, *advice]:
+        for item in [*findings, *advice, *([{'evidence': diagnosis.get('evidence', [])}]
+                                         if diagnosis.get('kind') == 'confirmed_cause' else [])]:
             refs = ([{'evidence_id': item['evidence_id'], 'quote': item['quote']},
                      *item.get('related_evidence', [])] if 'evidence_id' in item else item.get('evidence', []))
             if not refs or any(ref['evidence_id'] not in records or not ref.get('quote', '').strip()
@@ -154,6 +155,11 @@ def build_bundle(diagnosis, *, records=None, resolution=None):
                 '上述有限观测支持该对象当前异常；启动、退出及异常传播原因尚未确认。')
         explanations['explain-' + key] = {'text': obj['label'] + '：' + text,
                                         'fact_ids': obj['facts']}
+    if diagnosis.get('kind') == 'confirmed_cause':
+        facts['note-confirmed-cause'] = {'text': '直接根因：' + diagnosis['conclusion'] + '；支持证据：'
+            + '、'.join(dict.fromkeys('[' + ref['evidence_id'] + ']' for ref in diagnosis['evidence']))}
+        explanations = {'confirmed-cause': {'text': diagnosis['conclusion'], 'fact_ids': ['note-confirmed-cause']}}
+        facts['note-confirmed-cause']['evidence_ids'] = list(dict.fromkeys(ref['evidence_id'] for ref in diagnosis['evidence']))
     for index, original in enumerate(advice):
         item = deepcopy(original)
         key, _ = identity(item['scope'], diagnosis.get('target_id'))
@@ -167,7 +173,8 @@ def build_bundle(diagnosis, *, records=None, resolution=None):
     ordered_actions = sorted(actions, key=lambda key: (
         0 if actions[key]['object_id'] in direct else 1,
         direct.index(actions[key]['object_id']) if actions[key]['object_id'] in direct else 0))
-    return {'version': VERSION, 'kind': diagnosis.get('kind'), 'objects': objects,
+    return {'version': VERSION, 'kind': diagnosis.get('kind'), 'scope': diagnosis.get('scope', ''),
+        'conclusion': diagnosis.get('conclusion', ''), 'objects': objects,
         'focus_object_ids': direct, 'facts': facts, 'explanations': explanations,
         'actions': actions, 'action_order': ordered_actions,
         'unresolved_questions': deepcopy(diagnosis.get('unresolved_questions', [])),
@@ -228,9 +235,12 @@ def render_report(bundle, layout):
     objects = bundle['objects']
     focus = '、'.join(objects[key]['label'] for key in layout.focus_object_ids)
     other = '、'.join(obj['label'] for key, obj in objects.items() if key not in layout.focus_object_ids)
-    lines = ['已定位故障层：' + (focus or '已有异常，优先处理对象尚不能确定'),
+    confirmed = bundle.get('kind') == 'confirmed_cause'
+    lines = (['诊断结论（已确认直接原因）：' + bundle['conclusion'], '影响范围：' + bundle['scope']]
+        if confirmed else ['已定位故障层：' + (focus or '已有异常，优先处理对象尚不能确定'),
              '故障对象与影响：' + ('优先核实并处理 ' + focus if focus else '需要继续区分异常对象及处理顺序')]
-    if other:
+        )
+    if other and not confirmed:
         lines.append('其他异常对象：' + other + '；与优先对象的因果关系尚未确认，处理后须分别复测。')
     lines.append('关键事实及引用：')
     lines.extend(dict.fromkeys(bundle['facts'][key]['text'] for key in layout.fact_order))
@@ -266,17 +276,22 @@ def render_report(bundle, layout):
     if bundle.get('validation_issues'):
         lines.append('校验提示：' + ('存在有限预期无效项，原值保留且不参与机制；具体问题见诊断详情。'
             if any('有限预期无效' in item for item in bundle['validation_issues']) else
+            '部分候选检查提议未通过校验，具体记录见诊断详情；这些提议未作为本次已确认直接原因的依据。' if confirmed else
             '仍有校验未通过的提议，不能作为已确认结论；具体问题见诊断详情。'))
-    if any('configured_process_not_observed' in obj['codes'] for obj in objects.values()):
+    if not confirmed and any('configured_process_not_observed' in obj['codes'] for obj in objects.values()):
         lines.append('进程未观察到不能说明退出原因或发起者。')
     lines.extend(bundle['blocked_notes'])
     lines.extend(item['reason'] for item in bundle['conflicts'])
     gaps = [item for item in bundle['unresolved_questions']
             if item.get('id', '').startswith(('gap-dependency-', 'gap-config-history-'))]
-    lines.extend(dict.fromkeys(f"未查清：{item['question']}；原因：{item['limitation']}" for item in gaps))
+    if not confirmed:
+        lines.extend(dict.fromkeys(f"未查清：{item['question']}；原因：{item['limitation']}" for item in gaps))
+    else:
+        lines.extend('未知限制：' + item for item in bundle.get('limitations', []))
     stop = ('现有候选检查已完成或受阻；已复核保存候选及通用补查，没有通过守卫的新检查。'
             if bundle['blocked_check_review'] else bundle['stop_reason'].split(' 停止前已复核：', 1)[0])
-    lines.append('停止原因：' + stop + ' 仅覆盖系统当前可识别的有限检查，不代表所有可能检查已穷尽。')
+    lines.append('停止原因：直接原因及本次请求证据链已核验；变更者、停止发起者与动机等更深历史未确认。'
+                 if confirmed else '停止原因：' + stop + ' 仅覆盖系统当前可识别的有限检查，不代表所有可能检查已穷尽。')
     lines.append('其余未决问题、限制、候选和检查记录见诊断详情。')
     if bundle.get('knowledge_references'):
         lines.extend(['', bundle['knowledge_references']])
@@ -309,7 +324,7 @@ async def finalize_report(state, update):
         'source_recommendations': deepcopy(diagnosis.get('recommendations', [])),
         'input_sha256': _hash(diagnosis), 'request_numbers': []}
     response = update['response']
-    if diagnosis.get('kind') == 'localized_fault' and not update.get('investigation_failure'):
+    if diagnosis.get('kind') in {'localized_fault', 'confirmed_cause'} and not update.get('investigation_failure'):
         from src.agent.aiops.strategies.investigation import evidence_index, execution_checks
         merged = {**state, **update}
         records = evidence_index(merged)
@@ -329,6 +344,10 @@ async def finalize_report(state, update):
             diagnosis['recommendations'] = [bundle['actions'][key]['recommendation'] for key in layout.action_order]
             response = render_report(bundle, layout)
             record.update(layout=layout.model_dump(), bundle=bundle)
+    elif diagnosis.get('kind') == 'healthy_within_scope':
+        response += ('\n影响范围：仅限报告所列对象、接口和本次采样窗口，未发现当前业务故障。'
+                     '\n处理建议：当前无已确认故障，无需据此变更配置或重启服务。'
+                     '\n复测方法：再次请求各登记依赖及入口业务接口，核对HTTP状态、业务响应体、配置身份进程和监听；出现新异常后另行诊断。')
     else:
         record['fallback_reason'] = 'investigation_incomplete_or_not_localized'
     record['report_sha256'] = hashlib.sha256(response.encode()).hexdigest()

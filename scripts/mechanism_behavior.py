@@ -13,11 +13,16 @@ def _blocked_review_matches(recorded, expected):
         return False
     recorded, expected = deepcopy(recorded), deepcopy(expected)
     suffix = ' 请改用适用检查或说明实际限制。'
+    equivalent_reasons = {
+        '已有该对象和参数的检查结果；再次采样须说明复核目的并关联原证据，不能换句话重复检查。':
+            '已有该具体查询的有效结果；自动保存候选只延续未完成检查，不自动重新采样。',
+    }
     for selection in (recorded, expected):
         for candidate in selection.get('rejected_candidates', []):
             reason = candidate.get('reason')
             if isinstance(reason, str):
-                candidate['reason'] = reason.removesuffix(suffix)
+                reason = reason.removesuffix(suffix)
+                candidate['reason'] = equivalent_reasons.get(reason, reason)
     return recorded == expected
 
 
@@ -34,6 +39,7 @@ def behavior_snapshot(state, validated_at):
         'next_arguments': deepcopy(memory.get('next_arguments')),
         'behavior_context': {'validated_at': validated_at, 'records': records,
             'check_contract_version': (memory.get('hypothesis_tracking') or {}).get('check_contract_version', 1),
+            'probe_check_contract_version': inv.probe_check_contract_version(state),
             'observation_history': deepcopy(history),
             'observation_history_sha256': _history_hash(history),
             'model_suggestion': deepcopy(memory.get('model_suggestion')),
@@ -121,10 +127,13 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
         config = tracking['config']
         check_version = context.get('check_contract_version', 1)
         tracking_version = tracking.get('check_contract_version', 1)
+        probe_check_version = context.get('probe_check_contract_version', 2)
         if (type(check_version) is not int or type(tracking_version) is not int
-                or check_version not in (1, 2, 3) or tracking_version != check_version):
+                or check_version not in (1, 2, 3) or tracking_version != check_version
+                or type(probe_check_version) is not int or probe_check_version not in (1, 2, 3)):
             raise ValueError('check contract version mismatch')
-        state = {**context, 'investigation_config': config, '_probe_check_contract_version': check_version}
+        state = {**context, 'investigation_config': config,
+                 '_probe_check_contract_version': probe_check_version}
         if execution_records and any(item not in execution_records for item in context.get('tool_execution_checks', [])):
             issues.append('当轮执行记录与最终执行记录不一致')
         state['raw_evidence'] = [(item.get('step', ''), json.dumps({**item, 'data_source': 'tool_execution'}))
@@ -152,7 +161,7 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
         # normalization before auditing why a proposed check was blocked.
         checks = [proposal, *[a.check for a in proposal.alternatives if a.check]]
         for check in checks if tracking.get('version', 1) < 4 or tracking.get('concrete_checks_required') else []:
-            concrete_tools = set(inv.PROBE_TOOL_OPERATIONS) | ({'read_run_evidence'} if check_version >= 3 else set())
+            concrete_tools = set(inv.PROBE_TOOL_OPERATIONS) | ({'read_run_evidence'} if probe_check_version >= 3 else set())
             if (check.next_check and check.next_arguments is None
                     and any(tool in concrete_tools for tool in check.next_tools)):
                 check.next_arguments = {}
@@ -446,6 +455,7 @@ def _executed_candidate(candidate, check, executions):
     if not condition:
         return bool(calls)
     argument = {'dependency_probe': 'dependency', 'services': 'service',
-                'processes': 'service', 'ports': 'local_port'}[condition['operation']]
+                'processes': 'service', 'ports': 'local_port', 'text_logs': 'service'}[condition['operation']]
+    object_name = condition['object_name'].partition('#')[0] if condition['operation'] == 'text_logs' else condition['object_name']
     return any(inv.PROBE_TOOL_OPERATIONS.get(e['tool']) == condition['operation']
-        and str((e.get('arguments') or {}).get(argument)) == condition['object_name'] for e in calls)
+        and str((e.get('arguments') or {}).get(argument)) == object_name for e in calls)

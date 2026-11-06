@@ -8,22 +8,53 @@ from src.probe.evidence import PROBE_TOOL_OPERATIONS
 
 
 def _log_repeat_has_new_evidence(row, ids, records):
-    """Require a changed observation of the same service after the previous log."""
+    """Require a changed same-service observation or a cited fresh failed request log."""
     from src.agent.aiops.strategies.investigation import probe_query_key, _probe_summary_status
     from src.probe.evidence import diagnostic_fingerprint
     logs = [json.loads(records[ident]['payload']) for ident in row['evidence_ids']]
     boundary = max(datetime.fromisoformat(raw['collected_at'].replace('Z', '+00:00')) for raw in logs)
     service = row['arguments']['service']
+
+    def request_ids(raw, *, after=None, failed_only=False):
+        if raw.get('operation') != 'text_logs':
+            return set()
+        ids_found = set()
+        for line in (raw.get('payload') or {}).get('lines') or []:
+            try:
+                event = json.loads(line) if isinstance(line, str) else line
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(event, dict) or not event.get('request_id'):
+                continue
+            status = event.get('status')
+            failed = (type(status) is int and status >= 400) or bool(event.get('error') or event.get('error_type'))
+            try:
+                occurred_at = datetime.fromisoformat(str(event['at']).replace('Z', '+00:00'))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if occurred_at.tzinfo is None or (after is not None and occurred_at <= after):
+                continue
+            if not failed_only or failed:
+                ids_found.add(str(event['request_id']))
+        return ids_found
+
     for ident in ids - set(row['evidence_ids']):
         raw = json.loads(records[ident]['payload'])
         body = raw.get('payload') or {}
         operation = raw.get('operation')
         tool = next((name for name, op in PROBE_TOOL_OPERATIONS.items() if op == operation), None)
-        if (raw.get('data_source') != 'probe_target' or raw.get('truncated') or body.get('error')
-                or body.get('not_applicable') or _probe_summary_status(raw, body) == 'not_applicable' or not tool
-                or not (body.get('service') == service or
-                        (operation == 'dependency_probe' and body.get('dependency') == service))
+        if (raw.get('data_source') != 'probe_target' or raw.get('target_id') != logs[-1].get('target_id')
+                or raw.get('truncated') or body.get('error') or body.get('not_applicable')
+                or _probe_summary_status(raw, body) == 'not_applicable' or not tool
                 or datetime.fromisoformat(raw['collected_at'].replace('Z', '+00:00')) <= boundary):
+            continue
+        same_service = (body.get('service') == service or
+                        (operation == 'dependency_probe' and body.get('dependency') == service))
+        if not same_service:
+            failed_request_ids = request_ids(raw, after=boundary, failed_only=True)
+            if (operation == 'text_logs' and body.get('service') != service
+                    and failed_request_ids):
+                return True
             continue
         key = probe_query_key(tool, body, observation=True)
         same_before = any(
@@ -79,6 +110,11 @@ def arguments_error(tool, arguments, state, records):
         return '检查参数 sort_by 不受支持。'
     scope = state.get('target_resolution') or {}
     if scope.get('status') == 'resolved':
+        if operation == 'ports':
+            from src.agent.aiops.observations import in_business_scope
+            if not in_business_scope({'target_id': scope.get('target_id'), 'operation': operation,
+                    'payload': arguments}, scope, records):
+                return '检查端口不在本次业务登记或已核实的本机依赖范围内。'
         if operation == 'dependency_probe' and arguments.get('dependency') not in scope.get('allowed_dependencies', []):
             return '检查参数指定的依赖不在本次允许对象中。'
         if 'service' in defaults and arguments.get('service') not in scope.get('allowed_services', []):
@@ -174,6 +210,10 @@ def check_progress(check, state, records):
             elif operation == 'ports':
                 observation['listening_count'] = sum(row.get('status') == 'LISTEN' for row in body.get('ports') or [])
                 unknown = '只说明查询端口在采样时的监听状态，不能单独确认绑定或退出原因。'
+            elif operation == 'configuration':
+                observation = {key: body[key] for key in
+                    ('path', 'source_sha256', 'values', 'missing_keys') if key in body}
+                unknown = '只证明采集时白名单文件的字段和哈希；不能单独证明进程实际加载、配置历史或因果。'
         rows.append({'next_check': check.get('next_check', ''), 'question': check.get('discriminating_question', ''),
             'expected_observation': check.get('expected_observation', ''),
             'tool': tool, 'arguments': args, 'status': status,
@@ -207,14 +247,14 @@ def progress_error(check, state, records):
             if (not str(check.get('repeat_reason') or '').strip()
                     or not ids & set(row['evidence_ids']) or not ids <= set(records)):
                 return '已有该对象和参数的检查结果；再次采样须说明复核目的并关联原证据，不能换句话重复检查。'
-            version = state.get('_probe_check_contract_version',
-                ((state.get('investigation_memory') or {}).get('hypothesis_tracking') or {}).get('check_contract_version', 2))
+            from src.agent.aiops.strategies.investigation import probe_check_contract_version
+            version = probe_check_contract_version(state)
             if version >= 2 and row['tool'] == 'probe_text_log':
                 # Include older observations to distinguish a new ID from new information.
                 relevant = {**history, **records}
                 relevant = {key: record for key, record in relevant.items()
                     if in_business_scope(json.loads(record['payload']), state.get('target_resolution'), records)}
                 if not _log_repeat_has_new_evidence(row, ids & set(relevant), relevant):
-                    return ('相同日志检查已完成；复查须关联旧日志之后同服务有变化的新证据，'
+                    return ('相同日志检查已完成；复查须关联旧日志之后同服务有变化的新证据，或同一现场新出现的失败请求日志，'
                             '不能仅凭可能遗漏启动记录重复读取；请改查未执行的鉴别检查或保留未知后结束。')
     return ''

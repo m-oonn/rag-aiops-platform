@@ -125,6 +125,48 @@ def test_same_log_repeat_requires_new_relevant_evidence(kind, allowed):
         assert ('重复已有查询' if kind == 'same_path_spelling' else '新证据') in error
 
 
+@pytest.mark.parametrize('event,target_matches,allowed', [
+    ({'request_id': 'req-1', 'status': 503, 'fresh': True}, True, True),
+    ({'request_id': 'req-1', 'status': 200, 'fresh': True}, True, False),
+    ({'status': 503, 'fresh': True}, True, False),
+    ({'request_id': 'req-1', 'status': 503, 'fresh': False}, True, False),
+    ({'request_id': 'req-1', 'status': 503, 'fresh': True}, False, False),
+])
+def test_log_repeat_can_follow_a_new_cross_service_failure_request_log(event, target_matches, allowed):
+    current = log_state()
+    previous = datetime.fromisoformat(json.loads(current['raw_evidence'][0][1])['collected_at'])
+    event['at'] = (previous + timedelta(seconds=1 if event.pop('fresh') else -1)).isoformat()
+    log = evidence(target_id=settings.PROBE_TARGET_ID if target_matches else 'other-target',
+        operation='text_logs', payload={'service': 'edge', 'path': 'D:/edge.log',
+            'lines': [json.dumps(event)]})
+    log['collected_at'] = (previous + timedelta(seconds=1)).isoformat()
+    current['raw_evidence'].append(('edge request log', json.dumps(log)))
+    records = inv.evidence_index(current)
+    check = log_check(repeat_reason='重新读取 localapp 日志',
+        repeat_evidence_ids=list(records))
+
+    error = progress_error(check.model_dump(), current, records)
+
+    assert bool(error) is not allowed
+
+
+def test_cross_service_failure_log_can_trigger_repeat_when_old_service_has_no_request_id():
+    current = log_state()
+    previous = datetime.fromisoformat(json.loads(current['raw_evidence'][0][1])['collected_at'])
+    edge_log = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
+        'service': 'edge', 'path': 'D:/edge.log', 'lines': [json.dumps({
+            'request_id': 'req-edge-1', 'status': 503,
+            'at': (previous + timedelta(seconds=1)).isoformat()})]})
+    edge_log['collected_at'] = (previous + timedelta(seconds=1)).isoformat()
+    current['raw_evidence'].append(('edge request log', json.dumps(edge_log)))
+    records = inv.evidence_index(current)
+
+    check = log_check(repeat_reason='复核 localapp 日志',
+        repeat_evidence_ids=['e1.1', list(records)[-1]])
+
+    assert progress_error(check.model_dump(), current, records) == ''
+
+
 def test_rejected_log_repeat_continues_unexecuted_check_and_then_stops_honestly():
     current = log_state()
     answer = log_check(repeat_reason='再看看', repeat_evidence_ids=['e1.1'], alternatives=[

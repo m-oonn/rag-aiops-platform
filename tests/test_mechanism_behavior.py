@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -21,6 +22,36 @@ def test_blocked_review_audit_ignores_fixed_remediation_hint_but_checks_reason()
         {'candidate_id': 'candidate-1', 'reason': '权限不足。'}]}
     assert _blocked_review_matches(base, decorated)
     assert not _blocked_review_matches(base, changed)
+
+
+@pytest.mark.parametrize('recorded_reason', [
+    '已有该对象和参数的检查结果；再次采样须说明复核目的并关联原证据，不能换句话重复检查。',
+])
+def test_blocked_review_audit_accepts_known_saved_candidate_reason_revision(recorded_reason):
+    recorded = {'kind': 'no_eligible_saved_candidate', 'rejected_candidates': [
+        {'candidate_id': 'candidate-1', 'reason': recorded_reason}]}
+    rebuilt = {'kind': 'no_eligible_saved_candidate', 'rejected_candidates': [
+        {'candidate_id': 'candidate-1', 'reason':
+            '已有该具体查询的有效结果；自动保存候选只延续未完成检查，不自动重新采样。'}]}
+    tampered = deepcopy(rebuilt)
+    tampered['rejected_candidates'][0]['candidate_id'] = 'invented'
+    assert _blocked_review_matches(recorded, rebuilt)
+    assert not _blocked_review_matches(recorded, tampered)
+
+
+def test_behavior_snapshot_keeps_runtime_probe_contract_separate_from_tracking_version():
+    from scripts.mechanism_behavior import behavior_snapshot
+
+    state = {'past_steps': [], 'raw_evidence': [],
+        'investigation_memory': {'hypothesis_tracking': {'check_contract_version': 3}}}
+    now = datetime.now(timezone.utc).isoformat()
+    snapshot = behavior_snapshot(state, now)
+    assert snapshot['behavior_context']['check_contract_version'] == 3
+    assert snapshot['behavior_context']['probe_check_contract_version'] == 3
+
+    state['_probe_check_contract_version'] = 2
+    snapshot = behavior_snapshot(state, now)
+    assert snapshot['behavior_context']['probe_check_contract_version'] == 2
 
 
 def trace(protection=True, trigger=True, case='contradiction', model_same=False, prose=False):
@@ -242,17 +273,28 @@ def test_blocked_refutation_is_not_counted_as_executed_change():
 
 
 @pytest.mark.parametrize('omit_boundary', [False, True])
-def test_historical_reconstruction_is_read_only_and_requires_all_boundaries(tmp_path, omit_boundary):
+@pytest.mark.parametrize('direct_source', [False, True])
+@pytest.mark.parametrize('saved_probe_version', [None, 2, 3])
+def test_historical_reconstruction_is_read_only_and_requires_all_boundaries(
+        tmp_path, omit_boundary, direct_source, saved_probe_version):
     import hashlib
     import sqlite3
     from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
     from scripts.verify_historical_mechanism_behavior import verify_history
-    config, values, snapshots, executed = trace()
+    target_id = 'historical-audit-target'
+    with patch.object(settings, 'PROBE_TARGET_ID', target_id):
+        config, values, snapshots, executed = trace()
     source = tmp_path / 'source'
-    directory = source / 'mechanisms-test-G11'
+    directory = source if direct_source else source / 'mechanisms-test-G11'
     directory.mkdir(parents=True)
+    (directory / 'evaluation-record.json').write_text(json.dumps({'config': {'target_id': target_id}}),
+        encoding='utf-8')
     original = {'thread_id': 'test', 'decisions': [{k: r[k] for k in ('step', 'plan', 'tracking', 'next_tools')}
         for r in snapshots], 'executed_steps': executed}
+    if saved_probe_version is not None:
+        for saved, snapshot in zip(original['decisions'], snapshots):
+            saved['behavior_context'] = {**snapshot['behavior_context'],
+                'probe_check_contract_version': saved_probe_version}
     (directory / 'mechanism_trace.json').write_text(json.dumps(original), encoding='utf-8')
     database = directory / 'checkpoints.sqlite'
     connection = sqlite3.connect(database)
@@ -280,6 +322,9 @@ def test_historical_reconstruction_is_read_only_and_requires_all_boundaries(tmp_
     assert result['passed'] is (not omit_boundary)
     assert result['model_calls'] == result['new_observations'] == 0
     assert result['results'][0]['source_unchanged']
+    rebuilt = json.loads((tmp_path / 'audit' / (directory.name + '.json')).read_text(encoding='utf-8'))
+    assert all(row['behavior_context']['probe_check_contract_version'] == (saved_probe_version or 2)
+               for row in rebuilt['decisions'])
     assert hashlib.sha256(database.read_bytes()).hexdigest() == before
     with pytest.raises(FileExistsError):
         verify_history(source, tmp_path / 'audit')

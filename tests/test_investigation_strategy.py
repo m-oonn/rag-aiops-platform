@@ -46,6 +46,92 @@ async def test_missing_check_contract_gets_one_model_correction(monkeypatch, pro
     assert correction['status'] == ('continued' if answer == 'corrected' else 'model_request_failed' if answer == 'timeout' else 'rejected')
 
 
+def _uncovered_scope_state(*, status='resolved', tools=None, dependencies=None, evidence_rows=None):
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    rows = evidence_rows or [('inventory', evidence(target_id=settings.PROBE_TARGET_ID,
+        operation='inventory', payload={'configured_services': {}}))]
+    return {
+        'input': 'edge availability failed', 'past_steps': [],
+        'raw_evidence': [(name, json.dumps(item)) for name, item in rows],
+        'target_resolution': {'status': status, 'target_id': settings.PROBE_TARGET_ID,
+            'allowed_dependencies': (['downstream'] if dependencies is None else dependencies),
+            'allowed_services': ['edge']},
+        'investigation_tools': [{'name': name} for name in
+            (['probe_dependency_probe'] if tools is None else tools)],
+    }
+
+
+def test_invalid_check_can_fall_back_to_uncovered_allowlisted_dependency():
+    current = _uncovered_scope_state()
+    invalid = decision(next_check='检查下游日志', next_tools=['probe_dependency_probe'],
+        discriminating_question='下游是否可达', expected_observation='TCP/HTTP 状态')
+
+    result = module.decide_from_evidence(current, invalid, module.evidence_index(current),
+        require_concrete_checks=True, allow_uncovered_scope_fallback=True)
+
+    assert result['plan'] == ['探测登记依赖 downstream 的 DNS、TCP 与 HTTP 状态']
+    assert result['investigation_memory']['next_arguments'] == {
+        'probe_dependency_probe': {'dependency': 'downstream'}}
+    assert result['investigation_memory']['hypothesis_tracking']['blocked_check_recovery']['kind'] == 'uncovered_scope_check'
+
+
+@pytest.mark.parametrize('status,tools,dependencies,expected', [
+    ('unmatched', ['probe_dependency_probe'], ['downstream'], []),
+    ('resolved', [], ['downstream'], []),
+    ('resolved', ['probe_dependency_probe'], [], []),
+])
+def test_uncovered_scope_fallback_keeps_scope_and_tool_guards(status, tools, dependencies, expected):
+    current = _uncovered_scope_state(status=status, tools=tools, dependencies=dependencies)
+    invalid = decision(next_check='检查下游', next_tools=['probe_dependency_probe'],
+        discriminating_question='下游是否可达', expected_observation='TCP/HTTP 状态')
+
+    result = module.decide_from_evidence(current, invalid, module.evidence_index(current),
+        require_concrete_checks=True, allow_uncovered_scope_fallback=True)
+
+    assert result['plan'] == expected
+    if not expected:
+        assert result['diagnosis']['kind'] in {'unlocated', 'localized_fault'}
+
+
+def test_uncovered_scope_fallback_skips_already_observed_dependency():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+
+    observed = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe',
+        payload={'dependency': 'downstream', 'host': '127.0.0.1', 'port': 10068,
+                 'tcp': 'ok', 'http': {'status': 200}})
+    current = _uncovered_scope_state(dependencies=['downstream', 'edge'],
+        evidence_rows=[('inventory', evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='inventory', payload={'configured_services': {}})),
+            ('downstream', observed)])
+    invalid = decision(next_check='重复检查下游', next_tools=['probe_dependency_probe'],
+        discriminating_question='下游是否可达', expected_observation='TCP/HTTP 状态')
+
+    result = module.decide_from_evidence(current, invalid, module.evidence_index(current),
+        require_concrete_checks=True, allow_uncovered_scope_fallback=True)
+
+    assert result['plan'] == ['探测登记依赖 edge 的 DNS、TCP 与 HTTP 状态']
+    assert result['investigation_memory']['next_arguments'] == {
+        'probe_dependency_probe': {'dependency': 'edge'}}
+
+
+@pytest.mark.asyncio
+async def test_invalid_check_gets_one_correction_before_uncovered_scope_fallback(monkeypatch):
+    current = _uncovered_scope_state()
+    invalid = decision(next_check='检查下游日志', next_tools=['probe_dependency_probe'],
+        discriminating_question='下游是否可达', expected_observation='TCP/HTTP 状态')
+    monkeypatch.setattr(module, 'ainvoke_structured', AsyncMock(side_effect=[invalid, invalid]))
+
+    result = await module.InvestigationStrategy().decide(current)
+
+    assert module.ainvoke_structured.await_count == 2
+    assert result['plan'] == ['探测登记依赖 downstream 的 DNS、TCP 与 HTTP 状态']
+    assert result['investigation_memory']['check_correction']['attempts'] == 1
+    assert result['investigation_memory']['check_correction']['status'] == 'continued'
+
+
 @pytest.mark.asyncio
 async def test_structured_failure_returns_incomplete_report_with_evidence(monkeypatch):
     from src.agent.aiops.structured import StructuredOutputError

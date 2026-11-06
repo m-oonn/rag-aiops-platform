@@ -4,22 +4,31 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+from unittest.mock import patch
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from scripts.mechanism_behavior import audit_behavior, behavior_snapshot
 from src.agent.aiops.strategies.investigation import execution_checks
+from src.settings import settings
 
 
 def verify_history(source, output):
     output.mkdir(parents=True, exist_ok=False)
     summaries = []
-    for directory in sorted(source.glob('mechanisms-*')):
+    directories = ([source] if (source / 'mechanism_trace.json').is_file()
+                   and (source / 'checkpoints.sqlite').is_file()
+                   else sorted(source.glob('mechanisms-*')))
+    for directory in directories:
         paths = [directory / 'mechanism_trace.json', directory / 'checkpoints.sqlite']
         fingerprint = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
         before = {p.name: fingerprint(p) for p in paths}
         original = json.loads(paths[0].read_text(encoding='utf-8'))
         legacy = audit_behavior(original['decisions'], original['executed_steps'])
+        target_id = settings.PROBE_TARGET_ID
+        evaluation_record = directory / 'evaluation-record.json'
+        if evaluation_record.is_file():
+            target_id = json.loads(evaluation_record.read_text(encoding='utf-8'))['config']['target_id']
         connection = sqlite3.connect(paths[1].resolve().as_uri() + '?mode=ro', uri=True)
         try:
             serialized = connection.execute(
@@ -30,19 +39,22 @@ def verify_history(source, output):
         serde = JsonPlusSerializer()
         checkpoints = [serde.loads_typed((kind, data)) for kind, data in serialized]
         snapshots, state = [], {}
-        for checkpoint in checkpoints:
-            state = checkpoint['channel_values']
-            if not state.get('investigation_memory'):
-                continue
-            candidate = behavior_snapshot(state, checkpoint['ts'])
-            # Match the saved decision boundary, excluding intervening executor states.
-            if len(snapshots) < len(original['decisions']):
-                old = original['decisions'][len(snapshots)]
-                if all(candidate[key] == old[key] for key in ('step', 'plan', 'tracking', 'next_tools')):
-                    snapshots.append(candidate)
-        executions = execution_checks(state)
-        executed = [name for name, _ in state.get('past_steps', [])]
-        behavior = audit_behavior(snapshots, executed, executions)
+        with patch.object(settings, 'PROBE_TARGET_ID', target_id):
+            for checkpoint in checkpoints:
+                state = checkpoint['channel_values']
+                if not state.get('investigation_memory'):
+                    continue
+                # Match the saved decision boundary, excluding intervening executor states.
+                if len(snapshots) < len(original['decisions']):
+                    old = original['decisions'][len(snapshots)]
+                    saved_context = old.get('behavior_context') or {}
+                    candidate = behavior_snapshot({**state, '_probe_check_contract_version':
+                        saved_context.get('probe_check_contract_version', 2)}, checkpoint['ts'])
+                    if all(candidate[key] == old[key] for key in ('step', 'plan', 'tracking', 'next_tools')):
+                        snapshots.append(candidate)
+            executions = execution_checks(state)
+            executed = [name for name, _ in state.get('past_steps', [])]
+            behavior = audit_behavior(snapshots, executed, executions)
         complete = len(snapshots) == len(original['decisions']) and executed == original['executed_steps']
         unchanged = before == {p.name: fingerprint(p) for p in paths}
         result = {'sample': directory.name, 'source_sha256': before, 'source_unchanged': unchanged,

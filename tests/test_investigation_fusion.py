@@ -127,6 +127,112 @@ def test_endpoint_root_cause_requires_configured_failure_and_matching_business_r
     assert rejected['diagnosis']['kind'] == 'localized_fault'
 
 
+def test_endpoint_missing_configured_upstream_probe_is_scheduled_before_localized_stop():
+    state = _wrong_endpoint_state(omit=('upstream',))
+    state['target_resolution']['allowed_services'].append('edge')
+    state['investigation_tools'] = [{'name': 'probe_dependency_probe'}]
+    request_id = 'request-missing-upstream-probe'
+    localapp_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503, 'detail': 'upstream connection failed',
+        'upstream': {'port': 11751}, 'configuration': {'source_sha256': 'abc123'}}
+    edge_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503}
+    state['raw_evidence'].extend([
+        ('localapp log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='text_logs', payload={'service': 'localapp', 'lines': [json.dumps(localapp_event)]}))),
+        ('edge log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='text_logs', payload={'service': 'edge', 'lines': [json.dumps(edge_event)]}))),
+    ])
+    records = inv.evidence_index(state)
+    decision = inv.InvestigationDecision(
+        hypothesis='localapp 连接的下游端点可能错误',
+        alternatives=[inv.Alternative(explanation='downstream 应用异常', status='unresolved')])
+
+    result = inv.decide_from_evidence(state, decision, records)
+
+    assert result['plan'] == [result['investigation_memory']['next_check']]
+    assert result['investigation_memory']['next_arguments'] == {
+        'probe_dependency_probe': {'dependency': 'localapp_upstream'}}
+    assert result['investigation_memory']['hypothesis_tracking']['endpoint_cause_followup']['dependency'] == 'localapp_upstream'
+    assert result.get('diagnosis', {}).get('kind') != 'confirmed_cause'
+
+
+def test_endpoint_root_cause_normalizes_older_identical_log_citation():
+    state = _wrong_endpoint_state()
+    state['target_resolution']['allowed_services'].append('edge')
+    base = datetime.now(timezone.utc)
+    request_id = 'request-repeat'
+    localapp_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503, 'detail': 'upstream connection failed',
+        'upstream': {'port': 11751}, 'configuration': {'source_sha256': 'abc123'}}
+    edge_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503}
+    localapp_log = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+        payload={'service': 'localapp', 'lines': [json.dumps(localapp_event)]},
+        collected_at=base.isoformat().replace('+00:00', 'Z'))
+    edge_log = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+        payload={'service': 'edge', 'lines': [json.dumps(edge_event)]},
+        collected_at=(base + timedelta(milliseconds=1)).isoformat().replace('+00:00', 'Z'))
+    repeated_localapp = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+        payload={'service': 'localapp', 'lines': [json.dumps(localapp_event)]},
+        collected_at=(base + timedelta(seconds=1)).isoformat().replace('+00:00', 'Z'))
+    state['raw_evidence'].extend([
+        ('localapp log', json.dumps(localapp_log)),
+        ('edge log', json.dumps(edge_log)),
+        ('localapp log repeat', json.dumps(repeated_localapp)),
+    ])
+    records = inv.evidence_index(state)
+    decision = inv.InvestigationDecision(
+        hypothesis='localapp 使用了未登记的下游端口',
+        root_cause='localapp 启动时加载的 downstream_port 与登记服务不一致，导致该业务请求连接失败',
+        root_cause_code='configured_downstream_endpoint_mismatch', outcome='root_cause',
+        conclusion_level='confirmed_cause', scope='edge /api/availability 本次失败请求',
+        supporting_evidence=[inv.Citation(evidence_id=ident, quote=records[ident]['payload'][:300])
+            for ident in ('e1.1', 'e2.1', 'e3.1', 'e4.1', 'e5.1')],
+        alternatives=[inv.Alternative(explanation='下游历史迁移时间仍未知', status='unresolved', critical=False,
+            noncritical_reason='该历史问题不影响本次请求的直接失败证据。')])
+    accepted = inv.decide_from_evidence(state, decision, records)
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert {item['evidence_id'] for item in accepted['diagnosis']['evidence']} == {
+        'e1.1', 'e2.1', 'e3.1', 'e5.1', 'e6.1'}
+
+
+def test_endpoint_root_cause_does_not_normalize_changed_newer_log():
+    state = _wrong_endpoint_state()
+    state['target_resolution']['allowed_services'].append('edge')
+    base = datetime.now(timezone.utc)
+    request_id = 'request-changed'
+    old_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503, 'detail': 'upstream connection failed',
+        'upstream': {'port': 11751}, 'configuration': {'source_sha256': 'abc123'}}
+    edge_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503}
+    changed_event = {**old_event, 'detail': 'different failure'}
+    state['raw_evidence'].extend([
+        ('localapp log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+            payload={'service': 'localapp', 'lines': [json.dumps(old_event)]},
+            collected_at=base.isoformat().replace('+00:00', 'Z')))),
+        ('edge log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+            payload={'service': 'edge', 'lines': [json.dumps(edge_event)]},
+            collected_at=(base + timedelta(milliseconds=1)).isoformat().replace('+00:00', 'Z')))),
+        ('localapp log changed', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+            payload={'service': 'localapp', 'lines': [json.dumps(changed_event)]},
+            collected_at=(base + timedelta(seconds=1)).isoformat().replace('+00:00', 'Z')))),
+    ])
+    records = inv.evidence_index(state)
+    decision = inv.InvestigationDecision(
+        hypothesis='localapp 使用了未登记的下游端口',
+        root_cause='localapp 启动时加载的 downstream_port 与登记服务不一致，导致该业务请求连接失败',
+        root_cause_code='configured_downstream_endpoint_mismatch', outcome='root_cause',
+        conclusion_level='confirmed_cause', scope='edge /api/availability 本次失败请求',
+        supporting_evidence=[inv.Citation(evidence_id=ident, quote=records[ident]['payload'][:300])
+            for ident in ('e1.1', 'e2.1', 'e3.1', 'e4.1', 'e5.1')],
+        alternatives=[inv.Alternative(explanation='下游历史迁移时间仍未知', status='unresolved', critical=False,
+            noncritical_reason='该历史问题不影响本次请求的直接失败证据。')])
+    rejected = inv.decide_from_evidence(state, decision, records)
+    assert rejected['diagnosis']['kind'] == 'localized_fault'
+
+
 def test_wrong_downstream_endpoint_reaches_cited_diagnosis_and_actionable_report():
     from src.agent.aiops.reporting import build_bundle, render_report, rule_layout
 
