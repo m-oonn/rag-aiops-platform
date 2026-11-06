@@ -4,6 +4,8 @@
 
 ## 日常启动与本机运维
 
+- `aiops_test_environment.py start --output runtime/<新目录>`：免费持续运行诊断业务、Probe 和 Gateway；`backend --output runtime/<同目录>` 提供正式登录和诊断页面。默认不调用模型，启用与退出见 [诊断测试环境](../docs/aiops-test-environment.md)。
+
 - `tools/faulty_demo_site.py`、`tools/win_node_exporter.py`：演示靶站与 Windows 指标导出器，完整路径为 scripts/tools/。
 
 - `launch_demo.py`：演示环境状态、启动与停止；从项目根目录执行。
