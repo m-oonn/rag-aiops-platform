@@ -445,6 +445,36 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 
 039 未通过，因此「可复现性」结论必须修正为 **036/037/038 三轮通过、039 一轮未通过**，而不是此前写的「连续多轮稳定复现」。六个状态位本身的证据链（免费门、付费单轮、根因码、持久化、清理）仍然成立且可复核，但 Gate B 结论的可复现率是 3/4，且失败模式已定位到具体代码子句。修复方向（供用户决定，本次未改代码）：把 `contradictions`（待核实说明）与「已知现场事实冲突」分开，`sufficient` 只对真正的事实冲突否决结论，或在降级前把「结论已满足证据要求但存在待核实说明」作为可诊断项暴露出来，而不是直接改写为 `localized_fault`。
 
+## 判定逻辑修复（2026-11-07，用户授权「修判定逻辑再复跑」）
+
+按 039 的取证结论改了一处判定逻辑，让「模型自己写的待核实说明」不再一票否决已满足证据要求的结论，而系统自己算出的现场事实冲突继续否决。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `src/agent/aiops/strategies/investigation.py` | `decide_from_evidence` 里把两类系统派生的冲突（`等待模型后现场证据未通过重新校验：…`、`引用已被同范围不同结果更新：…`）先收集进局部变量 `field_conflicts`，再 append 到 `decision.contradictions`；`sufficient` 的对应子句由 `not decision.contradictions` 改为 `not field_conflicts` |
+| `tests/test_investigation_fusion.py` | 新增 `_endpoint_state_with_request_logs(...)` / `_endpoint_cause_decision(...)` 两个 helper 与两条测试：`test_pending_model_note_does_not_block_a_fully_cited_confirmed_cause`、`test_system_detected_field_conflict_still_blocks_a_confirmed_cause` |
+
+保留不变：`diagnosis['contradictions']` 仍原样输出模型原文（`_public_text`），未定位报告仍打印「待核实说明（不作为可靠反证）：…」，`investigation_memory` 仍保存原文。报告层本来就把 `contradictions`（模型待核实说明）与 `conflicts`（`observation_conflicts`，现场事实冲突）分成两个键，本次修改与既有对外契约一致。
+
+### 为什么不能直接删掉这个子句
+
+`decision.contradictions` 里同时装着系统派生的两类真实冲突（证据在模型等待期间失效、引用被同范围更新结果覆盖）。这两条必须继续否决结论，因此改的是「用哪一份列表否决」，不是取消否决。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 039 真实提议回放（`runtime/aiops-goal-039/replay_fixed.py` → `replay-fixed.json` 697 B `9a43713ac317…`） | 修复前 `localized_fault` / `code=''`；修复后 **`confirmed_cause` / `configured_downstream_endpoint_mismatch`**，`evidence_cited=14`，模型原文 `contradictions` 原样保留（`model_note_preserved=true`）；保留真实 `past_steps` 的变体同样得到 `confirmed_cause`，`model_calls=0` |
+| 新增两条单测 | 均通过：模型待核实说明不阻止 `confirmed_cause`；系统 `superseded_citations` 冲突仍降级为 `localized_fault` 且 `investigation_memory['contradictions'] == diagnosis['contradictions']` |
+| 四个核心测试文件 | `tests/test_investigation_strategy.py tests/test_investigation_boundaries.py tests/test_investigation_fusion.py tests/test_decision_replay.py` → **289 passed**（原 287 + 新增 2），唯一警告为既有 PyMilvus 弃用 |
+| 全量 `pytest tests` | **2060 passed / 37 failed / 99 deselected**；37 个失败与干净 HEAD（`git stash` 后）完全同一集合（`test_matching503_output_flow.py` 24、`test_four_issue_closeout.py` 6、`test_agent_knowledge_consumption.py` 5、`test_live_probe_mechanisms.py` 1、`test_probe_summary_output_flow.py` 1），即**既存失败，与本次改动无关** |
+
+### 仍未做的事
+
+本次只改判定逻辑并验证，没有跑新的付费轮次。要确认「修复后能稳定得到 `confirmed_cause`」，仍需用户单独授权一轮真实复跑（新目录、继承 039 账本、5 元上限重新计量）。
+
 ## Goal 完成判定（2026-11-07）
 
 两道门的通过条件逐条对应如下，全部为产品侧可复现证据，不以 `workflow completed`、`localized_fault` 或环境 `ready` 作为通过依据：
@@ -458,4 +488,4 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 | `report_persistence` | `passed` | 036：刷新后报告 15678 字符且 `aiops_post_after_refresh=0`，重启后 `report_sha256=23b73151fa45…`、`requests 1208 → 1208`；037（干净 main）：刷新后 13247 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=34a4de2818b3…`、`evidence_total=14`、`requests 1225 → 1225`；038（干净 main 复跑）：刷新后 16033 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=cd9acfb3fccd…`、`evidence_total=14`、`requests 1240 → 1240`；039（未通过轮）：刷新后 11154 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=e13e19b4c938…`、`evidence_total=13`、`requests 1254 → 1254`。四轮的稳定产物字节一致，WAL/checkpoint 增长经逻辑摘要与心跳归因确认为 SQLite 检查点与 Probe 心跳，诊断内容不变 |
 | `cleanup` | `passed` | 035/036/037/038/039/c/d 七个 `environment.json` 全部 `status=stopped`、`recovery=three_business_endpoints_200`、`ports_released=true`、`owned_processes_stopped=true`、`cleanup_errors=[]`、`environment_model_calls=0`；7201–7205、3580–3590、8940–8945、9890–9894、8200、9083、9087 均无监听，无残留 python 进程 |
 
-结论：A 门（免费门）与 B 门（单轮真实门）在 036、037、038 三轮均已通过，六个状态位全部 `passed`；但 039 的第三次复跑暴露了一个真实缺陷并以 `localized_fault` 结束，**Gate B 的可复现率是 3/4，不是稳定复现**。039 的失败模式已定位到 `sufficient` 中 `not decision.contradictions` 与「待核实说明」字段的耦合（模型提议本身是正确且证据完整的 `confirmed_cause`），因此后续若要声称「稳定复现」，需要先修这一处判定逻辑再复跑一轮，而不是继续加轮次。仍照实保留的限制：原始 SSE 帧未落盘（以 checkpoint + 工具轨迹 + 模型输入 + 账本重建轨迹替代）、4 条候选检查提议因工具目录/重复检查被拒、`/steps` 未启用（`total: 0`）、普通用户 `can_read_raw=false`、`localapp` 事件通道未配置。
+结论：A 门（免费门）与 B 门（单轮真实门）在 036、037、038 三轮均已通过，六个状态位全部 `passed`；但 039 的第三次复跑暴露了一个真实缺陷并以 `localized_fault` 结束，**Gate B 的可复现率是 3/4，不是稳定复现**。039 的失败模式已定位到 `sufficient` 中 `not decision.contradictions` 与「待核实说明」字段的耦合（模型提议本身是正确且证据完整的 `confirmed_cause`）。**该处已于 2026-11-07 按用户授权修好并验证**（见「判定逻辑修复」一节：039 真实提议回放由 `localized_fault` 变为 `confirmed_cause`，系统派生的现场事实冲突仍否决，四个核心测试文件 289 passed，全量 37 个失败与干净 HEAD 同一集合）。要声称「修复后才算稳定复现」，仍需再授权一轮真实复跑。仍照实保留的限制：原始 SSE 帧未落盘（以 checkpoint + 工具轨迹 + 模型输入 + 账本重建轨迹替代）、4 条候选检查提议因工具目录/重复检查被拒、`/steps` 未启用（`total: 0`）、普通用户 `can_read_raw=false`、`localapp` 事件通道未配置。

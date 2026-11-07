@@ -127,6 +127,81 @@ def test_endpoint_root_cause_requires_configured_failure_and_matching_business_r
     assert rejected['diagnosis']['kind'] == 'localized_fault'
 
 
+def _endpoint_state_with_request_logs(*, changed_detail=None):
+    state = _wrong_endpoint_state()
+    state['target_resolution']['allowed_services'].append('edge')
+    base = datetime.now(timezone.utc)
+    request_id = 'request-pending-note'
+    localapp_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503, 'detail': 'upstream connection failed',
+        'upstream': {'port': 11751}, 'configuration': {'source_sha256': 'abc123'}}
+    edge_event = {'event': 'request_completed', 'request_id': request_id,
+        'path': '/api/availability', 'status': 503}
+    state['raw_evidence'].extend([
+        ('localapp log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+            payload={'service': 'localapp', 'lines': [json.dumps(localapp_event)]},
+            collected_at=base.isoformat().replace('+00:00', 'Z')))),
+        ('edge log', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+            payload={'service': 'edge', 'lines': [json.dumps(edge_event)]},
+            collected_at=(base + timedelta(milliseconds=1)).isoformat().replace('+00:00', 'Z')))),
+    ])
+    if changed_detail is not None:
+        state['raw_evidence'].append(('localapp log changed', json.dumps(
+            evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs',
+                payload={'service': 'localapp', 'lines': [json.dumps({**localapp_event, 'detail': changed_detail})]},
+                collected_at=(base + timedelta(seconds=1)).isoformat().replace('+00:00', 'Z')))))
+    return state
+
+
+def _endpoint_cause_decision(state, records, evidence_ids=None, **extra):
+    required = sorted(evidence_ids or inv._confirmed_endpoint_cause_evidence(records, state))
+    assert required
+    return inv.InvestigationDecision(
+        hypothesis='localapp 使用了未登记的下游端口',
+        root_cause='localapp 启动时加载的 downstream_port 与登记服务不一致，导致该业务请求连接失败',
+        root_cause_code='configured_downstream_endpoint_mismatch', outcome='root_cause',
+        conclusion_level='confirmed_cause', scope='edge /api/availability 本次失败请求',
+        supporting_evidence=[inv.Citation(evidence_id=ident, quote=records[ident]['payload'][:300])
+            for ident in required],
+        alternatives=[inv.Alternative(explanation='downstream 曾在 5889 提供服务后迁移；何时迁移仍未知',
+            status='unresolved', critical=False,
+            noncritical_reason='该历史可能解释配置为何过期，但不否定本次请求中 localapp 指向无监听端口导致失败。')],
+        **extra)
+
+
+def test_pending_model_note_does_not_block_a_fully_cited_confirmed_cause():
+    """A model-written pending note is not field evidence and must not veto the cause."""
+    state = _endpoint_state_with_request_logs()
+    records = inv.evidence_index(state)
+    note = ('localapp 日志 connect 阶段报 TimeoutError（timeout_seconds=0.5），独立探测得到'
+            ' ConnectionRefusedError；不同探测方式下异常名不同，不自动构成矛盾，但历史原因仍未知。')
+    decision = _endpoint_cause_decision(state, records, contradictions=[note])
+
+    accepted = inv.decide_from_evidence(state, decision, records)
+
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert accepted['diagnosis']['root_cause_code'] == 'configured_downstream_endpoint_mismatch'
+    assert accepted['diagnosis']['contradictions'] == [note]
+    assert decision.contradictions == [note]
+
+
+def test_system_detected_field_conflict_still_blocks_a_confirmed_cause():
+    """A newer observation that contradicts a cited one keeps the veto and is reported."""
+    state = _endpoint_state_with_request_logs(changed_detail='different failure')
+    records = inv.evidence_index(state)
+    # The cited ids stay the ones collected before the log changed; the newer
+    # observation supersedes e2.1, which is exactly the field conflict under test.
+    decision = _endpoint_cause_decision(
+        state, records, evidence_ids=('e1.1', 'e2.1', 'e3.1', 'e4.1', 'e5.1'))
+
+    rejected = inv.decide_from_evidence(state, decision, records)
+
+    assert rejected['diagnosis']['kind'] == 'localized_fault'
+    assert any(item.startswith('引用已被同范围不同结果更新：')
+               for item in rejected['diagnosis']['contradictions'])
+    assert rejected['investigation_memory']['contradictions'] == rejected['diagnosis']['contradictions']
+
+
 def test_endpoint_missing_configured_upstream_probe_is_scheduled_before_localized_stop():
     state = _wrong_endpoint_state(omit=('upstream',))
     state['target_resolution']['allowed_services'].append('edge')

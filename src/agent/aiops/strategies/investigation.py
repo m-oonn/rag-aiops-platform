@@ -3657,13 +3657,18 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
     _resolve_citations(decision, records)
     cited = {c.evidence_id for c in decision.supporting_evidence}
     cited.update(c.evidence_id for a in decision.alternatives for c in a.evidence)
+    # Only conflicts this system derives from the collected field evidence may
+    # veto a conclusion.  Model-written notes are pending explanations, not
+    # reliable counter-evidence, so they stay visible without blocking.
+    field_conflicts = []
     invalidated = sorted((set(previous_records or records) - set(records)) & cited)
     if invalidated:
-        decision.contradictions.append('等待模型后现场证据未通过重新校验：' + ', '.join(invalidated))
+        field_conflicts.append('等待模型后现场证据未通过重新校验：' + ', '.join(invalidated))
     conflicts = superseded_citations([*decision.supporting_evidence,
         *[c for a in decision.alternatives for c in a.evidence]], records)
     if conflicts:
-        decision.contradictions.append('引用已被同范围不同结果更新：' + '、'.join(conflicts))
+        field_conflicts.append('引用已被同范围不同结果更新：' + '、'.join(conflicts))
+    decision.contradictions.extend(field_conflicts)
     current_records = current_probe_records(records)
     scoped_records = {key: value for key, value in current_records.items()
                       if in_business_scope(json.loads(value['payload']), state.get('target_resolution'), current_records)}
@@ -3793,7 +3798,7 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
     sufficient = (
         (bool(decision.root_cause) or decision.outcome == "healthy")
         and _valid_citations(decision.supporting_evidence, scoped_records)
-        and bool(decision.alternatives) and not decision.contradictions
+        and bool(decision.alternatives) and not field_conflicts
         and all((a.status == "excluded" and a.verification == 'predicate_verified'
                  and _condition_bound(a.explanation, a.condition)
                  and _valid_citations(a.evidence, scoped_records))
