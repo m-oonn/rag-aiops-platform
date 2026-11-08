@@ -252,6 +252,8 @@ $env:AIOPS_ROUND_DIR = 'runtime/aiops-goal-0XX'
 2. **把 `runtime/` 冻成交接包**：15 轮共 113 MB，含本机绝对路径。可以打成 zip 放共享盘，
    或把每轮的 `result-summary.json` / `gate-b-acceptance.json` / `report.txt` / `report-headings.json`
    抽出来做一份轻量只读包（约几 MB），让没这台机器的人也能查看。
+   注意：**验收脚本本身已经不再依赖这一步**——见 §7.3，辅助脚本已在 `scripts/aiops_round/` 里，
+   拿不到 `runtime/` 的人也能用蒸馏语料跑门禁、也能对自己的新轮次跑全套验收。
 3. **提升一过成功率**：针对两处模型侧失误做**结构性约束**（例如候选 id 必须来自上一轮已有候选、
    `critical=True` 的未决解释必须有 `noncritical_reason` 或证据引用），而不是继续改提示词。
    注意：任何此类改动都必须先过 §7.1 的门禁，且不得把 041/044/050 的拒绝理由变成「无理由通过」。
@@ -276,3 +278,4 @@ $env:AIOPS_ROUND_DIR = 'runtime/aiops-goal-0XX'
 | `2d34c3e` | 049 未通过、050 模型侧未通过 |
 | `cee906d` | 回放门禁第一版（依赖本机 `runtime/`） |
 | `f7ca98b` `f47562f` `e367c5c` | 蒸馏语料 + CI 步骤，让门禁在没有 `runtime/` 的机器上也能跑 |
+| `fcc78d8` | 本交接说明 + 验收辅助脚本入库（`scripts/aiops_round/`，去掉全部轮次硬编码） |
