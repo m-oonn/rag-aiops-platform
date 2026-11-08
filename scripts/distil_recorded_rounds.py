@@ -82,7 +82,9 @@ def main():
     rounds = [distil(name, directory) for name, directory in round_dirs(ROOT / 'runtime')]
     raw = json.dumps(rounds, ensure_ascii=False, sort_keys=True, default=str).encode('utf-8')
     CORPUS.parent.mkdir(parents=True, exist_ok=True)
-    CORPUS.write_bytes(gzip.compress(raw, 9))
+    # mtime=0 keeps the blob byte-identical across rebuilds, so regenerating the
+    # corpus never shows up as a spurious diff.
+    CORPUS.write_bytes(gzip.compress(raw, 9, mtime=0))
     print(json.dumps({
         'rounds': [r['round'] for r in rounds],
         'raw_bytes': len(raw),
