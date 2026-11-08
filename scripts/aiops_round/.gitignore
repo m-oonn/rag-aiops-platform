@@ -1,0 +1,3 @@
+# rendered per round by render_browser.py; never commit (contains the round's login)
+browser-start.js
+browser-refresh.js
