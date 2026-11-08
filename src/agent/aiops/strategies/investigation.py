@@ -3257,6 +3257,20 @@ def candidate_identity_conflicts(state, proposal):
     return conflicts
 
 
+_EMPTY_TERMINAL_CLAIM = ('本轮提议声明了终态，却没有给出任何直接原因、原因码或主引用；'
+                         '空白主张不构成结论，也不能据此把替代解释当作已排除。')
+
+
+def empty_terminal_claim(decision):
+    """A terminal claim that names no direct cause carries no conclusion at all."""
+    if decision.outcome == 'healthy':
+        return False
+    if decision.conclusion_level != 'confirmed_cause' and decision.outcome != 'root_cause':
+        return False
+    return not (decision.root_cause.strip() or decision.root_cause_code.strip()
+                or decision.supporting_evidence)
+
+
 class InvestigationStrategy(BaseReplanStrategy):
     async def decide(self, state):
         records = evidence_index(state)
@@ -3673,6 +3687,14 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
     scoped_records = {key: value for key, value in current_records.items()
                       if in_business_scope(json.loads(value['payload']), state.get('target_resolution'), current_records)}
     required_cause_evidence = _direct_cause_evidence(scoped_records, state).get(decision.root_cause_code, set())
+    # A turn that claims a terminal scope while naming no direct cause is not a
+    # conclusion at all: nothing in it may be reported as confirmed or as an
+    # excluded alternative, so the claim is rejected with its own reason.
+    if empty_terminal_claim(decision):
+        decision.validation_issues.append(_EMPTY_TERMINAL_CLAIM)
+        decision.root_cause, decision.root_cause_code = '', ''
+        decision.outcome, decision.conclusion_level = 'investigating', 'unlocated'
+        decision.blocked_reason = _EMPTY_TERMINAL_CLAIM
     if decision.conclusion_level == 'confirmed_cause' and decision.outcome != 'healthy':
         cited_support = {citation.evidence_id for citation in decision.supporting_evidence}
         if (not required_cause_evidence
@@ -3681,7 +3703,13 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
                 '根因缺少受支持的原因码或完整同请求证据链；保留为未确认假设。')
             decision.root_cause, decision.root_cause_code = '', ''
             decision.outcome, decision.conclusion_level = 'investigating', 'unlocated'
-    policy_check = dependency_followup_policy(state, scoped_records)
+    model_terminal_cause = (decision.outcome == 'root_cause' and bool(decision.root_cause)
+        and bool(required_cause_evidence)
+        and required_cause_evidence <= {citation.evidence_id
+                                        for citation in decision.supporting_evidence}
+        and not decision.next_check.strip() and not decision.next_tools
+        and not decision.next_arguments)
+    policy_check = None if model_terminal_cause else dependency_followup_policy(state, scoped_records)
     tracking = _apply_investigation_mechanisms(state, decision, scoped_records,
                                                policy_selected=bool(policy_check))
     tracking['concrete_checks_required'] = require_concrete_checks

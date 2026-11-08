@@ -628,6 +628,43 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 - 修复后真实复跑结果为 **1 通过（040）/ 2 尝试（040、041）**，即**修复后尚未达到稳定复现**；含 036–041 六轮合计 **4/6**。
 - Goal `goal-d4100615-…` 已于 2026-11-07 标记 `complete`（六个状态位均 `passed`，依据是 036/037/038/040 四轮已通过）。041 不改变历史轮次的通过事实，但**削弱了「稳定复现」这一更强主张**：若要以「修复后稳定复现」作为结论，需先修掉本次暴露的「策略抢先排检查 + 末轮空壳提议」两处问题，再复跑验证。
 
+## 判定逻辑修复之二（2026-11-08，用户授权「修这两处再复跑」）
+
+041 暴露的两处问题与 039 不同源（`contradictions` 为空，039 的修复仍生效），分别修复：
+
+| # | 问题 | 位置 | 改动 |
+|---|---|---|---|
+| 1 | 模型已给出「证据完整的终态结论」时，`dependency_followup_policy` 仍会抢排一次检查并覆盖 `next_check`，导致 `sufficient and not next_check` 的收束条件永不成立，正确结论被拖入下一轮 | `src/agent/aiops/strategies/investigation.py` `decide_from_evidence` | 新增 `model_terminal_cause` 判定（`outcome=='root_cause'` + `root_cause` 非空 + `required_cause_evidence` 非空且被主引用覆盖 + 无 `next_check/next_tools/next_arguments`）；成立时 `policy_check = None`，不再排策略检查 |
+| 2 | 末轮「声明终态但不给原因」的空壳提议（`conclusion_level='confirmed_cause'`/`outcome='root_cause'` 但 `root_cause`、`root_cause_code`、`supporting_evidence` 全空）被当作普通降级接受，并把一条 `unresolved/noncritical` 替代解释留成终局 | 同上 + 模块级 `empty_terminal_claim(decision)` / `_EMPTY_TERMINAL_CLAIM` | 显式识别空壳终态主张：追加 `validation_issues`、清空原因与原因码、置 `investigating/unlocated`、写入 `blocked_reason`；主张本身不构成结论，也不许据此把替代解释当已排除 |
+
+保留不变：`diagnosis['contradictions']` 仍原样输出模型待核实说明；系统派生的现场事实冲突（`superseded_citations` / 证据失效）仍照旧否决结论；`investigation_memory` 仍保留本轮 `model_suggestion` 原文；报告层仍分 `contradictions`（模型说明）与 `conflicts`（现场冲突）两个键。
+
+### 回放验证（039/041 真实提议，`model_calls=0`）
+
+- `runtime/aiops-goal-041/replay_041_fixed.py` → `replay-041-fixed.json`：用修补后的引擎重放 041 的 checkpoint 15/16/17/18。
+  - checkpoint 16（模型已给出 `confirmed_cause` + `configured_downstream_endpoint_mismatch`）：**旧代码**记录的策略检查 `failed_loopback_dependency_listener_check` 不再排入 → `replayed_plan=[]`、`replayed_policy=null`、`replayed_diagnosis_kind='confirmed_cause'`。
+  - checkpoint 17（同一提议、5236 快照已采集）：同样 `confirmed_cause`、无策略检查。
+  - checkpoint 18（空壳终态提议）：仍为 `localized_fault`，但 `blocked_reason` 换成本轮的空白主张说明，**不再把空壳当作「已确认」**。
+- `runtime/aiops-goal-041/step7-policy-necessity.json`：在策略被禁用的条件下复算 checkpoint 16/17，两次都 `required_cause_evidence` 5/5 齐备且被引用 → 该策略检查在证据链上并非必需，纯属抢跑。
+
+### 单测（新增 3 条，`tests/test_investigation_fusion.py`）
+
+| 用例 | 断言 |
+|---|---|
+| `test_complete_cause_is_not_reopened_by_a_policy_followup_check` | 证据完整的终态结论 → `plan==[]`、`confirmed_cause`、`policy_selected_check is None`（先断言 `dependency_followup_policy` 确实会排队，确保测的是抢占场景） |
+| `test_incomplete_cause_still_lets_the_policy_queue_its_check` | 少引用一条必需证据时 → 不产出诊断、`plan` 非空、策略检查仍被排入（防止放宽过度） |
+| `test_terminal_claim_without_a_cause_is_rejected_instead_of_downgraded` | 空壳终态主张 → 无 `diagnosis`、`unlocated/investigating`、原因与原因码清空、含 `_EMPTY_TERMINAL_CLAIM`、替代解释保持 `unresolved`（原 decision 未被就地改写） |
+
+### 回归结果
+
+- `pytest tests/test_investigation_strategy.py tests/test_investigation_boundaries.py tests/test_investigation_fusion.py tests/test_decision_replay.py -q` → **292 passed, 1 warning**（改造前 289，+3 为实现新用例）。
+- `pytest tests/test_decision_replay.py tests/test_investigation_strategy.py -q` → **165 passed, 1 warning**（免费门既有门槛不变）。
+- 全量 `pytest tests -q` → **2063 passed, 37 failed**；用 `git stash` 回到干净 HEAD `7111780` 复跑得 **2060 passed, 37 failed**，`Compare-Object` 显示两组的失败集合**完全相同**（37 个均为既存失败：`test_matching503_output_flow.py` 24、`test_four_issue_closeout.py` 6、`test_agent_knowledge_consumption.py` 5、`test_live_probe_mechanisms.py` 1、`test_probe_summary_output_flow.py` 1），本次改动未新增失败。
+
+### 仍未做的事
+
+- 没有跑新的付费轮次：要声称「修复后稳定复现」，仍需用户另行授权一轮（042）真实复跑验证。
+
 ## Goal 完成判定（2026-11-07）
 
 两道门的通过条件逐条对应如下，全部为产品侧可复现证据，不以 `workflow completed`、`localized_fault` 或环境 `ready` 作为通过依据：
@@ -644,5 +681,7 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 结论：A 门（免费门）与 B 门（单轮真实门）在 036、037、038、040 四轮均已通过，六个状态位全部 `passed`；039 的第三次复跑暴露了一个真实缺陷并以 `localized_fault` 结束（**修复前 Gate B 可复现率为 3/4**）。039 的失败模式已定位到 `sufficient` 中 `not decision.contradictions` 与「待核实说明」字段的耦合（模型提议本身是正确且证据完整的 `confirmed_cause`）。**该处已于 2026-11-07 按用户授权修好并验证**（见「判定逻辑修复」一节：039 真实提议回放由 `localized_fault` 变为 `confirmed_cause`，系统派生的现场事实冲突仍否决，四个核心测试文件 289 passed，全量 37 个失败与干净 HEAD 同一集合），**并在 040 轮次以全新 5 元额度真实复跑重新得到 `confirmed_cause` + `configured_downstream_endpoint_mismatch`（见「040 轮次复跑记录」），修复后 Gate B 可复现率为 4/5**。
 
 **2026-11-08 补充：041 修复后第二次复跑未通过（`localized_fault`）。** 该轮失败与 039 不同源——`contradictions` 为空、039 的修复仍生效；失败模式是「策略引擎在结论已完整时抢先排入一次 loopback 监听检查」+「末轮模型自己退回空壳提议（0 条支撑引用、把一条 unresolved 非关键替代改成 supported 且 critical）」两段耦合（见「041 轮次复现记录」）。因此**修复后的真实复跑为 1 通过 / 2 尝试，尚未达到稳定复现**；含全部六轮为 4/6。历史轮次（036/037/038/040）的通过事实不变，但「稳定复现」这一更强主张需先修掉上述两处问题后复跑验证才能成立。
+
+**2026-11-08 补充之二：这两处已按用户授权修好并验证（见「判定逻辑修复之二」）。** 用 041 的真实 checkpoint 回放：checkpoint 16/17 的完整结论不再被策略检查抢占（`plan=[]`、`confirmed_cause`），末轮空壳提议被显式拒绝而非降级接受；新增 3 条单测，四个核心文件 **292 passed**，全量失败集合与干净 HEAD 完全相同（37 个既存失败）。**仍缺一步：尚未用新额度真实复跑，因此「修复后稳定复现」目前仍不能宣称——需要 042 轮次实测。**
 
 仍照实保留的限制：原始 SSE 帧未落盘（以 checkpoint + 工具轨迹 + 模型输入 + 账本重建轨迹替代）、部分候选检查提议因工具目录/重复检查被拒、`/steps` 未启用（`total: 0`）、普通用户 `can_read_raw=false`、`localapp` 事件通道未配置。

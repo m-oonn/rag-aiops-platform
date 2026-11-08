@@ -202,6 +202,62 @@ def test_system_detected_field_conflict_still_blocks_a_confirmed_cause():
     assert rejected['investigation_memory']['contradictions'] == rejected['diagnosis']['contradictions']
 
 
+def test_complete_cause_is_not_reopened_by_a_policy_followup_check():
+    """A fully cited terminal cause must not be pushed back into another round."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    # The policy would queue a listener check for the failing loopback port; the
+    # conclusion already rests on that very observation, so queueing it only
+    # drops a complete answer.
+    assert inv.dependency_followup_policy(state, records)
+
+    accepted = inv.decide_from_evidence(state, _endpoint_cause_decision(state, records), records)
+
+    assert accepted['plan'] == []
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert accepted['diagnosis']['root_cause_code'] == 'configured_downstream_endpoint_mismatch'
+    assert accepted['investigation_memory']['policy_selected_check'] is None
+
+
+def test_incomplete_cause_still_lets_the_policy_queue_its_check():
+    """The relaxed policy gate must not swallow a conclusion that lacks evidence."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records)
+    decision.supporting_evidence = decision.supporting_evidence[:-1]
+
+    update = inv.decide_from_evidence(state, decision, records)
+
+    assert not update.get('diagnosis')
+    assert update['plan']
+    assert update['investigation_memory']['policy_selected_check']['kind'] == \
+        'failed_loopback_dependency_listener_check'
+
+
+def test_terminal_claim_without_a_cause_is_rejected_instead_of_downgraded():
+    """An empty terminal claim names no cause, so it may not confirm or exclude anything."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    empty = inv.InvestigationDecision(hypothesis='localapp 使用了未登记的下游端口',
+        conclusion_level='confirmed_cause', outcome='root_cause',
+        scope='edge /api/availability 本次失败请求',
+        alternatives=[inv.Alternative(explanation='localapp 应用层自身返回 503',
+            status='supported', critical=True)])
+
+    update = inv.decide_from_evidence(state, empty, records)
+
+    assert not update.get('diagnosis')
+    memory = update['investigation_memory']
+    assert memory['conclusion_level'] == 'unlocated' and memory['outcome'] == 'investigating'
+    assert memory['root_cause'] == '' and memory['root_cause_code'] == ''
+    assert inv._EMPTY_TERMINAL_CLAIM in memory['validation_issues']
+    assert [item['status'] for item in memory['alternatives']] == ['unresolved']
+    assert empty.alternatives[0].status == 'supported'
+
+
 def test_endpoint_missing_configured_upstream_probe_is_scheduled_before_localized_stop():
     state = _wrong_endpoint_state(omit=('upstream',))
     state['target_resolution']['allowed_services'].append('edge')
