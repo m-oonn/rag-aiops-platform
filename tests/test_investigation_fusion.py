@@ -258,6 +258,89 @@ def test_terminal_claim_without_a_cause_is_rejected_instead_of_downgraded():
     assert empty.alternatives[0].status == 'supported'
 
 
+def test_exclusion_supported_by_a_live_predicate_survives_non_verbatim_prose():
+    """A re-derived exclusion is verified by the observation, not by the model's prose.
+
+    ``_validate_alternatives`` re-derives the finite predicate from the collected
+    records and deliberately accepts a ``derived_status`` even when the model's
+    sentence does not repeat the condition text.  The sufficiency gate must not
+    demand that verbatim binding a second time.
+    """
+    state = _endpoint_state_with_request_logs()
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records)
+    condition = inv.ObservationCondition(operation='dependency_probe', object_name='downstream',
+        field='tcp', expected='failed')
+    # The prose is a natural-language causal claim, so it does not bind to the
+    # condition text; only the collected probe decides the predicate (tcp == ok).
+    decision.alternatives.append(inv.Alternative(
+        explanation='登记端点 downstream(11750) 本身未监听，导致 localapp 上游失败（而非配置错配）。',
+        status='excluded', critical=True, claim_type='observed_condition', condition=condition,
+        evidence=[inv.Citation(evidence_id='e3.1')]))
+
+    accepted = inv.decide_from_evidence(state, decision, records)
+
+    rejected = next(item for item in accepted['investigation_memory']['alternatives']
+                    if item['claim_type'] == 'observed_condition' and item['critical'])
+    assert rejected['verification'] == 'predicate_verified'
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert accepted['diagnosis']['root_cause_code'] == 'configured_downstream_endpoint_mismatch'
+    # The model's prose is never presented as the exclusion; the condition is.
+    assert accepted['diagnosis']['alternatives'][1]['explanation'] == \
+        inv.condition_statement(condition)
+
+
+def test_unverified_exclusion_still_blocks_the_cause():
+    """Relaxing the binding does not accept an exclusion nobody verified."""
+    state = _endpoint_state_with_request_logs()
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records)
+    decision.alternatives.append(inv.Alternative(
+        explanation='登记端点 downstream 本身未监听，导致 localapp 上游失败。',
+        status='excluded', critical=True, claim_type='observed_condition',
+        condition=inv.ObservationCondition(operation='ports', object_name='11751',
+            field='listening', expected=False),
+        evidence=[inv.Citation(evidence_id='e3.1')]))
+
+    update = inv.decide_from_evidence(state, decision, records)
+
+    assert (update.get('diagnosis') or {}).get('kind') != 'confirmed_cause'
+
+
+def test_closing_note_in_next_check_does_not_reopen_a_complete_cause():
+    """A model that restates its conclusion in next_check has still finished."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records,
+        next_check='证据链已齐备：downstream_port=11751 无监听且登记端点 11750 正常；不再新增工具检查。')
+
+    accepted = inv.decide_from_evidence(state, decision, records)
+
+    memory = accepted['investigation_memory']
+    assert accepted['plan'] == []
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert memory['next_check'] == ''
+    assert '模型把收束说明写在 next_check 里' in ' '.join(memory['validation_issues'])
+
+
+def test_incomplete_check_still_stops_when_the_cause_is_not_complete():
+    """A closing note may not rescue a proposal that names no verified cause."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records,
+        next_check='证据链已齐备：不再新增工具检查。')
+    decision.supporting_evidence = decision.supporting_evidence[:-1]
+
+    update = inv.decide_from_evidence(state, decision, records)
+
+    assert not update.get('diagnosis')
+    memory = update['investigation_memory']
+    assert '模型把收束说明写在 next_check 里' not in ' '.join(memory['validation_issues'])
+    assert memory['conclusion_level'] != 'confirmed_cause'
+
+
 def test_endpoint_missing_configured_upstream_probe_is_scheduled_before_localized_stop():
     state = _wrong_endpoint_state(omit=('upstream',))
     state['target_resolution']['allowed_services'].append('edge')

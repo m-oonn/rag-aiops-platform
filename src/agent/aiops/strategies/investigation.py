@@ -3703,6 +3703,21 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
                 '根因缺少受支持的原因码或完整同请求证据链；保留为未确认假设。')
             decision.root_cause, decision.root_cause_code = '', ''
             decision.outcome, decision.conclusion_level = 'investigating', 'unlocated'
+    # A model sometimes restates its conclusion in next_check instead of
+    # clearing the field, e.g. "证据链已齐备…；不再新增工具检查。".  With no
+    # executable field set the text is a closing note, so it may not turn a
+    # complete cause into an incomplete check proposal.
+    if (decision.outcome == 'root_cause' and bool(decision.root_cause)
+            and bool(required_cause_evidence)
+            and required_cause_evidence <= {citation.evidence_id
+                                            for citation in decision.supporting_evidence}
+            and not decision.next_tools and not decision.next_arguments
+            and not decision.discriminating_question.strip()
+            and not decision.expected_observation.strip()
+            and decision.next_check.strip()):
+        decision.validation_issues.append(
+            '模型把收束说明写在 next_check 里；本轮按停止处理，不把它当作可执行检查。')
+        decision.next_check = ''
     model_terminal_cause = (decision.outcome == 'root_cause' and bool(decision.root_cause)
         and bool(required_cause_evidence)
         and required_cause_evidence <= {citation.evidence_id
@@ -3827,8 +3842,13 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
         (bool(decision.root_cause) or decision.outcome == "healthy")
         and _valid_citations(decision.supporting_evidence, scoped_records)
         and bool(decision.alternatives) and not field_conflicts
+        # ``_validate_alternatives`` already re-derived and verified the finite
+        # predicate of every surviving exclusion, including the case where the
+        # model's prose does not repeat the condition text verbatim (that prose
+        # is never shown as the exclusion; ``_public_alternative`` replaces it
+        # with the condition statement).  Re-demanding a verbatim binding here
+        # would reject a conclusion an independent live observation supports.
         and all((a.status == "excluded" and a.verification == 'predicate_verified'
-                 and _condition_bound(a.explanation, a.condition)
                  and _valid_citations(a.evidence, scoped_records))
                 or (not a.critical and bool(a.noncritical_reason.strip()))
                 for a in decision.alternatives)
