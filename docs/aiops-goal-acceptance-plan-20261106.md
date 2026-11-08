@@ -1061,6 +1061,85 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 
 046 是连续五轮的第三轮，结论 `confirmed_cause` + 正确原因码 → 本轮**通过**。纳入统计：含全部十一轮（036–046，各轮 P/P/P/F/P/F/P/P/F/P/P）为 **8/11**；修复二之后（042–046）为 **4/5**。该轮还额外提供一个信号：模型把「`ports/10342: listening == false`」作为 *supported* 替代解释与主根因并列，系统未因此降级，说明修复后「已核实的并列解释」不再被误判为冲突。
 
+## 047 轮次复跑记录（2026-11-08）——连续五轮之第 4 轮，本轮通过
+
+用户授权（m04885「1，连续跑五轮」）后按门禁规则执行；这是连续五轮（044–048）的第四轮。
+
+### 环境与预算
+
+| 项 | 值 |
+|---|---|
+| 基线 | `HEAD=3556fa6`（046 记录已提交）、`8200` 空闲、目录 `runtime/aiops-goal-047` 起跑前不存在 |
+| 环境 | `start --scenario endpoint --duration-seconds 3600`，`target_id=aiops-test-a8de5c417762`，`gateway=http://127.0.0.1:4572/mcp`，`status=ready`，`environment_acceptance=passed`，首个业务请求 `c017ef466a1e40a693974a68de1d8511` → **503**，`environment_model_calls=0`，`started_at=2026-11-08T02:21:11.080604Z` |
+| 端口 | edge 4568 / localapp 4569 / downstream 4570 / 无监听上游 **4571**；`business/localapp.connection.json` = `{"downstream_port": 4571, "upstream_timeout_seconds": 0.5}` |
+| 继承账本 | `runtime/aiops-goal-046/product-model/cost.json`（2434063 B、`353a859efcba…`、1340 行、`reserved_cny=54.171904`） |
+| 轮次 manifest | `product-model/run-budget.json` 204 B `d2e369d1bff1…` = `inherited_requests=1340`、`inherited_reserved_cny=54.171904`、`run_limit_cny=5`、`previous_sha256=353a859e…` |
+| 轮次账本 | 点击前 1340 行、`reserved_cny=54.171904`、`limit_cny=59.171904`；结束时 1349 行、`reserved_cny=54.57452` |
+| 本轮新增预留 | **0.402616** 元（≤5 元上限；9 次请求 1341–1349，全部 `deepseek-v4.1-flash-1017` 已定价、有 usage、`blocked_requests` 仍为 9） |
+
+### 单次点击与结论
+
+- 前端官方页 `playwright-cli -s=aiops047`：`browser-start.js` 执行后页面停在 `/aiops`，返回 `{"clicked":1,"post_count":1,"post_status":200}`；`aiops_runs` 仅 1 行。
+- 运行行：`web-vis4spun-b4bf7d422e2846f49067535f77a3ecd2`、`status=completed`、`2026-11-08 02:22:23` → `02:23:12`，报告 **5354** 字符；`aiops_evidence` 12 行、checkpoints 13 / writes 77。
+- 结论：**`kind=confirmed_cause`、`root_cause_code=configured_downstream_endpoint_mismatch`**，`target=aiops-test-a8de5c417762`，`diagnosis.evidence` **14** 条，`alternatives` 4 条（全部 `excluded`：downstream TCP failed 被 downstream 200 反驳、`ports/4571: listening == true`、edge `connection_established=false`、localapp `phase == "completed"`），`contradictions=[]`、`observation_conflicts=[]`、`unresolved=[]`、`stop_reason` 空、`leading_id=h-563bc2f551d5c9f1`、investigation 7 candidates / 3 check_progress / 1 event。
+- 2 条 `validation_issues`：假设文字含义未验证；`dependency_probe/downstream` 候选检查不可调度（此前已执行）。
+- 12 次工具调用全部 `validated_live_evidence=true`：`probe_inventory`、`probe_process_snapshot` ×3、`probe_port_snapshot {listening_only:true,limit:256}`、`probe_text_log`（edge）、`probe_dependency_probe {localapp}`、`probe_config_snapshot`（localapp）、`probe_text_log`（localapp）、`probe_dependency_probe {downstream}`、`probe_dependency_probe {localapp_upstream}`、`probe_port_snapshot {local_port:4571,listening_only:true}`。
+- 报告口径：`localapp.connection.json` 中 `downstream_port=4571`（登记端点 4570），4571 无监听、TCP `ConnectionRefusedError`，localapp 在 connect 阶段失败（`phase=connect`、`connection_established=false`、`detail=upstream connection failed`）后返回 503，edge 已连上 localapp 并原样转发。
+
+### 5B 验收表（047 轮次）
+
+| 通过条件 | 结果 | 证据 |
+|---|---|---|
+| 新目录 + 继承上一轮最新账本（hash/条数/历史未知项） | passed | `chain-equivalence.json`（`chain_equivalent=true`、`inherited_rows=1340`、`rows_1_to_history_byte_identical_all_14=true`、`unknown_usage_rows` 全 `[710]`） |
+| 本轮新预留 ≤5 元 | passed | `result-summary.json`：`round_reserved_cny=0.402616`、`within_run_cap=true`、无未定价/未知新行 |
+| 前端官方页恰好发起一次诊断 | passed | `browser-start.js` 返回 `post_count=1`、`aiops_runs` 仅 1 行、账本仅新增 9 条请求 |
+| SSE 事件、工具执行、模型输入和结果文件留存 | passed（含如实限制） | `event-trail-reconstructed.json`（checkpoint 13 + 工具 12 + 模型请求 9）、`product/tool_trace.json`、`model-inputs/` 9 份脱敏输入、`report.txt`；原始 SSE 帧未落盘 |
+| 以合法工具取得并引用证据 | passed | 12 次 Probe/MCP 调用全部有效；报告引用 10 个 ev id（共 12 条证据） |
+| 应用加载的下游端口 + 配置哈希 | passed | `ev-d8c3676bfb5a40f8aaf8b4828988bb25`（`downstream_port=4571`、`source_sha256=2ac57238…`） |
+| 同请求应用失败日志 | passed | `ev-4b4ff612e9c547f2abc258fa850ff499`（`request_id=c017ef46…`、`phase=connect`、`connection_established=false`、503） |
+| 错误端口无监听/不可达 | passed | `ev-86efdf8aa950480482daaafbb4c4ca72`（4571 TCP failed / `ConnectionRefusedError`）+ `ev-a9586438dfd74cdba4b1714829da5ca1`（4571 无 LISTEN） |
+| 登记下游健康 | passed | `ev-a6c2520552a14cdf80fef7d6760d50f7`（4570 TCP ok / HTTP 200） |
+| edge 与 localapp 同 `request_id` 失败链 | passed | `ev-22a50486051640ffa2d229eb75b4c3a5` + `ev-4b4ff612e9c547f2abc258fa850ff499` |
+| 最终 `completed` + `confirmed_cause` + 原因码 | passed | `result-summary.json`、`run-detail.json` |
+| 报告六项内容齐全 | passed | `report-headings.json`（六项全 true）、`report.txt` 5354 字符 |
+| 不臆断无来源历史 | passed | 报告把配置变更者、变更时间、动机列为未知 |
+| 刷新后报告可读 | passed | 刷新后报告 11744 字符、`原因已确认`、`evidence_nodes=40`、`aiops_post_after_refresh=0` |
+| 同轮次后端停止/重启后一致 | passed | `acceptance-after-restart.json` 与 live 同 `report_sha256=722b5324e59d…`、`evidence_total=12`、`requests 1349 → 1349` |
+| 读取阶段零模型调用 | passed | live 与重启后两次读取均 `1349 → 1349`，`ledger_unchanged=true`、`evidence_files_unchanged=true` |
+| 数据库内容一致 | passed | `logical-digest-final.json`（`all identical: True`）、`wal-attribution.json`、`heartbeat-drift.json`（仅 `probe_snapshots` 4→5 与 `probe_targets` 心跳变化） |
+| 证据完整性 | passed | `gate-b-acceptance.json` 五类全 `ok/cited/hash=true`；`gate-b-checks.json` `evidence_all_hash_verified=true`、`bad evidence: []`、稳定产物 **8** 项字节一致（仅 `checkpoints.sqlite` 因 WAL checkpoint 变化） |
+| 预算 ≤5 元 | passed | `round_reserved_cny=0.402616`、`limit_cny=59.171904`、`within_run_cap=true` |
+| 环境恢复与清理 | passed | `environment.json`：`stopped`、`three_business_endpoints_200`、`ports_released=true`、`owned_processes_stopped=true`、`cleanup_errors=[]`、`ended_at=2026-11-08T02:26:24.268074Z` |
+
+### 交付物（047 轮次，含重建件）
+
+| 文件 | 字节 | SHA256（前 12 位） | 内容 |
+|---|---|---|---|
+| `result-summary.json` | 1454 | `5b0dddac5f20` | 轮次摘要（含预算、环境、artifact hashes） |
+| `decision-audit.json` | 16559 | `963c4e1495c5` | 只读重建的决策审计 |
+| `latest-state.json` | 77168 | `c201cc70cde8` | 最终 diagnosis + investigation 状态 |
+| `event-trail-reconstructed.json` | 20318 | `1ca3d709cd24` | checkpoint/工具/模型请求时序轨迹 |
+| `chain-equivalence.json` | 4214 | `76e86d200273` | 十四段账本继承等价性（`rows_added_per_round` 到 047 为 9、`round_spent_cny=0.402616`） |
+| `gate-b-acceptance.json` | 4475 | `df043939441b` | 五类必需证据映射（全满足） |
+| `gate-b-checks.json` | 15271 | `879f8b6d653a` | 产物哈希对比与预算块 |
+| `evidence-hashes.json` | 7415 | `88b6fb62cad2` | 34 文件 + 12 证据 + 9 model-inputs（独立复算 0 不符 / 0 缺失） |
+| `report.txt` | 8150 | `870f541a595a` | 报告原文（5354 字符） |
+| `ckpt-decoded.json` | 7669 | `b84558daa585` | checkpoint 解码（诊断写 `1f1db1b5-…`） |
+| `product-model/cost.json` | 2451129 | `b925659c1e46` | 轮次账本（1349 行） |
+| `product-model/run-budget.json` | 204 | `d2e369d1bff1` | 本轮 5 元额度基线 |
+
+### 剩余限制
+
+- 原始 SSE 帧未落盘；以 checkpoint + 工具轨迹 + 模型输入 + 账本重建轨迹替代。
+- `/steps` 接口未启用；普通用户 `can_read_raw=false`。
+- 报告仅引用 12 条证据中的 10 条（未引用：`ev-7da8e34a…` 主机清单、`ev-529ae666…` 全量端口清单）。
+- 2 条校验提示：假设文字含义未验证、downstream 依赖探测候选不可调度。
+- `checkpoints.sqlite` 主文件重启前后不可逐字节比较（WAL checkpoint），已用逻辑摘要与心跳归因替代。
+
+### 对 Goal 判定的影响
+
+047 是连续五轮的第四轮，结论 `confirmed_cause` + 正确原因码 → 本轮**通过**。纳入统计：含全部十二轮（036–047，P/P/P/F/P/F/P/P/F/P/P/P）为 **9/12**；修复二之后（042–047）为 **5/6**。该轮的特点是三条 `excluded` 替代解释都由实测证据直接反驳（downstream 200、4571 有监听、localapp `phase=completed`），说明「排除替代解释」并非走过场。
+
 ## Goal 完成判定（2026-11-07）
 
 两道门的通过条件逐条对应如下，全部为产品侧可复现证据，不以 `workflow completed`、`localized_fault` 或环境 `ready` 作为通过依据：
@@ -1069,10 +1148,10 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 |---|---|---|
 | `free_replay` | `passed` | 034 原始材料 75/75 hash 一致；回放忠实重现 `unlocated`（`model_calls=0`、`new_observations=0`）；反馈四态区分（漏引用 / 未采集 / 不完整 / 矛盾）有单测断言，且不含根因码、引用文本、工具名与工具参数；165 个测试通过（唯一警告为既有 PyMilvus 弃用） |
 | `free_environment` | `passed` | `endpoint`（目录 c）与 `normal`（目录 d）各自全新目录独立判定：真业务请求、同 `request_id` 的 edge/localapp 日志经 Probe/MCP 唯一命中且状态一致、轮次切换后旧日志残留 0、停止后三入口 200；`freegate-20261106-b/evidence-hashes.json` 22/22 命中磁盘 |
-| `paid_run` | `passed`（注意：039、041、044 未通过，040、042、043、045、046 通过） | 036 在未提交工作区、037 在干净 main 上各跑一轮单轮授权，038 再独立复跑一轮通过，039 第三次复跑未通过，040 修复判定逻辑后再跑一轮通过，041 修复后第二次复跑未通过，042、043 修复「策略抢排 + 空壳提议」后各再跑一轮通过，044 连续五轮第一轮未通过、045 第二轮与 046 第三轮通过：036 新增 17 次请求（1192–1208）新增预留 0.833756 元；037 新增 17 次（1209–1225）0.920086 元；038 新增 15 次（1226–1240）0.794704 元；039 新增 14 次（1241–1254）0.613538 元；040 新增 15 次（1255–1269）0.776214 元；041 新增 13 次（1270–1282）0.669814 元；042 新增 14 次（1283–1296）0.64755 元；043 新增 9 次（1297–1305）0.359006 元；044 新增 12 次（1306–1317）0.590998 元；045 新增 9 次（1318–1326）0.424168 元；046 新增 14 次（1327–1340）0.72052 元。十一轮均在各自重置后的 5 元上限内；全部 `deepseek-v4.1-flash-1017` 且已定价，无新增未知 usage、无未定价新行、`blocked_requests` 未增加；账本继承等价性由各轮 `chain-equivalence.json` 独立复核（046 为十三段链，脚本已改为按自身目录自动推导段数） |
-| `root_cause` | `passed`（036/037/038/040/042/043/045/046 八轮通过；039、041、044 未通过） | 036/037/038/040/042/043/045 均为 `completed` + `confirmed_cause` + `configured_downstream_endpoint_mismatch`，五类必需证据全部由合法工具取得并被报告引用；无来源历史均列为未知。**039 同一场景得到 `localized_fault`**：模型提议是正确的 `confirmed_cause`，但因其在 `contradictions` 里写了「8944 历史原因未知」而触发 `sufficient` 的 `not decision.contradictions` 否决；该缺陷已修复，040 在同一场景重新得到 `confirmed_cause`。**041 修复后第二次复跑又得到 `localized_fault`**：模型在 checkpoint 16/17 已给出证据完整的 `confirmed_cause`（5 条必需证据齐备且被引用），但策略引擎在同期抢先排入一次 loopback 监听检查，多走一轮后末轮模型自己交回空壳提议（`supporting_evidence` 0 条、把一条 `unresolved/noncritical` 替代解释改成 `supported/critical`），终局降级；两处已修复，**042 与 043 连续两轮重新得到 `confirmed_cause`**（043 仅用 9 次请求即收束、无 unresolved 项）。**044 连续五轮第一轮得到 `unlocated`**：模型末轮提议同样是证据完整的 `confirmed_cause`（10 条支撑、正确原因码），但它在最后一条 alternative 上把已有候选 `h-7676d16ebd50773f`（edge 日志）的 id 与 `ports/1871` 的 condition 配错，触发 `_resolve_candidate_identity` 的身份熔断（`src/agent/aiops/strategies/investigation.py:1916-1919`、清空段 `:1986-1989`），且该轮未采集错误端口探测与 downstream 依赖健康两类证据；回放显示仅清空错配 id 也只是让引擎继续调查（`plan 1`），不会自动升为结论。**045 第二轮恢复 `confirmed_cause`**：16 条证据、5 条替代解释、13 次工具调用覆盖全部五类必需证据，且模型本轮写入 1 条同类 `contradictions` 仍未被降级（修复一稳定）。**046 第三轮继续 `confirmed_cause`**：14 条证据、13 次工具调用、4 条替代解释（其中 `ports/10342: listening == false` 为 supported 且未导致降级），报告直接给出配置端口与登记端点的对齐结论。详见「039 轮次复现记录」「判定逻辑修复」「040 轮次复跑记录」「041 轮次复现记录」「判定逻辑修复之二」「042 轮次复跑记录」「043 轮次复跑记录」「044 轮次复跑记录」「045 轮次复跑记录」「046 轮次复跑记录」 |
-| `report_persistence` | `passed` | 036：刷新后报告 15678 字符且 `aiops_post_after_refresh=0`，重启后 `report_sha256=23b73151fa45…`、`requests 1208 → 1208`；037（干净 main）：刷新后 13247 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=34a4de2818b3…`、`evidence_total=14`、`requests 1225 → 1225`；038（干净 main 复跑）：刷新后 16033 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=cd9acfb3fccd…`、`evidence_total=14`、`requests 1240 → 1240`；039（未通过轮）：刷新后 11154 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=e13e19b4c938…`、`evidence_total=13`、`requests 1254 → 1254`；040（修复后轮）：刷新后 15012 字符、`evidence_nodes=42`、`aiops_post_after_refresh=0`，重启后 `report_sha256=87984ac7ba23…`、`evidence_total=14`、`requests 1269 → 1269`；041（未通过轮）：刷新后 12608 字符、`evidence_nodes=39`、`aiops_post_after_refresh=0`，重启后 `report_sha256=2fd7b87415ff…`、`evidence_total=13`、`requests 1282 → 1282`；042（修复后轮）：刷新后 12343 字符、`evidence_nodes=37`、`aiops_post_after_refresh=0`，重启后 `report_sha256=2c3cab27701a…`、`evidence_total=12`、`requests 1296 → 1296`；043（修复后轮）：刷新后 13394 字符、`evidence_nodes=32`、`aiops_post_after_refresh=0`，重启后 `report_sha256=8edcb711be36…`、`evidence_total=9`、`requests 1305 → 1305`；044（连续五轮第 1 轮，未通过轮）：刷新后 10030 字符、`evidence_nodes=30`、`aiops_post_after_refresh=0`，重启后 `report_sha256=90f58a7128c7…`、`evidence_total=10`、`requests 1317 → 1317`；045（连续五轮第 2 轮，通过）：刷新后 14661 字符、`evidence_nodes=40`、`aiops_post_after_refresh=0`，重启后 `report_sha256=e7b69c42af97…`、`evidence_total=13`、`requests 1326 → 1326`；046（连续五轮第 3 轮，通过）：刷新后 12368 字符、`evidence_nodes=40`、`aiops_post_after_refresh=0`，重启后 `report_sha256=ca3711208022…`、`evidence_total=13`、`requests 1340 → 1340`。十一轮的稳定产物字节一致，WAL/checkpoint 增长经逻辑摘要与心跳归因确认为 SQLite 检查点与 Probe 心跳，诊断内容不变 |
-| `cleanup` | `passed` | 035/036/037/038/039/040/041/042/043/044/045/046/c/d 十四个 `environment.json` 全部 `status=stopped`、`recovery=three_business_endpoints_200`、`ports_released=true`、`owned_processes_stopped=true`、`cleanup_errors=[]`、`environment_model_calls=0`；10335–10345、14805–14815、1865–1880、4055–4070、4195–4210、7201–7210、3580–3595、5230–5240、8940–8950、9890–9900、8200、9083、9087 均无监听，无残留 python 进程 |
+| `paid_run` | `passed`（注意：039、041、044 未通过，040、042、043、045、046、047 通过） | 036 在未提交工作区、037 在干净 main 上各跑一轮单轮授权，038 再独立复跑一轮通过，039 第三次复跑未通过，040 修复判定逻辑后再跑一轮通过，041 修复后第二次复跑未通过，042、043 修复「策略抢排 + 空壳提议」后各再跑一轮通过，044 连续五轮第一轮未通过、045 第二轮、046 第三轮与 047 第四轮通过：036 新增 17 次请求（1192–1208）新增预留 0.833756 元；037 新增 17 次（1209–1225）0.920086 元；038 新增 15 次（1226–1240）0.794704 元；039 新增 14 次（1241–1254）0.613538 元；040 新增 15 次（1255–1269）0.776214 元；041 新增 13 次（1270–1282）0.669814 元；042 新增 14 次（1283–1296）0.64755 元；043 新增 9 次（1297–1305）0.359006 元；044 新增 12 次（1306–1317）0.590998 元；045 新增 9 次（1318–1326）0.424168 元；046 新增 14 次（1327–1340）0.72052 元；047 新增 9 次（1341–1349）0.402616 元。十二轮均在各自重置后的 5 元上限内；全部 `deepseek-v4.1-flash-1017` 且已定价，无新增未知 usage、无未定价新行、`blocked_requests` 未增加；账本继承等价性由各轮 `chain-equivalence.json` 独立复核（047 为十四段链，脚本已改为按自身目录自动推导段数） |
+| `root_cause` | `passed`（036/037/038/040/042/043/045/046/047 九轮通过；039、041、044 未通过） | 036/037/038/040/042/043/045 均为 `completed` + `confirmed_cause` + `configured_downstream_endpoint_mismatch`，五类必需证据全部由合法工具取得并被报告引用；无来源历史均列为未知。**039 同一场景得到 `localized_fault`**：模型提议是正确的 `confirmed_cause`，但因其在 `contradictions` 里写了「8944 历史原因未知」而触发 `sufficient` 的 `not decision.contradictions` 否决；该缺陷已修复，040 在同一场景重新得到 `confirmed_cause`。**041 修复后第二次复跑又得到 `localized_fault`**：模型在 checkpoint 16/17 已给出证据完整的 `confirmed_cause`（5 条必需证据齐备且被引用），但策略引擎在同期抢先排入一次 loopback 监听检查，多走一轮后末轮模型自己交回空壳提议（`supporting_evidence` 0 条、把一条 `unresolved/noncritical` 替代解释改成 `supported/critical`），终局降级；两处已修复，**042 与 043 连续两轮重新得到 `confirmed_cause`**（043 仅用 9 次请求即收束、无 unresolved 项）。**044 连续五轮第一轮得到 `unlocated`**：模型末轮提议同样是证据完整的 `confirmed_cause`（10 条支撑、正确原因码），但它在最后一条 alternative 上把已有候选 `h-7676d16ebd50773f`（edge 日志）的 id 与 `ports/1871` 的 condition 配错，触发 `_resolve_candidate_identity` 的身份熔断（`src/agent/aiops/strategies/investigation.py:1916-1919`、清空段 `:1986-1989`），且该轮未采集错误端口探测与 downstream 依赖健康两类证据；回放显示仅清空错配 id 也只是让引擎继续调查（`plan 1`），不会自动升为结论。**045 第二轮恢复 `confirmed_cause`**：16 条证据、5 条替代解释、13 次工具调用覆盖全部五类必需证据，且模型本轮写入 1 条同类 `contradictions` 仍未被降级（修复一稳定）。**046 第三轮继续 `confirmed_cause`**：14 条证据、13 次工具调用、4 条替代解释（其中 `ports/10342: listening == false` 为 supported 且未导致降级），报告直接给出配置端口与登记端点的对齐结论。**047 第四轮继续 `confirmed_cause`**：14 条证据、12 次工具调用，4 条替代解释全部由实测证据反驳（downstream HTTP 200、4571 有监听、localapp `phase=completed`、edge `connection_established=false`）。详见「039 轮次复现记录」「判定逻辑修复」「040 轮次复跑记录」「041 轮次复现记录」「判定逻辑修复之二」「042 轮次复跑记录」「043 轮次复跑记录」「044 轮次复跑记录」「045 轮次复跑记录」「046 轮次复跑记录」「047 轮次复跑记录」 |
+| `report_persistence` | `passed` | 036：刷新后报告 15678 字符且 `aiops_post_after_refresh=0`，重启后 `report_sha256=23b73151fa45…`、`requests 1208 → 1208`；037（干净 main）：刷新后 13247 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=34a4de2818b3…`、`evidence_total=14`、`requests 1225 → 1225`；038（干净 main 复跑）：刷新后 16033 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=cd9acfb3fccd…`、`evidence_total=14`、`requests 1240 → 1240`；039（未通过轮）：刷新后 11154 字符、`aiops_post_after_refresh=0`，重启后 `report_sha256=e13e19b4c938…`、`evidence_total=13`、`requests 1254 → 1254`；040（修复后轮）：刷新后 15012 字符、`evidence_nodes=42`、`aiops_post_after_refresh=0`，重启后 `report_sha256=87984ac7ba23…`、`evidence_total=14`、`requests 1269 → 1269`；041（未通过轮）：刷新后 12608 字符、`evidence_nodes=39`、`aiops_post_after_refresh=0`，重启后 `report_sha256=2fd7b87415ff…`、`evidence_total=13`、`requests 1282 → 1282`；042（修复后轮）：刷新后 12343 字符、`evidence_nodes=37`、`aiops_post_after_refresh=0`，重启后 `report_sha256=2c3cab27701a…`、`evidence_total=12`、`requests 1296 → 1296`；043（修复后轮）：刷新后 13394 字符、`evidence_nodes=32`、`aiops_post_after_refresh=0`，重启后 `report_sha256=8edcb711be36…`、`evidence_total=9`、`requests 1305 → 1305`；044（连续五轮第 1 轮，未通过轮）：刷新后 10030 字符、`evidence_nodes=30`、`aiops_post_after_refresh=0`，重启后 `report_sha256=90f58a7128c7…`、`evidence_total=10`、`requests 1317 → 1317`；045（连续五轮第 2 轮，通过）：刷新后 14661 字符、`evidence_nodes=40`、`aiops_post_after_refresh=0`，重启后 `report_sha256=e7b69c42af97…`、`evidence_total=13`、`requests 1326 → 1326`；046（连续五轮第 3 轮，通过）：刷新后 12368 字符、`evidence_nodes=40`、`aiops_post_after_refresh=0`，重启后 `report_sha256=ca3711208022…`、`evidence_total=13`、`requests 1340 → 1340`；047（连续五轮第 4 轮，通过）：刷新后 11744 字符、`evidence_nodes=40`、`aiops_post_after_refresh=0`，重启后 `report_sha256=722b5324e59d…`、`evidence_total=12`、`requests 1349 → 1349`。十二轮的稳定产物字节一致，WAL/checkpoint 增长经逻辑摘要与心跳归因确认为 SQLite 检查点与 Probe 心跳，诊断内容不变 |
+| `cleanup` | `passed` | 035/036/037/038/039/040/041/042/043/044/045/046/047/c/d 十五个 `environment.json` 全部 `status=stopped`、`recovery=three_business_endpoints_200`、`ports_released=true`、`owned_processes_stopped=true`、`cleanup_errors=[]`、`environment_model_calls=0`；4565–4575、10335–10345、14805–14815、1865–1880、4055–4070、4195–4210、7201–7210、3580–3595、5230–5240、8940–8950、9890–9900、8200、9083、9087 均无监听，无残留 python 进程 |
 
 结论：A 门（免费门）与 B 门（单轮真实门）在 036、037、038、040、042 五轮均已通过，六个状态位全部 `passed`；039 的第三次复跑暴露了一个真实缺陷并以 `localized_fault` 结束（**修复前 Gate B 可复现率为 3/4**）。039 的失败模式已定位到 `sufficient` 中 `not decision.contradictions` 与「待核实说明」字段的耦合（模型提议本身是正确且证据完整的 `confirmed_cause`）。**该处已于 2026-11-07 按用户授权修好并验证**（见「判定逻辑修复」一节：039 真实提议回放由 `localized_fault` 变为 `confirmed_cause`，系统派生的现场事实冲突仍否决，四个核心测试文件 289 passed，全量 37 个失败与干净 HEAD 同一集合），**并在 040 轮次以全新 5 元额度真实复跑重新得到 `confirmed_cause` + `configured_downstream_endpoint_mismatch`（见「040 轮次复跑记录」），修复后 Gate B 可复现率为 4/5**。
 
