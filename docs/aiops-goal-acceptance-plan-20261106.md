@@ -1432,6 +1432,35 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 - 累计口径更新：含全部十五轮（036–050）为 **10/15 通过**；修复一之后（040–050）为 **7/11**；修复二之后（042–050）为 **6/9**；修复三之后（050）为 **0/1**。
 - 与前三次未通过的关键区别：039、041、049 是系统侧缺陷（已修）；**050 是模型侧判断失误**（把一条未核实的竞争解释坚持标为 `critical=True` 且不写 `noncritical_reason`），按现行规则不应为它放松系统校验。
 
+## 零成本回放门禁（2026-11-08，用户 m06322「你来判断下一步是什么」后的决定）
+
+判断依据（先做零成本取证，再决定是否继续付费）：
+
+1. 050 的失败在模型侧，不是第四处系统缺陷。`replay_050.py` 用 050 的真实 checkpoint 做四个变体：按原文回放 → `localized_fault`（唯一阻塞 `alternatives_ok=false`）；只把那条未核实的因果解释改标 `critical=False` 并补 `noncritical_reason` → `confirmed_cause` + `configured_downstream_endpoint_mismatch`、`plan=[]`；把它整条删掉 → 同样 `confirmed_cause`；把它强行标 `excluded` 却不给证据 → 仍 `localized_fault` 并新增「因果主张不能由有限现场条件证明排除」的 issue。即系统没有放松校验的必要，也不该放松。
+2. 继续盲目付费复跑只是在掷骰子，且无法防止「以后改规则把已经通过的轮次改坏」。真正缺的是一道守卫。
+
+因此本轮新增两项零成本产物（`model_calls=0`、不产生任何费用）：
+
+- `scripts/replay_recorded_rounds.py`：扫描 `runtime/aiops-goal-0*`（轮次 ≥ 036）中含 `product/checkpoints.sqlite` 的目录，取每轮**最后一个 checkpoint** 里记录的 `investigation_memory.model_suggestion`，剔除 `diagnosis`/`response` 后用当天的 `decide_from_evidence` 重跑；录制时间取自该轮 `product/runs.sqlite` 的 `aiops_runs.updated_at`，用于固定 180 秒证据新鲜度判定。只读打开数据库（`?mode=ro`），不写轮次目录。`sweep()` 返回 `recorded_confirmed / replayed_confirmed / regressed / fixed_by_current_code / still_blocked / errors` 六个汇总位。
+- `tests/test_recorded_round_replay.py`：把上述结果做成 pytest 门禁，四条断言分别锁住「曾经通过的轮次不许回放失败」「因系统缺陷失败的 039、049 必须被当天规则接受」「仍被拒的轮次必须写明拒绝理由」「每轮回放都要落到终态诊断」。语料缺失时整组 skip（`runtime/` 是机器本地目录，不在版本控制内）。
+
+回放结果（14 轮全部可回放，2.3 秒，零模型调用）：
+
+| 轮次 | 录制结论 | 当天规则回放 | 说明 |
+|---|---|---|---|
+| 036/037/040/042/043/045/046/047/048 | `confirmed_cause` | `confirmed_cause` | 无回归 |
+| 039 | `localized_fault` | `confirmed_cause` | 修复一（`contradictions` 一票否决）生效 |
+| 049 | `localized_fault` | `confirmed_cause` | 修复三（重复条件绑定 + 收束文字误判）生效 |
+| 041 | `localized_fault` | `localized_fault`（拒绝理由：模型未提出下一项检查） | 见下方已知边界 |
+| 044 | `unlocated` | `unlocated`（拒绝理由：候选 ID 与预期不一致） | 模型把候选 id 与 condition 配错 |
+| 050 | `localized_fault` | `localized_fault`（拒绝理由：模型未提出下一项检查） | 模型把未核实解释标成 `critical=True` |
+
+汇总：`recorded_confirmed=9`、`replayed_confirmed=11`、`regressed=[]`、`fixed_by_current_code=['039','049']`、`still_blocked=['041','044','050']`、`errors=[]`。`pytest tests/test_recorded_round_replay.py -q` → **4 passed, 1 warning**（仅既有 PyMilvus 弃用）。
+
+**已知边界（041）**：041 录制下来的末轮提议在当天规则下仍被拒，说明修复二解决的是「完整结论被策略抢排」与「空壳终态被接受」，并不等于 041 末轮那份提议本身合格——它回放后没有原因码，只得到「模型未提出下一项检查」的拒绝。此处不追溯改写历史结论，只把它作为「回放门禁能区分修复生效与提议本身不合格」的例证记录。
+
+对 Goal 判定的影响：这道门禁不提升当轮通过率，也不改变十五轮 10/15 的事实；它把「改判定规则不许把已通过的轮次改坏」变成可执行、零费用的守卫，后续任何判定/提示词改动都应先跑它。
+
 ## Goal 完成判定（2026-11-07）
 
 两道门的通过条件逐条对应如下，全部为产品侧可复现证据，不以 `workflow completed`、`localized_fault` 或环境 `ready` 作为通过依据：
