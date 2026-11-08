@@ -40,7 +40,15 @@ FIXED_BY_CURRENT_RULES = ('039', '049')
 
 
 def _readonly(path):
-    return sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+    """Open a sqlite file read-only.
+
+    Sorting the checkpoint blobs spills to disk unless `temp_store` is memory,
+    and a read-only connection cannot create that spill file — which surfaces as
+    a misleading `unable to open database file`.
+    """
+    con = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+    con.execute('PRAGMA temp_store=MEMORY')
+    return con
 
 
 def load_round(directory):
@@ -112,8 +120,69 @@ def _rounds(root, min_round):
             yield digits, directory
 
 
+def corpus_path():
+    return ROOT / 'tests' / 'data' / 'recorded-rounds.json.gz'
+
+
+def load_corpus(path=None):
+    """Load the distilled corpus built by `scripts/distil_recorded_rounds.py`.
+
+    The paid rounds live under `runtime/`, which is machine-local and never
+    committed; the distilled corpus carries only what the decision reads, so the
+    gate can still run on a fresh checkout.
+    """
+    import gzip
+    path = Path(path) if path else corpus_path()
+    if not path.exists():
+        return []
+    return json.loads(gzip.decompress(path.read_bytes()).decode('utf-8'))
+
+
+def replay_distilled(record):
+    suggestion = record.get('suggestion') or {}
+    state = record.get('state') or {}
+    with patch.object(settings, 'PROBE_TARGET_ID', record.get('target_id')):
+        now = datetime.fromisoformat(str(record['recorded_at'])).replace(tzinfo=timezone.utc)
+        records = evidence_index(state, now=now)
+        update = decide_from_evidence(state, InvestigationProposal.model_validate(suggestion), records)
+    diagnosed = update.get('diagnosis') or {}
+    memory = update.get('investigation_memory') or {}
+    return {
+        'round': record['round'],
+        'recorded_kind': record.get('recorded_kind'),
+        'replayed_kind': diagnosed.get('kind'),
+        'replayed_code': diagnosed.get('root_cause_code'),
+        'replayed_plan_len': len(update.get('plan') or []),
+        'recorded_suggestion_level': suggestion.get('conclusion_level'),
+        'recorded_suggestion_code': suggestion.get('root_cause_code'),
+        'blocked_reason': (memory.get('blocked_reason') or '')[:120],
+    }
+
+
+def summarise(rounds):
+    usable = [r for r in rounds if 'replayed_kind' in r]
+    passed = 'confirmed_cause'
+    return {
+        'rounds_examined': len(rounds),
+        'rounds_replayed': len(usable),
+        'recorded_confirmed': sum(1 for r in usable if r['recorded_kind'] == passed),
+        'replayed_confirmed': sum(1 for r in usable if r['replayed_kind'] == passed),
+        # A round that passed when recorded must not start failing: that is a
+        # code regression, and it is the one thing this corpus can prove.
+        'regressed': [r['round'] for r in usable
+                      if r['recorded_kind'] == passed and r['replayed_kind'] != passed],
+        # A round that failed for a logic defect must be accepted by today's rules.
+        'fixed_by_current_code': [r['round'] for r in usable
+                                  if r['recorded_kind'] != passed
+                                  and r['replayed_kind'] == passed],
+        'still_blocked': [r['round'] for r in usable
+                          if r['recorded_kind'] != passed and r['replayed_kind'] != passed],
+        'errors': [r['round'] for r in rounds if 'error' in r],
+    }
+
+
 def sweep(root='runtime', min_round=36):
-    """Replay every recorded round in `root`; returns {'summary': …, 'rounds': …}."""
+    """Replay every recorded round under `root`; returns {'summary': …, 'rounds': …}."""
     rounds = []
     for digits, directory in _rounds(root, min_round):
         loaded = load_round(directory)
@@ -131,26 +200,29 @@ def sweep(root='runtime', min_round=36):
             rounds.append({'round': digits, **replay(loaded, dict(suggestion))})
         except Exception as exc:  # keep the sweep going; report per round
             rounds.append({'round': digits, 'error': f'{type(exc).__name__}: {exc}'[:200]})
-    usable = [r for r in rounds if 'replayed_kind' in r]
-    passed = 'confirmed_cause'
-    summary = {
-        'rounds_examined': len(rounds),
-        'rounds_replayed': len(usable),
-        'recorded_confirmed': sum(1 for r in usable if r['recorded_kind'] == passed),
-        'replayed_confirmed': sum(1 for r in usable if r['replayed_kind'] == passed),
-        # A round that passed when recorded must not start failing: that is a
-        # code regression, and it is the one thing this corpus can prove.
-        'regressed': [r['round'] for r in usable
-                      if r['recorded_kind'] == passed and r['replayed_kind'] != passed],
-        # A round that failed for a logic defect must be accepted by today's rules.
-        'fixed_by_current_code': [r['round'] for r in usable
-                                  if r['recorded_kind'] != passed
-                                  and r['replayed_kind'] == passed],
-        'still_blocked': [r['round'] for r in usable
-                          if r['recorded_kind'] != passed and r['replayed_kind'] != passed],
-        'errors': [r['round'] for r in rounds if 'error' in r],
-    }
-    return {'summary': summary, 'rounds': rounds}
+    return {'summary': summarise(rounds), 'rounds': rounds}
+
+
+def sweep_corpus(path=None):
+    """Replay the distilled corpus instead of machine-local round directories."""
+    rounds = []
+    for record in load_corpus(path):
+        if not record.get('suggestion') or not record.get('state'):
+            continue
+        try:
+            rounds.append(replay_distilled(record))
+        except Exception as exc:  # keep going; report per round
+            rounds.append({'round': record.get('round'),
+                           'error': f'{type(exc).__name__}: {exc}'[:200]})
+    return {'summary': summarise(rounds), 'rounds': rounds}
+
+
+def replay_any(root='runtime', min_round=36):
+    """Prefer the live round directories, fall back to the committed corpus."""
+    live = sweep(root, min_round)
+    if live['summary']['rounds_replayed']:
+        return live
+    return sweep_corpus()
 
 
 def main(argv=None):
@@ -159,7 +231,7 @@ def main(argv=None):
     parser.add_argument('--min-round', type=int, default=36)
     parser.add_argument('--output', default=None)
     args = parser.parse_args(argv)
-    result = sweep(args.root, args.min_round)
+    result = replay_any(args.root, args.min_round)
     target = Path(args.output) if args.output else Path(args.root) / 'replay-all-rounds.json'
     target.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding='utf-8')
     print(json.dumps(result['summary'], ensure_ascii=False, indent=1))

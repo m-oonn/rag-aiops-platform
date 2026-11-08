@@ -33,5 +33,13 @@ jobs:
           grep -viE '^(paddlepaddle|paddleocr|paddlex|modelscope|opencv-contrib-python|datasets|ragas|unstructured)' requirements.txt > /tmp/req-ci.txt
           python -m pip install -r /tmp/req-ci.txt
 
+      # 判定规则门禁:把 036-050 这 15 轮**真实付费**诊断记录下来的模型提议,
+      # 用当前 decide_from_evidence 重新判定(零模型调用、零费用)。
+      # 语料是 tests/data/recorded-rounds.json.gz(runtime/ 为机器本地目录,不入库)。
+      # 任何改动 src/agent/aiops/strategies/investigation.py 判定逻辑的提交,
+      # 若把曾经通过的轮次改坏、或让因逻辑缺陷失败的 039/049 重新被拒,此步骤即失败。
+      - name: Decision-rule gate (recorded paid rounds must not regress)
+        run: python -m pytest -q tests/test_recorded_round_replay.py
+
       - name: Run offline unit tests
         run: python -m pytest -q -m "not integration"

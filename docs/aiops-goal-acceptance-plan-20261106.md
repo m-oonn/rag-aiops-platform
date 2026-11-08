@@ -1444,18 +1444,31 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 - `scripts/replay_recorded_rounds.py`：扫描 `runtime/aiops-goal-0*`（轮次 ≥ 036）中含 `product/checkpoints.sqlite` 的目录，取每轮**最后一个 checkpoint** 里记录的 `investigation_memory.model_suggestion`，剔除 `diagnosis`/`response` 后用当天的 `decide_from_evidence` 重跑；录制时间取自该轮 `product/runs.sqlite` 的 `aiops_runs.updated_at`，用于固定 180 秒证据新鲜度判定。只读打开数据库（`?mode=ro`），不写轮次目录。`sweep()` 返回 `recorded_confirmed / replayed_confirmed / regressed / fixed_by_current_code / still_blocked / errors` 六个汇总位。
 - `tests/test_recorded_round_replay.py`：把上述结果做成 pytest 门禁，四条断言分别锁住「曾经通过的轮次不许回放失败」「因系统缺陷失败的 039、049 必须被当天规则接受」「仍被拒的轮次必须写明拒绝理由」「每轮回放都要落到终态诊断」。语料缺失时整组 skip（`runtime/` 是机器本地目录，不在版本控制内）。
 
-回放结果（14 轮全部可回放，2.3 秒，零模型调用）：
+### 门禁要能在没有 `runtime/` 的机器上跑：蒸馏语料（2026-11-08 补）
+
+`runtime/` 在 `.gitignore` 内，CI 上没有这 15 个目录，所以门禁必须自带语料。为此新增：
+
+- `scripts/distil_recorded_rounds.py`：对每轮只保留判定真正会读的 5 个 channel value（`raw_evidence`、`investigation_memory`、`evidence_events`、`target_resolution`、`investigation_tools`），连同 `target_id`／`recorded_at`／`recorded_kind`／`model_suggestion` 一起写入 `tests/data/recorded-rounds.json.gz`（gzip：3 239 920 B → 391 567 B）。
+- `scripts/replay_recorded_rounds.py` 增加语料通路：`load_corpus()`、`replay_distilled()`、`sweep_corpus()`、`replay_any()`（优先读活目录，缺失时回落到语料），两条通路共用同一个 `summarise()`。`tests/test_recorded_round_replay.py` 改用 `replay_any()`，因此**有 `runtime/` 时用真目录、没有时用语料，结果一致**（已验证：把 root 指向不存在的目录仍得到同一组汇总数字）。
+- `.github/workflows/tests.yml` 增加独立步骤 `Decision-rule gate (recorded paid rounds must not regress)`，在跑全量离线用例之前单独执行 `python -m pytest -q tests/test_recorded_round_replay.py`；失败即阻断，步骤名直接说明它守的是什么。
+
+两个实现细节值得留档，都是踩过的坑：
+
+1. **只读连接上的排序会溢出到磁盘**：`sqlite3.connect('...?mode=ro', uri=True)` 之后再 `order by checkpoint_id`，排序需要临时文件，而这个连接是只读的，于是报 `sqlite3.OperationalError: unable to open database file`——错误信息完全指错方向（不是文件不存在，是临时表建不了），且只在 038 上稳定复现。修法是打开后立刻 `PRAGMA temp_store=MEMORY`。
+2. **绝对路径不能洗掉**：曾尝试把证据里的 `D:/ragPdfSystem++agent/runtime/...` 统一替换成 `<repo>` 再入库，结果 15 轮里有 10 轮的判定从 `confirmed_cause` 变成失败。原因是判定逻辑会把这些路径字符串**互相比较**（检查参数身份、observation scope key），替换必须一致才有意义，而一致替换本身就改变了参与比较的值。因此 `scrub()` 只做 JSON 往返、保留原始路径；它们只指向本仓库自己的 `runtime/` 文件，既无敏感信息也不影响可移植性（语料里 `sk-`／`api_key`／`password`／`Authorization`／`Bearer` 全部 0 命中，只有回环地址 `127.0.0.1`）。
+
+回放结果（15 轮全部可回放，2.3 秒，零模型调用）：
 
 | 轮次 | 录制结论 | 当天规则回放 | 说明 |
 |---|---|---|---|
-| 036/037/040/042/043/045/046/047/048 | `confirmed_cause` | `confirmed_cause` | 无回归 |
+| 036/037/038/040/042/043/045/046/047/048 | `confirmed_cause` | `confirmed_cause` | 无回归 |
 | 039 | `localized_fault` | `confirmed_cause` | 修复一（`contradictions` 一票否决）生效 |
 | 049 | `localized_fault` | `confirmed_cause` | 修复三（重复条件绑定 + 收束文字误判）生效 |
-| 041 | `localized_fault` | `localized_fault`（拒绝理由：模型未提出下一项检查） | 见下方已知边界 |
-| 044 | `unlocated` | `unlocated`（拒绝理由：候选 ID 与预期不一致） | 模型把候选 id 与 condition 配错 |
+| 041 | `localized_fault` | `localized_fault`（拒绝理由：首选检查受阻，模型未提出下一项检查） | 见下方已知边界 |
+| 044 | `unlocated` | `unlocated`（拒绝理由：候选 ID 对应的对象/操作/字段/预期值与此前预期不一致） | 模型把候选 id 与 condition 配错 |
 | 050 | `localized_fault` | `localized_fault`（拒绝理由：模型未提出下一项检查） | 模型把未核实解释标成 `critical=True` |
 
-汇总：`recorded_confirmed=9`、`replayed_confirmed=11`、`regressed=[]`、`fixed_by_current_code=['039','049']`、`still_blocked=['041','044','050']`、`errors=[]`。`pytest tests/test_recorded_round_replay.py -q` → **4 passed, 1 warning**（仅既有 PyMilvus 弃用）。
+汇总：`rounds_examined=15`、`rounds_replayed=15`、`recorded_confirmed=10`、`replayed_confirmed=12`、`regressed=[]`、`fixed_by_current_code=['039','049']`、`still_blocked=['041','044','050']`、`errors=[]`。`pytest tests/test_recorded_round_replay.py -q` → **4 passed, 1 warning**；连同六个判定相关文件一起跑 → **366 passed, 1 warning**（仅既有 PyMilvus 弃用 `src/database/vector_db.py:54`）。
 
 **已知边界（041）**：041 录制下来的末轮提议在当天规则下仍被拒，说明修复二解决的是「完整结论被策略抢排」与「空壳终态被接受」，并不等于 041 末轮那份提议本身合格——它回放后没有原因码，只得到「模型未提出下一项检查」的拒绝。此处不追溯改写历史结论，只把它作为「回放门禁能区分修复生效与提议本身不合格」的例证记录。
 
@@ -1489,5 +1502,7 @@ Goal 进度以本文件和每轮目录中的材料为准，每道门记录 `pend
 **2026-11-08 补充之六：现阶段结论边界。** 系统侧已发现的三处判定缺陷（039 的 `contradictions` 一票否决、041 的策略抢排 + 空壳提议、049 的重复条件绑定 + 收束文字误判）全部修复，且每一处都有真实 checkpoint 回放证据；但**修复三之后的付费复跑尚未进行**，故「修复后可稳定复现」这一更强主张仍不成立，只能表述为「已定位并修掉三处系统侧缺陷，修复后累计样本 10/14 通过」。
 
 **2026-11-08 补充之七：050（修复三后首轮）未通过，但失败在模型侧（见「050 轮次复跑记录」）。** 050 的末轮提议已经是证据完整、收束字段清空的 `confirmed_cause`（7 条支撑、正确原因码、五类必需证据全部被引用），但模型把「localapp 上游超时设置过短（0.5s）」这条未核实的竞争解释自己标成 `critical=True` 且不写 `noncritical_reason`，`sufficient` 的替代解释析取式因此不成立（`alternatives_ok=false` 是唯一失败子句，其余子句全为真）。系统此前已通过 `cause_correction` 要求模型复核（`model-inputs/1386.json` 的 system 提示即该复核提示），模型未改变；同样写法在 048 被模型自己标成 `unresolved + critical=False` 并通过。故**这不是第四处系统侧缺陷**，按现行规则不应为它放松校验。累计口径：含全部十五轮（036–050）**10/15**；修复一之后（040–050）**7/11**；修复二之后（042–050）**6/9**；修复三之后（050）**0/1**。
+
+**2026-11-08 补充之八：把回放门禁固化进 CI（用户 m06430 选择「2」）。** 新增 `scripts/distil_recorded_rounds.py` 与 `tests/data/recorded-rounds.json.gz`（3 239 920 B → 391 567 B），让门禁在没有 `runtime/` 的机器上也能跑；`.github/workflows/tests.yml` 增加独立步骤 `Decision-rule gate (recorded paid rounds must not regress)`。这道门禁**不提升当轮通过率、也不改变十五轮 10/15 的事实**，它的作用是把「改判定规则不许把已经通过的轮次改坏」变成每次提交都会自动检验的硬约束：十个曾经通过的轮次回放必须仍然通过，因逻辑缺陷失败的 039、049 必须被当天规则接受，仍被拒的 041/044/050 必须写明理由。十五轮回放 2.3 秒、零模型调用、零费用。
 
 仍照实保留的限制：原始 SSE 帧未落盘（以 checkpoint + 工具轨迹 + 模型输入 + 账本重建轨迹替代）、部分候选检查提议因工具目录/重复检查被拒、`/steps` 未启用（`total: 0`）、普通用户 `can_read_raw=false`、`localapp` 事件通道未配置。

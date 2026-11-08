@@ -1,10 +1,9 @@
 """Replay every recorded paid round through the current decision rules.
 
-`runtime/aiops-goal-0NN/product/checkpoints.sqlite` keeps the last proposal each
-round actually produced, together with the evidence that round really collected.
-Feeding those proposals back into `decide_from_evidence` therefore re-runs the
-current code against real evidence at zero cost — a regression corpus bought
-with the 15 paid rounds already spent.
+Each paid diagnosis kept its checkpoints, so the proposals those rounds really
+produced can be fed back into `decide_from_evidence` and re-judged by today's
+code — at zero cost.  The 15 rounds already paid for thereby become a
+regression corpus.
 
 Two invariants matter, and only these two:
 
@@ -15,6 +14,11 @@ Two invariants matter, and only these two:
 Rounds that failed because the model itself made an unsupported claim stay
 refused — that is the rules doing their job, so the test only requires that the
 refusal carries a stated reason.
+
+`runtime/` is machine-local, so the corpus is also distilled into
+`tests/data/recorded-rounds.json.gz` (built by `scripts/distil_recorded_rounds.py`)
+which keeps only the channel values the decision reads.  The live directories win
+when present; the committed corpus lets the same gate run on a fresh checkout.
 """
 import sys
 from pathlib import Path
@@ -25,18 +29,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.replay_recorded_rounds import FIXED_BY_CURRENT_RULES, sweep  # noqa: E402
+from scripts.replay_recorded_rounds import (  # noqa: E402
+    FIXED_BY_CURRENT_RULES, corpus_path, replay_any,
+)
 
 CORPUS = ROOT / 'runtime'
 
 pytestmark = pytest.mark.skipif(
-    not (CORPUS / 'aiops-goal-049' / 'product/checkpoints.sqlite').exists(),
-    reason='recorded round corpus is not present on this checkout (runtime/ is machine-local)')
+    not corpus_path().exists() and not (CORPUS / 'aiops-goal-036').exists(),
+    reason='no recorded round corpus on this checkout')
 
 
 @pytest.fixture(scope='module')
 def replayed():
-    return sweep(str(CORPUS), 36)
+    return replay_any(str(CORPUS), 36)
 
 
 def test_no_previously_passing_round_regresses(replayed):
