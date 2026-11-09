@@ -134,6 +134,9 @@ _PROMPT = ChatPromptTemplate.from_messages([("system", """你是自主运维调�
 属于不同对象/条件。若合法工具不能表达预期，留空condition并写明limitation，不捏造条件或检查。
 结论必须填写 conclusion_level 与 scope。关键替代解释默认 critical=true，无法核查时不得报 confirmed_cause。
 非关键解释必须说明 noncritical_reason。停止服务、进程缺失、TCP失败仅支持 localized_fault，不能推断深层原因。
+若你已用现场证据说明某个替代解释不可能是本次请求的原因（例如日志显示失败发生在 connect 阶段，
+可排除“已建立连接后的应用内部错误”），必须同时把它标为 critical=false 并把该理由写进 noncritical_reason；
+只把理由写进 limitation 或 explanation 不算，该解释仍会被视为关键未决项，本次不能报 confirmed_cause。
 解释状态 supported=证据支持，excluded=证据反驳，unresolved=尚未解决，unavailable=权限或数据不可得。
 可核验的解释填写 condition：operation、object_name（服务/依赖别名或端口数字字符串）、field、expected。
 condition 只表达现场条件，例如 dependency_probe/downstream/tcp/failed；不能把此条件等同于因果主张。

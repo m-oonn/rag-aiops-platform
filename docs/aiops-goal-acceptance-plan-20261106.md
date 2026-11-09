@@ -1930,3 +1930,39 @@ if (decision.outcome == 'root_cause' and bool(decision.root_cause)
 - 全程口径的 25/38 是**上界性质**的估计：它假设「只要某一刻模型给对了，引擎就会停下」。录制里有些轮次之所以没停，正是因为当时的规则不允许停——这正是被修掉的部分；但也有些轮次（如 060/064/069）即使规则允许也停不下来，因为证据根本不在。
 - 518 个 checkpoint 里所有提议都用了当时的 `evidence_index`，没有把后来采集的证据提前喂给早期 checkpoint，因此不存在「偷看答案」。
 - 37 个全量既存失败与本次复算无关（它们不依赖判定逻辑改动）。
+
+## 提示词加固：把「理由写进 noncritical_reason」提到主提示词（2026-11-09，用户 m11351 选择「3，两个都做」）
+
+### 为什么改
+
+零成本复算（见上一节）显示 38 轮里有 7 轮（050、053、058、059、070、072、073）的失败只差一步：
+模型已经用现场证据写出了排除理由，但写进了 `limitation`（或 `explanation`），没有写进 `noncritical_reason`，
+也没有把该替代解释标成 `critical=false`。判定逻辑要求「`critical=false` + 有内容的 `noncritical_reason`」才算非关键，
+于是这些轮次被当成「关键未决解释」而降级。
+
+原先这条规则只出现在两处较深的位置：`cause_correction` 的反馈体（`investigation.py:3618-3621`）与
+`alternative_guidance.terminal_contract`（`investigation.py:1648-1652`）。两处都是**事后**才给的纠正提示，
+首次提议时模型看不到；而 `_PROMPT` 里 `critical` / `noncritical_reason` 的字段说明只有一句
+「非关键解释必须说明 noncritical_reason」。
+
+### 改了什么
+
+`src/agent/aiops/strategies/investigation.py` 的 `_PROMPT`，在字段规则段（`非关键解释必须说明 noncritical_reason` 之后）
+新增三行：
+
+```
+若你已用现场证据说明某个替代解释不可能是本次请求的原因（例如日志显示失败发生在 connect 阶段，
+可排除“已建立连接后的应用内部错误”），必须同时把它标为 critical=false 并把该理由写进 noncritical_reason；
+只把理由写进 limitation 或 explanation 不算，该解释仍会被视为关键未决项，本次不能报 confirmed_cause。
+```
+
+这是纯提示词改动：不动判定逻辑、不动校验、不放松任何契约；模型仍须自己给出证据与理由，只是把「写对字段」
+这条要求放到首次提议就能看到的位置。
+
+### 验证与诚实边界
+
+- 判定相关九套测试 `pytest -q tests/test_recorded_round_replay.py tests/test_investigation_strategy.py tests/test_investigation_boundaries.py tests/test_investigation_fusion.py tests/test_candidate_decision_contract.py tests/test_product_direct_causes.py tests/test_decision_replay.py tests/test_concrete_investigation_checks.py tests/test_causal_environment_closeout.py` → **422 passed, 1 warning**（仅既有 PyMilvus 弃用）。
+- 全量 `pytest -q tests` → **2072 passed / 37 failed / 99 deselected**，37 个与改动前同一批既存失败。
+- **提示词改动无法用历史 checkpoint 验证**：回放用的是当时模型写下的字段，改提示词不会改变已录制的内容。
+  这条改动是否生效，只能靠新的真实轮次观察「模型是否把理由写进 `noncritical_reason`」。
+- 因此本节不声称通过率提升；若要验证，需要一轮新的付费真实诊断（约 0.4–0.9 元，须单独授权）。
