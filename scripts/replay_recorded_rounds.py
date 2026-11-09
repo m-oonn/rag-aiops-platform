@@ -98,7 +98,8 @@ def replay(loaded, suggestion):
     with patch.object(settings, 'PROBE_TARGET_ID', loaded['target']):
         records = evidence_index(state, now=now)
         update = decide_from_evidence(
-            state, InvestigationProposal.model_validate(suggestion), records)
+            state, InvestigationProposal.model_validate(suggestion), records,
+            require_concrete_checks=True)
     diagnosed = update.get('diagnosis') or {}
     memory = update.get('investigation_memory') or {}
     return {
@@ -144,7 +145,9 @@ def replay_distilled(record):
     with patch.object(settings, 'PROBE_TARGET_ID', record.get('target_id')):
         now = datetime.fromisoformat(str(record['recorded_at'])).replace(tzinfo=timezone.utc)
         records = evidence_index(state, now=now)
-        update = decide_from_evidence(state, InvestigationProposal.model_validate(suggestion), records)
+        update = decide_from_evidence(
+            state, InvestigationProposal.model_validate(suggestion), records,
+            require_concrete_checks=True)
     diagnosed = update.get('diagnosis') or {}
     memory = update.get('investigation_memory') or {}
     return {
