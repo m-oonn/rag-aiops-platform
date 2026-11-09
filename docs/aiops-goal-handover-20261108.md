@@ -55,7 +55,7 @@
 | 041 | `localized_fault` | — | 1270–1282 | 13 | 0.669814 | 5233/5234/5235，错 5236 | **系统缺陷二**，已修 |
 | 042 | `confirmed_cause` | ✅ | 1283–1296 | 14 | 0.647550 | 4200/4201/4199，错 4202 | 修复二验证通过 |
 | 043 | `confirmed_cause` | ✅ | 1297–1305 | 9 | 0.359006 | 4059/4060/4061，错 4062 | 仅 9 次请求即收束 |
-| 044 | `unlocated` | — | 1306–1317 | 12 | 0.590998 | 1869/1870/1871，错 1872 | 模型侧：候选 id 配错 |
+| 044 | `unlocated` | — | 1306–1317 | 12 | 0.590998 | 1869/1870/1871，错 1872 | 模型侧：候选 id 配错（2026-11-09 尝试修复后主动回滚，见 §5） |
 | 045 | `confirmed_cause` | ✅ | 1318–1326 | 9 | 0.424168 | 14808/14809/14807，错 14810 | |
 | 046 | `confirmed_cause` | ✅ | 1327–1340 | 14 | 0.720520 | 10339/10340/10341，错 10342 | |
 | 047 | `confirmed_cause` | ✅ | 1341–1349 | 9 | 0.402616 | 4568/4569/4570，错 4571 | |
@@ -123,6 +123,19 @@
 `ports/1871` 那条的 condition。系统的 `_resolve_candidate_identity` 因此熔断并清空结论
 （`src/agent/aiops/strategies/investigation.py` 中 `_resolve_candidate_identity` 与紧随其后的清空段）。
 回放显示：**只清空那个错配的 id，引擎也只是继续调查（`plan 1`），不会自动升为结论**。
+
+**2026-11-09 已尝试修复并主动回滚**：把熔断限制为「只有主假设身份错配才停」，让单条 alternative 的
+配错只作废那一行。回放效果符合预期（044 从 `unlocated` 变成继续调查 `plan 1`，15 轮无回归、
+`regressed=[]`），但全量测试多出 5 个失败——`tests/test_investigation_mechanisms.py` 的三组用例
+（`test_unknown_candidate_reference_stops_without_creating_or_replacing_candidates[alternative]`、
+`test_candidate_reference_cannot_retarget_a_saved_prediction[*]`、
+`test_rewritten_exclusion_is_atomically_rejected_and_saved_prediction_preserved`）明确锁定了**整轮原子拒绝**
+这一安全契约：任一角色试图把已保存的预测改指向时，整轮拒绝，避免模型靠改写条件伪造排除。
+也就是说不是代码写错，而是这条改动削弱了一项**有意的**安全不变量。已 `git checkout` 回滚，
+工作区恢复干净（`tests/test_recorded_round_replay.py` + `tests/test_investigation_mechanisms.py` → 92 passed）。
+
+结论修正：044 **不是**第四处该修的系统缺陷，而是系统按设计阻止「模型改写已保存预测」时连带损失的
+一次本可继续的调查。真要让 044 通过，需要放宽那条原子性契约——在拿到更强理由前不应改。
 
 ### 050（`localized_fault`）
 
