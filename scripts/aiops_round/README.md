@@ -60,6 +60,12 @@ tell "never produced" apart from "tampered".  A round driven without the optiona
 `files` plus an `absent: ['environment-ready.json', 'ledger-before.json']` list, and
 `bad 0 / missing 0` on re-verification means what it says.
 
+`gate_b_acceptance.py` is the one script that replaces a *published verdict*
+(`gate-b-acceptance.json`).  It refuses to run on an archived round unless you pass
+`--no-write` (score and print, keep the archive) or `--force` (replace it).  Always
+use `--no-write` when re-scoring history: a careless re-run overwrote all 37
+archived verdicts once and they had to be regenerated from the committed script.
+
 ## Browser snippets
 
 `browser-start.template.js` / `browser-refresh.template.js` are committed.

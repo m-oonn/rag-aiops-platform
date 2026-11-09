@@ -1692,3 +1692,76 @@ limitation: 缺少 14000 端口历史监听记录、该进程的启动/停止请
 **2026-11-09 补充之十：验收脚本自身的缺陷已修（见「051–053 轮次复跑记录」末节）。** `scripts/aiops_round/rounddir.py` 的 `wrong_port()` 曾自我引用 `gate-b-acceptance.json`，导致 051 首次验收把健康端口当作错配端口、报出两项假阴性；已改为从**本轮自己的 configuration 证据**读取，051 与 050 双向验证通过，提交 `b41474b`。这条修复不改变任何一轮的历史结论，只保证后续轮次的验收不会被脚本自身误导。
 
 **2026-11-09 补充之十一：054–063 连续十轮，5 通过 5 未通过（见「054–063 轮次复跑记录」）。** 054、055、056、057、061 五轮在 endpoint 场景得到 completed + confirmed_cause + configured_downstream_endpoint_mismatch，五类必需证据齐备并被报告引用，刷新与同轮次重启后报告/证据/账本完全一致且零新增模型调用，环境干净停止。未通过的五轮**全部在模型侧**：058、059 把自述未核实的竞争解释标成 critical=True 且不写 `noncritical_reason`（与 050、053 同型）；060 整轮没对登记下游做依赖探测，`registered_downstream_health` 不满足；062 把片段 id 抄错一个字符（s-68b4d53f1c036a3c673e → …6738）导致引用原文校验失败；063 结论正确但只做 ports 快照、没有做任何 dependency_probe，必需证据链为空而降级为 unlocated。十轮合计 132 次请求、6.534600 元。累计口径：含全部二十八轮（036–063）**17/28**；修复一之后（040–063）**14/24**；修复二之后（042–063）**13/22**；修复三之后（050–063）**7/14**；本轮十轮 **5/10**。**「修复后可稳定复现」仍不成立**，但失败性质已稳定：三处系统侧缺陷修完后，剩余失败全部来自模型（critical 标注、必需证据漏采、片段 id 抄错），这三类都不可能靠放松判定规则消除。
+
+
+## 根因取证（2026-11-09，用户 m09635「目前应该少测试，多找问题」）
+
+这一节不新增任何付费轮次，全部结论来自已有 38 轮归档材料的离线复核（零模型调用、零费用）。
+
+### 一、先排除「温度不是 0」和「缓存」两个猜想
+
+- **温度已经是 0**：读 67 轮 `product-model/model-inputs/*.json` 的首个请求体，全部为 `temperature: 0.0`、`enable_thinking: False`、`stream: False`、`model: deepseek-v4.1-flash-1017`；`max_tokens` 66 个为 4096、1 个为 8192。**没有 `seed`、没有 `top_p`**。
+- **代码侧同口径**：`src/agent/aiops_llm.py:19-25` 的 `create_agent_llm(..., temperature: float = 0.0, ...)`，`executor.py:548` 与 `planner.py:379` 都以 `create_agent_llm(temperature=0)` 调用；`_build_compatible_llm` 把 `temperature` 原样交给 `ChatOpenAI`，并通过 `extra_body` 关掉思考（DashScope 用 `{"enable_thinking": False}`）。
+- **没有任何模型响应缓存**：`grep cache` 在 `src/agent/aiops/**` 只命中 `executor.py:89-90` 的工具目录 TTL 缓存、`:135-152` 的取用函数、`:171` 的 `runtime/log_cache` 与 `:192-241` 的「日志服务不可达时降级读本地副本」。这些都不缓存模型输出。
+- **波动是真实的现场差异，不是随机**：38 轮首请求原文哈希 38 个全不同；把 `target_id`、端口、时间戳、hex 归一化后仍是 38 个不同。逐字 diff 072 与 073 的 system 提示（各 8839 字符）只有 3 行不同，全是 `target_id`、edge 的 `http://127.0.0.1:<port>/api/availability`、`expected_ports` 与 `collected_at`；user 消息（症状 61 字符）完全相同。
+- **模型行为本身会分叉**：以 036 的工具序列为基准，37 轮里每一轮的第一次分歧都发生在第 1 或第 2 次工具调用。也就是说同样的输入，模型第一步选哪个工具就会不同——这是采样之上仍存在的模型侧不确定性，`temperature=0` 不等于确定性。
+
+### 二、38 轮失败的分类（`runtime/failure_taxonomy.py`）
+
+按 `run-detail.json` 的 `validation_issues` 与 `alternatives` 归类：
+
+| 类别 | 轮数 | 轮次 |
+|---|---|---|
+| `PASS` | 22 | 036/037/038/040/042/043/045/046/047/048/051/052/054/055/056/057/061/065/066/067/068/071 |
+| `EVIDENCE_CHAIN`（缺必需同请求证据链） | 6 | 041/044/060/063/064/069 |
+| `CRITICAL_UNVERIFIED`（把自述未核实的解释标成关键未决） | 6 | 050/053/058/059/072/073 |
+| `OTHER`（系统侧缺陷，已修） | 2 | 039/049 |
+| `CITATION_BINDING`（片段 id 抄错） | 1 | 062 |
+| `ALTERNATIVE_CONDITION`（替代解释条件与现场值不符） | 1 | 070 |
+
+即 **22/38 = 57.9%**，与逐轮统计一致。**最大的单一失败类别是 `EVIDENCE_CHAIN`（6 轮）**，所以本轮取证重点放在它上面。
+
+### 三、`EVIDENCE_CHAIN` 这四轮到底缺什么（`runtime/attribution_probe.py`）
+
+用 `product/runs.sqlite` 的 `aiops_evidence.raw_ref` 与末 checkpoint 的 `target_resolution` 复算 `inv._downstream_endpoint_mismatch_findings` 与 `inv._direct_cause_evidence`：
+
+| 轮 | 已采证据 | 缺的必需证据 | mismatch findings | `cause_correction` 反馈次数 |
+|---|---|---|---|---|
+| 060 | configuration(localapp)、dependency_probe(localapp_upstream)、text_logs(localapp)、text_logs(edge)、ports | **dependency_probe(downstream)** | 0 | 12 |
+| 063 | configuration(localapp)、text_logs(localapp)、text_logs(edge)、ports | **dependency_probe(localapp_upstream)**、**dependency_probe(downstream)** | 0 | 7 |
+| 064 | configuration(localapp)、dependency_probe(localapp_upstream)、dependency_probe(downstream)、text_logs(localapp)、ports | **text_logs(edge)** | 1 | 11 |
+| 069 | configuration(localapp)、dependency_probe(localapp_upstream)、text_logs(localapp)、text_logs(edge)、ports | **dependency_probe(downstream)** | 0 | 8 |
+
+`_direct_cause_evidence` 返回空集就是因为少了上面那一项：`_downstream_endpoint_mismatch_findings`（`src/agent/aiops/strategies/investigation.py:2155-2230`）要求「配置快照 + 登记下游探测成功 + `<service>_upstream` 探测失败且端口等于配置值」三者同时成立，缺一条即 `findings=[]`。
+
+### 四、系统其实已经逐项告诉模型缺什么（`runtime/collection_review_probe.py`）
+
+`cause_correction` 的反馈体里 `collection_review` 明确列出缺项且 `evidence_ids` 为空：
+
+- 060 → `{"operation": "dependency_probe", "dependency": "downstream", "evidence_ids": []}`
+- 063 → `dependency_probe/downstream` 空
+- 064 → `{"operation": "text_logs", "service": "edge", "evidence_ids": []}`
+- 069 → `{"operation": "dependency_probe", "dependency": "downstream", "evidence_ids": []}`
+
+而且模型在反馈之后提的检查**确实都被排上了**（`runtime/post_correction_probe.py`，末 4 个 checkpoint 的 `plan_len` 均为 1）：060 去查「edge 监听与进程身份」、063 去读 edge 日志、064 去读 downstream 日志、069 去核验 `localapp_upstream` 监听。**系统没有拦截，是模型被点名后去查了别的东西，始终没做那条被点名的 `dependency_probe(downstream)`。**
+
+### 五、顺带查出的两个真实缺陷（都不是判定逻辑，已修）
+
+**(a) 提示词指向一个顶层不存在的键**（`runtime/feedback_field_audit.py`）：`cause_prompt` 的 system 文本要求模型处理 `missing_valid_supporting_evidence_ids`，但 49 个 `cause_correction` 请求里该键**在顶层全部是 `null`**——它实际被写在 `supporting_evidence_review[<code>]` 里面（`_cause_citation_review`，`investigation.py:1659-1678`）。提示词让模型看一个顶层没有的字段，模型自然不会去处理。**已修**：`decide_from_evidence` 在构造反馈时把各 code 的缺失 id 汇总成顶层 `missing_valid_supporting_evidence_ids`，`tests/test_product_direct_causes.py` 增加对应断言。
+
+**(b) 验收门把「任何非 localapp 的日志」都当成 edge 日志**（`scripts/aiops_round/gate_b_acceptance.py` 原 `:86-87`）：064 只有 localapp 与 downstream 两条日志，验收却判 `edge_localapp_same_request_chain` 通过（`all_requirements_satisfied=true`），而引擎正因为缺 edge 日志拒绝收束。**已修**：按 `payload.payload.service` 精确匹配 `edge`，且 localapp 与 edge 两端都必须带同一个 `request_id`；缺任一端记入 `missing_parts` 并判 `ok=false`。**修好后全量重评 37 轮（`--no-write`），唯一翻转是 064 `True → False`**，其余 31 轮仍通过、5 轮本来就不通过——即「验收通过但结论降级」的轮次里只有 064 是门假阳性。
+
+**这次修复过程中出过一次误伤，已完整恢复**：第一版改完后直接对 37 个历史轮次重跑，覆盖了全部归档 `gate-b-acceptance.json`。恢复方式是 `git checkout --` 回到提交版脚本再逐轮重跑，37/37 逐字节复原。因此脚本现在强制要求显式 `--no-write`（只评分不写）或 `--force`（覆盖归档），未给参数时直接拒绝运行。
+
+### 六、下游探测覆盖率（`runtime/probe_coverage.py`，37 轮）
+
+- **所有 `confirmed_cause` 轮次都做过 `probe_dependency_probe(downstream)`**——没有一轮通过是「碰巧没查下游」。
+- 未探测 downstream 的 4 轮是 044、060、063、069，其中 060/063/069 正是 `EVIDENCE_CHAIN` 失败轮。
+- `policy_selected_check`（系统策略覆盖模型检查）在通过轮与失败轮都出现过（037/042/046/061 通过时也被覆盖过），**不是失败的必要条件**。
+
+### 七、结论
+
+1. 波动**不是**温度或缓存问题：温度已是 0、没有响应缓存、没有 `seed`/`top_p`；同样的输入会因模型第一步选哪个工具而分叉，且每轮现场（target_id、端口、时间戳）本来就不同。
+2. 38 轮里 **22 通过 / 16 未通过**，其中 **2 轮**（039、049）是已修的系统判定缺陷，**14 轮**是模型侧，且最大类别是「必需证据链没凑齐」（6 轮）。
+3. 系统对这类失败**已经明确点名缺哪类证据**，模型在反馈后也确实被允许继续查，只是查错了方向——这不是判定逻辑问题，**不应该靠放松规则解决**。
+4. 因此按用户「少测试、多找问题」的方向，本轮不新增付费轮次，而是把两个可零成本修的真实缺陷修掉（提示词顶层键缺失、验收门假阳性），并把失败归因写成可复核的证据。

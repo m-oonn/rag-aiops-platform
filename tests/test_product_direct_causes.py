@@ -282,6 +282,9 @@ async def test_cause_feedback_precedes_fallback_checks_and_persists_once(monkeyp
     assert feedback['citable_evidence']['e4.1']['citation_snippets'] == inv._citation_snippets(records['e4.1'])
     assert feedback['supporting_evidence_review']['downstream_stopped_after_request'][
         'missing_valid_supporting_evidence_ids'] == sorted(inv._confirmed_stopped_cause_evidence(records, current))
+    # The correction prompt tells the model to act on this key at the top level.
+    assert feedback['missing_valid_supporting_evidence_ids'] == sorted(
+        inv._confirmed_stopped_cause_evidence(records, current))
     assert feedback['validated_alternatives'][0]['explanation'] == pending.alternatives[0].explanation
     assert [a['purpose'] for a in result['investigation_memory']['decision_trace']['attempts']] == ['initial', 'cause_correction']
     current.update(result)

@@ -3480,6 +3480,11 @@ class InvestigationStrategy(BaseReplanStrategy):
                 scoped = {key: record for key, record in current_probe_records(current_records).items()
                     if in_business_scope(json.loads(record['payload']), state.get('target_resolution'), current_records)}
                 cause_correction['supporting_evidence_review'] = _cause_citation_review(decision, cause_sets, scoped)
+                # The correction prompt names this key at the top level; keep it there too so
+                # the model is told exactly which required ids still lack a valid citation.
+                cause_correction['missing_valid_supporting_evidence_ids'] = sorted({
+                    ident for review in cause_correction['supporting_evidence_review'].values()
+                    for ident in review['missing_valid_supporting_evidence_ids']})
                 cause_correction['collection_review'] = _cause_collection_review(decision.root_cause_code, scoped)
                 cause_correction['alternative_review'] = _alternative_review(
                     cause_correction['validated_alternatives'], scoped)

@@ -2,14 +2,29 @@
 
 Sources: `product/runs.sqlite` (aiops_evidence), `product/evidence/*.json` (raw payloads),
 `report.txt` (citations), and the two API acceptance reads (live / after-restart).
+
+The one file this writes, `gate-b-acceptance.json`, is part of a finished round's
+archive, so re-running against a finished round would silently replace a recorded
+verdict.  Pass `--no-write` to score without touching it, or `--force` to replace it
+on purpose.
 """
+import argparse
 import hashlib
 import json
 import sqlite3
 from pathlib import Path
 from rounddir import round_dir, wrong_port
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--no-write', action='store_true', help='score only; keep the archived file')
+parser.add_argument('--force', action='store_true', help='replace an existing archived verdict')
+args = parser.parse_args()
+
 D = round_dir()
+OUTPUT = D / 'gate-b-acceptance.json'
+if OUTPUT.exists() and not args.force and not args.no_write:
+    raise SystemExit(f'{OUTPUT} already exists; pass --no-write to score without replacing it, '
+                     'or --force to replace the archived verdict')
 
 
 def canonical(value):
@@ -83,12 +98,28 @@ requirements['registered_downstream_health'] = {
 }
 
 # 5. edge/localapp chain sharing one request_id
-edge_logs = [e for e in raw if raw[e]['kind'] == 'text_logs' and e not in logs_localapp]
-chain = sorted({*logs_localapp, *edge_logs})
+# The engine needs an actual edge row and an actual localapp row for the same
+# request_id.  Treating any non-localapp text_logs as "edge" let a downstream log
+# stand in for the edge row (round 064 passed the gate while the engine refused).
+def service_of(meta):
+    body = meta['payload'] or {}
+    return body.get('service') if isinstance(body, dict) else None
+
+
+def carries_request(meta):
+    return request_id in json.dumps(meta['payload'], ensure_ascii=False)
+
+
+logs_edge = [e for e in raw if raw[e]['kind'] == 'text_logs'
+             and service_of(raw[e]) == 'edge' and carries_request(raw[e])]
+logs_localapp_same_request = [e for e in logs_localapp if carries_request(raw[e])]
+chain = sorted({*logs_localapp_same_request, *logs_edge})
 requirements['edge_localapp_same_request_chain'] = {
     'evidence': chain,
-    'detail': [{'id': e, 'cited': raw[e]['cited_in_report'],
-                'has_request_id': request_id in json.dumps(raw[e]['payload'], ensure_ascii=False)}
+    # Both ends must be present; a localapp-only chain is not a chain.
+    'requires': {'localapp_same_request': logs_localapp_same_request, 'edge_same_request': logs_edge},
+    'detail': [{'id': e, 'service': service_of(raw[e]), 'cited': raw[e]['cited_in_report'],
+                'has_request_id': carries_request(raw[e])}
                for e in chain],
 }
 
@@ -98,7 +129,10 @@ for name, block in requirements.items():
     ids = block.get('evidence') or ([block['evidence']] if isinstance(block.get('evidence'), str) else [])
     block['all_cited'] = all(raw[e]['cited_in_report'] for e in ids)
     block['all_hash_ok'] = all(payload_hash(raw[e]['payload']) == raw[e]['raw_hash'] for e in ids)
-    block['ok'] = bool(ids) and block['all_cited'] and block['all_hash_ok']
+    block['missing_parts'] = [part for part, part_ids in (block.get('requires') or {}).items()
+                              if not part_ids]
+    block['ok'] = (bool(ids) and block['all_cited'] and block['all_hash_ok']
+                   and not block['missing_parts'])
     all_ok = all_ok and block['ok']
 
 live = json.loads((D / 'acceptance-live.json').read_text(encoding='utf-8'))
@@ -126,7 +160,10 @@ record = {
     'all_requirements_satisfied': all_ok,
     'persistence': persistence,
 }
-(D / 'gate-b-acceptance.json').write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+if args.no_write:
+    print('(no-write) archived verdict left untouched')
+else:
+    OUTPUT.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps({k: v for k, v in record.items() if k != 'requirements'}, ensure_ascii=False, indent=1))
 for name, block in requirements.items():
     print(f'{name}: ok={block["ok"]} cited={block["all_cited"]} hash={block["all_hash_ok"]} '
