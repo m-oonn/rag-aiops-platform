@@ -17,12 +17,16 @@ Resolution order for the round directory:
 The wrong port is never hardcoded either: the fixture rewrites
 ``business/localapp.connection.json`` back to the healthy port when the
 environment stops, so the archived file cannot be trusted.  ``wrong_port()``
-reads it from the round's own ``gate-b-acceptance.json``, which recorded the
-configured value as evidence at acceptance time.
+reads the configured value from the round's own evidence: the ``configuration``
+snapshot of ``localapp`` that the investigation collected.  It must not read
+``gate-b-acceptance.json``, because that file is written by the very helper that
+needs the port (the first acceptance run of a round would then see either no
+file or the previous round's), which is what made round 051 report the healthy
+port instead of the misconfigured one.
 """
 import json
 import os
-import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -65,24 +69,41 @@ def round_name(argv=None):
     return round_dir(argv).name
 
 
+def _evidence_payloads(directory):
+    """Yield (evidence_id, kind, payload) for every evidence row this round stored."""
+    database = directory / 'product' / 'runs.sqlite'
+    if not database.exists():
+        return
+    connection = sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)
+    try:
+        connection.execute('PRAGMA temp_store=MEMORY')
+        rows = connection.execute('select evidence_id, kind, raw_ref from aiops_evidence').fetchall()
+    finally:
+        connection.close()
+    for evidence_id, kind, raw_ref in rows:
+        item = Path(raw_ref)
+        if not item.exists():
+            continue
+        try:
+            payload = json.loads(item.read_text(encoding='utf-8')).get('payload')
+        except (OSError, ValueError):
+            continue
+        yield evidence_id, kind, payload
+
+
 def wrong_port(argv=None):
     """The misconfigured downstream port this round's scenario injected."""
     directory = round_dir(argv)
-    acceptance = directory / 'gate-b-acceptance.json'
-    if acceptance.exists():
-        body = json.loads(acceptance.read_text(encoding='utf-8'))
-        requirement = (body.get('requirements') or {}).get(
-            'app_loaded_downstream_port_and_config_hash') or {}
-        for evidence_id in requirement.get('evidence') or []:
-            item = directory / 'product' / 'evidence' / f'{evidence_id}.json'
-            if not item.exists():
-                continue
-            payload = json.loads(item.read_text(encoding='utf-8')).get('payload') or {}
-            values = payload.get('values') or {}
-            if values.get('downstream_port') is not None:
-                return str(values['downstream_port'])
-    # Before the round has run there is no acceptance record yet; fall back to
-    # the file the fixture writes while the scenario is live.
+    for _evidence_id, kind, payload in _evidence_payloads(directory):
+        if kind != 'configuration':
+            continue
+        values = (payload or {}).get('values') or {}
+        if values.get('downstream_port') is not None:
+            return str(values['downstream_port'])
+    # Before the round has run there is no configuration evidence yet; fall back
+    # to the file the fixture writes while the scenario is live.  After the
+    # environment stops that file holds the healthy port, so this only helps
+    # for a live round.
     connection = directory / 'business' / 'localapp.connection.json'
     if connection.exists():
         return str(json.loads(connection.read_text(encoding='utf-8'))['downstream_port'])

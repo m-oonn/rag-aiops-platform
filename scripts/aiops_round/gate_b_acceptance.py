@@ -66,7 +66,7 @@ requirements['same_request_app_failure_log'] = {
 }
 
 # 3. wrong port unreachable / not listening
-not_listening = find(lambda m: contains(m, '7715') and (m['kind'] in ('ports', 'dependency_probe')))
+not_listening = find(lambda m: contains(m, wrong_port()) and (m['kind'] in ('ports', 'dependency_probe')))
 requirements['wrong_port_unreachable_or_not_listening'] = {
     'evidence': not_listening,
     'detail': [{'id': e, 'kind': raw[e]['kind'], 'cited': raw[e]['cited_in_report'],
