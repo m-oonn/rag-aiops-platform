@@ -156,8 +156,13 @@ async def test_pseudo_tool_argument_key_gets_one_correction_when_declared_tool_i
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('repair', [True, False])
-async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract_correction(monkeypatch, repair):
+async def test_argument_only_intent_executes_without_a_contract_correction(monkeypatch):
+    """A validated Probe argument map already states what to observe.
+
+    The prose fields only restate that query, so the engine must run the check
+    instead of spending a correction turn on it.  The alternative whose check
+    cannot be scheduled is still reported, and never silently dropped.
+    """
     current = state(('inventory', {'configured_services': {
         'edge': {'kind': 'process', 'text_logs_available': True, 'text_logs': ['D:/edge.log']}}}))
     edge_id = 'h-9cce480e737bafc4'
@@ -222,6 +227,71 @@ async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract
         'next_question_id': question_id,
         'next_arguments': edge_log,
     })
+    prompts = []
+
+    async def model(llm, schema, prompt, inputs):
+        prompts.append(inputs)
+        return partial
+
+    monkeypatch.setattr(inv, 'create_agent_llm', lambda **kwargs: object())
+    monkeypatch.setattr(inv, 'ainvoke_structured', model)
+    result = await inv.InvestigationStrategy().decide(current)
+
+    assert len(prompts) == 1
+    trace = result['investigation_memory']['decision_trace']['attempts']
+    assert [item['purpose'] for item in trace] == ['initial']
+    assert result['investigation_memory'].get('check_correction') is None
+    assert result['investigation_memory'].get('identity_correction') is None
+    assert result['investigation_memory']['next_arguments'] == edge_log
+    assert result['investigation_memory']['next_tools'] == ['probe_text_log']
+    assert len(result['plan']) == 1
+    assert 'probe_text_log' in result['plan'][0]
+    # The unschedulable alternative check is reported, not silently dropped.
+    assert any('检查不可调度' in issue
+               for issue in result['investigation_memory']['validation_issues'])
+
+    from langchain_core.tools import StructuredTool
+    ex = importlib.import_module('src.agent.aiops.executor')
+
+    async def read_edge_log(service: str, path: str, lines: int = 100):
+        return evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
+            'service': service, 'path': path, 'line_limit': lines,
+            'lines': ['{"status": 200, "detail": "healthy"}']})
+
+    tool = StructuredTool.from_function(coroutine=read_edge_log, name='probe_text_log', description='fixture')
+    monkeypatch.setattr(ex, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
+    execution_state = {**current, 'autonomous_investigation': True,
+                       'investigation_memory': result['investigation_memory']}
+    summary, raw = await ex._run_step(result['plan'][0], execution_state)
+    assert '已执行计划检查' in summary
+
+    after = {**execution_state,
+             'past_steps': [*execution_state['past_steps'], (result['plan'][0], summary)],
+             'raw_evidence': [*execution_state['raw_evidence'], (result['plan'][0], raw)]}
+    records = inv.evidence_index(after)
+    context = inv._decision_memory_context(result['investigation_memory'], after, records)
+    edge_summary = next(row for row in context['evidence_summaries']
+                        if row['operation'] == 'text_logs' and row['subject'] == 'edge')
+    assert edge_summary['summary'] == 'text_logs edge: 1 log lines'
+    agenda = next(row for row in context['decision_agenda']['checks']
+                  if row['next_check'] == result['plan'][0])
+    assert agenda['progress'][0]['evidence_ids']
+    assert '日志是应用自身记录' in agenda['progress'][0]['remaining_unknown']
+
+
+@pytest.mark.asyncio
+async def test_incomplete_alternative_check_still_gets_one_contract_correction(monkeypatch):
+    """Without an executable argument map the prose contract is still enforced."""
+    current = state(('inventory', {'configured_services': {
+        'edge': {'kind': 'process', 'text_logs_available': True, 'text_logs': ['D:/edge.log']}}}))
+    edge_log = {'probe_text_log': {'service': 'edge', 'path': 'D:/edge.log', 'lines': 100}}
+    partial = _proposal({
+        'hypothesis': 'edge 入口自身故障',
+        'alternatives': [
+            {'explanation': 'edge 日志能区分入口故障与上游传播失败', 'status': 'unresolved',
+             'check': {'next_check': '读取 edge 日志', 'next_tools': ['probe_text_log']}},
+        ],
+    })
     corrected = inv.InvestigationProposal.model_validate({
         'hypothesis': 'edge 入口错误与转发失败需由日志区分', 'alternatives': [],
         'next_check': '读取 edge 允许日志，区分入口自身错误与转发失败', 'next_tools': ['probe_text_log'],
@@ -233,7 +303,7 @@ async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract
 
     async def model(llm, schema, prompt, inputs):
         prompts.append(inputs)
-        return partial if len(prompts) == 1 or not repair else corrected
+        return partial if len(prompts) == 1 else corrected
 
     monkeypatch.setattr(inv, 'create_agent_llm', lambda **kwargs: object())
     monkeypatch.setattr(inv, 'ainvoke_structured', model)
@@ -242,45 +312,15 @@ async def test_partial_saved_candidate_and_argument_only_intent_get_one_contract
     assert len(prompts) == 2
     feedback = json.loads(prompts[1]['check_feedback'])
     assert feedback['attempts'] == 1
-    assert feedback['missing_fields']
-    assert 'decision.next_check' in feedback['missing_fields']
-    assert any(name.startswith('alternatives[') for name in feedback['missing_fields'])
-    trace = result['investigation_memory']['decision_trace']['attempts']
-    assert [item['purpose'] for item in trace] == ['initial', 'check_correction']
-    assert result['investigation_memory']['check_correction']['status'] == ('continued' if repair else 'rejected')
-    assert result['investigation_memory'].get('identity_correction') is None
-    assert result['plan'] == (['读取 edge 允许日志，区分入口自身错误与转发失败'] if repair else [])
-    if not repair:
-        assert result['investigation_memory']['check_correction']['remaining_missing_fields']
-        assert '仍缺执行字段' in result['diagnosis']['stop_reason']
-    else:
-        from langchain_core.tools import StructuredTool
-        ex = importlib.import_module('src.agent.aiops.executor')
-
-        async def read_edge_log(service: str, path: str, lines: int = 100):
-            return evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
-                'service': service, 'path': path, 'line_limit': lines,
-                'lines': ['{"status": 200, "detail": "healthy"}']})
-
-        tool = StructuredTool.from_function(coroutine=read_edge_log, name='probe_text_log', description='fixture')
-        monkeypatch.setattr(ex, '_get_tools_for_state', AsyncMock(return_value=([tool], None)))
-        execution_state = {**current, 'autonomous_investigation': True,
-                           'investigation_memory': result['investigation_memory']}
-        summary, raw = await ex._run_step(result['plan'][0], execution_state)
-        assert '已执行计划检查' in summary
-
-        after = {**execution_state,
-                 'past_steps': [*execution_state['past_steps'], (result['plan'][0], summary)],
-                 'raw_evidence': [*execution_state['raw_evidence'], (result['plan'][0], raw)]}
-        records = inv.evidence_index(after)
-        context = inv._decision_memory_context(result['investigation_memory'], after, records)
-        edge_summary = next(row for row in context['evidence_summaries']
-                            if row['operation'] == 'text_logs' and row['subject'] == 'edge')
-        assert edge_summary['summary'] == 'text_logs edge: 1 log lines'
-        agenda = next(row for row in context['decision_agenda']['checks']
-                      if row['next_check'] == result['plan'][0])
-        assert agenda['progress'][0]['evidence_ids']
-        assert '日志是应用自身记录' in agenda['progress'][0]['remaining_unknown']
+    # Only the alternative check owes its prose contract; the model gets one
+    # correction turn for it, as before.
+    assert feedback['missing_fields'] == [
+        'alternatives[0].check.discriminating_question',
+        'alternatives[0].check.expected_observation']
+    assert 'alternatives[0].check' in feedback['validation_error']
+    assert [item['purpose'] for item in result['investigation_memory']['decision_trace']['attempts']] == [
+        'initial', 'check_correction']
+    assert result['plan'] == ['读取 edge 允许日志，区分入口自身错误与转发失败']
 
 
 @pytest.mark.asyncio

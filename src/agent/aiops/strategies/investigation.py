@@ -2828,18 +2828,85 @@ def probe_check_contract_version(state, *, default=3):
     return version if type(version) is int else default
 
 
+def _concrete_probe_arguments(memory, state):
+    """Return the argument map when it alone fully specifies an executable check.
+
+    A model that names available Probe tools and supplies their arguments has
+    already said exactly what to observe.  The prose fields restate that intent
+    for the audit trail; they do not make the query executable or safer, because
+    the allowlist and the per-tool argument guards decide that.  Treating such a
+    map as an incomplete proposal silently discards a real intent, so the engine
+    distinguishes "the model said what to run" from "the model said nothing".
+    """
+    arguments = memory.get('next_arguments') if isinstance(memory, dict) else getattr(
+        memory, 'next_arguments', None)
+    if not isinstance(arguments, dict) or not arguments:
+        return None
+    available = {item.get('name') for item in state.get('investigation_tools', [])}
+    if any(tool not in PROBE_TOOL_OPERATIONS or tool not in available for tool in arguments):
+        return None
+    return arguments
+
+
+def _describe_concrete_check(arguments):
+    """Restate an executable Probe argument map as the check description.
+
+    The text names only the query the model already supplied; it adds no
+    observation and no causal claim of its own.
+    """
+    parts = []
+    for tool, args in arguments.items():
+        rendered = ', '.join(f'{key}={value}' for key, value in sorted((args or {}).items())) or '默认参数'
+        parts.append(f'{tool}({rendered})')
+    return '按模型给出的 Probe 参数执行检查：' + '；'.join(parts)
+
+
+def _prune_unexecutable_arguments(decision, state, records):
+    """Keep the executable part of a mixed argument map, report the rest.
+
+    A bundle can mix a query the per-tool guards accept with one they reject
+    (for example a port outside the verified business scope).  Dropping the
+    whole bundle throws away the part the model did specify correctly, so the
+    rejected tools are removed and named in validation_issues instead.  A tool
+    name that is not a real Probe tool is left untouched: that is a contract
+    violation, not a parameter problem, and must still reject the proposal.
+    """
+    arguments = decision.next_arguments
+    if not isinstance(arguments, dict) or len(arguments) < 2:
+        return
+    from src.agent.aiops.probe_checks import arguments_error
+    readers = {'read_run_evidence'} if probe_check_contract_version(state) >= 3 else set()
+    allowed = set(PROBE_TOOL_OPERATIONS) | readers
+    if any(tool not in allowed for tool in arguments):
+        return
+    rejected = {tool: error for tool, args in arguments.items()
+                if (error := arguments_error(tool, args, state, records))}
+    if not rejected or len(rejected) == len(arguments):
+        return
+    decision.next_arguments = {tool: args for tool, args in arguments.items()
+                               if tool not in rejected}
+    kept = set(decision.next_arguments)
+    decision.next_tools = [name for name in decision.next_tools if name in kept] or sorted(kept)
+    for tool, error in rejected.items():
+        decision.validation_issues.append(f'检查参数不可执行，已跳过该工具：{tool}；{error}')
+
+
 def followup_check_error(memory, state, *, require_concrete_checks=False):
     # Old checkpoints without a catalog keep their existing continuation path.
-    if not memory.get('next_check') or 'investigation_tools' not in state:
+    if 'investigation_tools' not in state:
+        return ''
+    concrete = _concrete_probe_arguments(memory, state)
+    if not memory.get('next_check') and not concrete:
         return ''
     available = {item['name'] for item in state['investigation_tools']}
-    selected = memory.get('next_tools') or []
+    selected = memory.get('next_tools') or (list(concrete) if concrete else [])
     if not selected or any(name not in available for name in selected):
         return '后续检查未指定当前可用工具，已停止并保留证据；需要重新规划调查。'
-    if not str(memory.get('discriminating_question') or '').strip():
-        return '后续检查缺少需要区分的解释，已停止并保留证据；需要重新规划调查。'
-    if not str(memory.get('expected_observation') or '').strip():
-        return '后续检查缺少能改变判断的预期观察，已停止并保留证据；需要重新规划调查。'
+    if not concrete:
+        if not str(memory.get('discriminating_question') or '').strip():
+            return '后续检查缺少需要区分的解释，已停止并保留证据；需要重新规划调查。'
+        if not str(memory.get('expected_observation') or '').strip():
+            return '后续检查缺少能改变判断的预期观察，已停止并保留证据；需要重新规划调查。'
     arguments = memory.get('next_arguments')
     if require_concrete_checks and arguments is None and any(
             name in PROBE_TOOL_OPERATIONS or (name == 'read_run_evidence'
@@ -2864,8 +2931,13 @@ def followup_check_error(memory, state, *, require_concrete_checks=False):
     return ''
 
 
-def _incomplete_check_contract_fields(decision, *, include_alternatives=False):
-    """List missing execution fields only when a proposal expresses check intent."""
+def _incomplete_check_contract_fields(decision, *, include_alternatives=False, state=None):
+    """List missing execution fields only when a proposal expresses check intent.
+
+    When the proposal already carries a fully executable Probe argument map, the
+    prose fields only restate that same query, so they are not required: the
+    allowlist and the per-tool argument guards are what make a check safe.
+    """
     entries = [('decision', decision)]
     if include_alternatives:
         entries.extend((f'alternatives[{index}].check', alternative.check)
@@ -2882,7 +2954,10 @@ def _incomplete_check_contract_fields(decision, *, include_alternatives=False):
                                   'expected_observation', 'next_arguments'))
         if not intent:
             continue
-        for name in ('next_check', 'next_tools', 'discriminating_question', 'expected_observation'):
+        executable = prefix == 'decision' and state is not None and _concrete_probe_arguments(fields, state)
+        required = ('next_tools',) if executable \
+            else ('next_check', 'next_tools', 'discriminating_question', 'expected_observation')
+        for name in required:
             value = fields.get(name)
             if not value or (isinstance(value, str) and not value.strip()):
                 missing.append(f'{prefix}.{name}')
@@ -3558,7 +3633,7 @@ class InvestigationStrategy(BaseReplanStrategy):
                 cause_correction['status'] = ('continued' if result.get('plan') else
                     result.get('diagnosis', {}).get('kind', 'unlocated'))
             # Give invalid checks one feedback attempt; the model must supply the correction.
-            missing = _incomplete_check_contract_fields(decision, include_alternatives=True)
+            missing = _incomplete_check_contract_fields(decision, include_alternatives=True, state=state)
             # Candidate fallback can clear the rejected check; correct the original intent.
             check_error = followup_check_error(decision.model_dump(), state, require_concrete_checks=True)
             if missing:
@@ -3760,8 +3835,14 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
             if (argument_tools and all(tool in PROBE_TOOL_OPERATIONS for tool in argument_tools)
                     and all(tool in available_tools for tool in argument_tools)):
                 decision.next_tools = list(dict.fromkeys([*decision.next_tools, *argument_tools]))
+        # The arguments already name the observation, so derive the readable
+        # check text from them instead of reporting that no check was proposed.
+        _prune_unexecutable_arguments(decision, state, records)
+        concrete = _concrete_probe_arguments(decision.model_dump(), state)
+        if concrete and not decision.next_check.strip():
+            decision.next_check = _describe_concrete_check(concrete)
         blocked_reason = followup_check_error(decision.model_dump(), state)
-        incomplete_fields = _incomplete_check_contract_fields(decision)
+        incomplete_fields = _incomplete_check_contract_fields(decision, state=state)
         if incomplete_fields:
             blocked_reason = '模型检查提议不完整，缺少执行必需字段：' + '、'.join(incomplete_fields)
         if not blocked_reason:
@@ -3945,7 +4026,8 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
     question_error = ''
     if next_check:
         question_ids = {q['id'] for q in prior_questions if q.get('id')}
-        if decision.next_question_id and decision.next_question_id not in question_ids:
+        if (decision.next_question_id and decision.next_question_id not in question_ids
+                and not decision.next_check.startswith('按模型给出的 Probe 参数执行检查：')):
             question_error = '后续检查引用了不存在的未决问题，已停止并保留证据。'
         elif not decision.next_question_id:
             text = decision.discriminating_question.strip() or next_check

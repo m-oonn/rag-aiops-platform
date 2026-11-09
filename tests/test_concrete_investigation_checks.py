@@ -30,15 +30,13 @@ def decide(current, answer):
     return inv.decide_from_evidence(current, answer, inv.evidence_index(current))
 
 
-@pytest.mark.parametrize('main_error', ['missing_tool', 'missing_question', 'completed'])
+@pytest.mark.parametrize('main_error', ['missing_tool', 'completed'])
 def test_unexecutable_main_check_uses_current_valid_alternative(main_error):
     current = state()
     answer = decision()
     if main_error == 'missing_tool':
         answer.next_tools = ['missing_probe']
         answer.next_arguments = {}
-    elif main_error == 'missing_question':
-        answer.discriminating_question = ''
     else:
         current['past_steps'] = [(answer.next_check, 'already completed')]
     alternative = inv.Alternative(explanation='dependency_probe/entry: tcp == "failed"', status='unresolved',
@@ -51,6 +49,15 @@ def test_unexecutable_main_check_uses_current_valid_alternative(main_error):
     assert result['plan'] == ['differentiate entry']
     assert result['investigation_memory']['next_arguments'] == alternative.check.next_arguments
     assert result['investigation_memory']['model_suggestion']['next_check'] == 'inspect entry'
+
+
+def test_missing_prose_does_not_block_an_executable_argument_map():
+    """The argument map names the query; the prose only restates it."""
+    answer = decision(discriminating_question='', expected_observation='')
+    result = decide(state(), answer)
+    assert result['plan'] == ['inspect entry']
+    assert result['investigation_memory']['next_arguments'] == {
+        'probe_dependency_probe': {'dependency': 'entry'}}
 
 
 def test_blocked_check_does_not_claim_global_exhaustion():

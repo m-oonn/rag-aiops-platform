@@ -1765,3 +1765,51 @@ limitation: 缺少 14000 端口历史监听记录、该进程的启动/停止请
 2. 38 轮里 **22 通过 / 16 未通过**，其中 **2 轮**（039、049）是已修的系统判定缺陷，**14 轮**是模型侧，且最大类别是「必需证据链没凑齐」（6 轮）。
 3. 系统对这类失败**已经明确点名缺哪类证据**，模型在反馈后也确实被允许继续查，只是查错了方向——这不是判定逻辑问题，**不应该靠放松规则解决**。
 4. 因此按用户「少测试、多找问题」的方向，本轮不新增付费轮次，而是把两个可零成本修的真实缺陷修掉（提示词顶层键缺失、验收门假阳性），并把失败归因写成可复核的证据。
+
+## 判定逻辑修复之四：参数即意图（2026-11-09，用户 m10489「修，用第一性原理修」）
+
+### 一、问题本质
+
+模型在 checkpoint 里给出过这样的提议（060 的 `1f1dbe55-c71d` 与 `1f1dbe55-c955`）：
+
+```json
+{"next_arguments": {"probe_dependency_probe": {"dependency": "downstream"},
+                    "probe_port_snapshot": {"local_port": 10383, "listening_only": true, "limit": 256}},
+ "next_check": "", "next_tools": []}
+```
+
+这份参数映射**已经说清楚了要查什么**：查 `downstream` 依赖、查 10383 端口。但引擎要求 `next_check`/`next_tools`/`discriminating_question`/`expected_observation` 四项同时非空，缺一项就判「模型检查提议不完整」，然后用此前保存的候选检查把整条提议替换掉。结果这一轮里 `dependency_probe(downstream)` 一次都没执行。
+
+第一性原理的判断是：**一份已通过 allowlist 与 per-tool 参数守卫的 Probe 参数映射，就是可执行的检查意图**；`next_check` 等散文字段只是对同一意图的复述，用于审计与报告，不是可执行性的前提。原来的规则把「叙述完整」当成了「可以执行」，这是概念混淆。
+
+### 二、改动（`src/agent/aiops/strategies/investigation.py`）
+
+| 位置 | 改动 |
+|---|---|
+| `_concrete_probe_arguments(memory, state)` | 新增。`next_arguments` 非空、每个 tool 都在 `PROBE_TOOL_OPERATIONS` 且都在本轮 `investigation_tools` 里 → 视为具体可执行的检查意图 |
+| `_describe_concrete_check(arguments)` | 新增。把参数映射渲染成可读的检查文本（`按模型给出的 Probe 参数执行检查：probe_dependency_probe(dependency=downstream)`），只复述模型已给的查询，不新增观察、不新增因果主张 |
+| `_prune_unexecutable_arguments(decision, state)` | 新增。多工具参数包里若有单项越界（例如 10383 不在业务登记范围），**只剔除该项**并记 `validation_issues`，保留同包里合法的项；未知工具名仍整包拒绝（契约违规不放过） |
+| `followup_check_error(...)` | 有具体参数时不再要求 `discriminating_question`/`expected_observation` 非空；无参数时才要求 |
+| `_incomplete_check_contract_fields(..., state=None)` | decision 级提案若参数已具体可执行，只要求 `next_tools`；alternatives 仍走完整契约（不放松） |
+| `decide_from_evidence` | 参数可执行但 `next_check` 为空时，用 `_describe_concrete_check` 生成检查文本再放行，不再进入 fallback |
+| 未决问题校验 | 引擎自己合成的检查文本不对应任何模型侧未决问题 id，故对该前缀跳过 `next_question_id` 存在性校验 |
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 回放门禁 `tests/test_recorded_round_replay.py` | **4 passed**（38 轮语料无回归） |
+| 八套判定测试（含 `test_concrete_investigation_checks.py`） | **408 passed**，仅既有 PyMilvus 弃用警告 |
+| 全量 `pytest -q tests` | **2071 passed / 37 failed / 99 deselected**，37 个与改动前同一批既存失败（matching503 24、four_issue 6、agent_knowledge 5、probe_summary 1、live_probe 1） |
+| 060 复算（`runtime/probe_060_after_fix.py`） | 修复前：两个 checkpoint 都被替换成 edge 日志检查并停机；修复后：`plan = ['按模型给出的 Probe 参数执行检查：probe_dependency_probe(dependency=downstream)']`，`stop = ''` |
+| 38 轮 sweep | `regressed=[]`，`still_blocked` 与修复前完全一致 |
+
+测试侧同步调整：原 `test_partial_saved_candidate_and_argument_only_intent_get_one_contract_correction` 断言「args-only 必须被要求补一次契约」，与新语义相反，替换为 `test_argument_only_intent_executes_without_a_contract_correction`（断言一次 prompt 就执行）与 `test_incomplete_alternative_check_still_gets_one_contract_correction`（断言**替代解释**的检查仍须补全，安全边界不放宽）。
+
+### 四、这次修复的诚实边界
+
+- **实测效果**（`runtime/args_only_after_fix.py` + `runtime/compare_args_only.py`，同一批 204 个「参数合法、散文缺失」的 checkpoint 提议，改动前后各跑一遍）：能拿到 `plan` 的从 **158 → 168**，`gained=10`、`lost=0`。即修复确实把 10 条原本被丢弃的真实检查意图放回了执行队列，且没有任何一条原本可执行的提议被新规则弄丢。
+- 这 10 条分布在 7 轮：037（3 条）、039（1）、040（1）、042（1）、055（1）、060（1）、069（2）。
+- 影响面是真实的但不大：204 个提议分布在 30 轮；其中**只有 060 一轮**因为被替换而导致某类证据整轮从未采集（`runtime/real_loss.py`：`kind_never_collected=2`，两条都在 060）。
+- 修好 060 也不会让它通过：决定性反事实（`runtime/decisive_060.py`）已证明，即使补上那条 `dependency_probe(downstream)`，060 仍是 `localized_fault`——它还缺 localapp 侧同一 `request_id` 的失败日志链。
+- 所以这次修的是**语义正确性**（引擎不该把「模型已经说清楚要查什么」判成「没提出检查」），不是通过率。这一点必须如实记录，不能用它来宣称准确率提升。
