@@ -19,11 +19,13 @@ targets = [
     'product/runs.sqlite', 'product/checkpoints.sqlite',
     'product/tool_trace.json', 'product/knowledge_trace.json',
 ]
-record = {'dir': str(D.resolve()), 'files': {}}
+record = {'dir': str(D.resolve()), 'files': {}, 'absent': []}
 for rel in targets:
     p = D / rel
     if not p.exists():
-        record['files'][rel] = None
+        # Record absence explicitly instead of a null hash: a null entry cannot be
+        # re-verified later and makes "missing" indistinguishable from "tampered".
+        record['absent'].append(rel)
         continue
     data = p.read_bytes()
     record['files'][rel] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
@@ -43,3 +45,4 @@ record['rounds'] = sorted(p.name for p in (D / 'rounds').iterdir()) if (D / 'rou
 print(json.dumps({k: v for k, v in record['files'].items()}, ensure_ascii=False, indent=1))
 print('evidence count:', record['evidence']['count'], 'model_inputs:', record['model_inputs']['count'],
       'rounds:', record['rounds'])
+print('absent:', record['absent'])

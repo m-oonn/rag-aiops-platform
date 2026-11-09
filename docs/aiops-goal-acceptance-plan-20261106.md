@@ -1586,6 +1586,8 @@ limitation: 缺少 14000 端口历史监听记录、该进程的启动/停止请
 
 链校验：054–063 的 `chain-equivalence.json` 分别为 21–30 段链（`rows_1_to_history_byte_identical_all_21` … `all_30`），`chain_equivalent=true`、`expected_reserved_cny_match` 与 `expected_rows_added_match` 均 true。
 
+证据清单：十轮 `evidence-hashes.json` 各 32 个文件 + 11/13/15/12/13/13/15/11/13/8 证据 + 13/16/15/14/11/11/15/13/16/10 份 `model-inputs/`，独立复算 `bad 0 / missing 0`；`environment-ready.json` 与 `ledger-before.json` 因本轮驱动未执行这两个可选快照步骤而不存在，清单把缺席项列在 `absent` 中而不是写 null 哈希（`hash_evidence.py` 已按此修正）。
+
 ### 五次未通过的原因（逐轮取证，全部在模型侧）
 
 - **058**：末 checkpoint 之前模型给出的提议本身完整（`conclusion_level=confirmed_cause`、正确原因码、12 条支撑、`next_check=''`），但 3 条替代解释里第 2 条是 `status=unresolved`、`critical=True`、`claim_type=causal_explanation`、`noncritical_reason=''`，内容为「localapp 到 downstream 的连接超时源于 0.5s 超时设置过短，而非端点错配（8426 上确有服务但响应慢）」→ `sufficient` 的替代解释析取式两项均不满足（非 `excluded`；且 `critical=True` 又无 `noncritical_reason`）→ `alternatives_ok=false`。回放：`1f1dbe44-a615-69` 给 `diagnosis=None` + `plan 1`（引擎会继续查），`1f1dbe44-a838-62`、`1f1dbe44-dab5-68` 给 `localized_fault`。

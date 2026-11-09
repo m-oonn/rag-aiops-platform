@@ -53,6 +53,13 @@ them on a finished round replaces the original restart comparison with a fresh o
 Run the sequence against a round that is still in progress, not against archive
 evidence you have already published.
 
+`hash_evidence.py` records every artifact it finds and lists the ones it did not
+find under `absent` instead of writing a null hash, so a later re-verification can
+tell "never produced" apart from "tampered".  A round driven without the optional
+`ledger_snapshot.py before` / `environment-ready.json` steps therefore shows
+`files` plus an `absent: ['environment-ready.json', 'ledger-before.json']` list, and
+`bad 0 / missing 0` on re-verification means what it says.
+
 ## Browser snippets
 
 `browser-start.template.js` / `browser-refresh.template.js` are committed.
