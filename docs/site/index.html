@@ -113,6 +113,25 @@
       border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px;
     }
 
+    /* ── Measured results ── */
+    .stat-row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 28px; }
+    .stat { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; text-align: center; }
+    .stat-num { font-size: 30px; font-weight: 800; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-label { font-size: 13.5px; color: var(--text-dim); margin-top: 6px; }
+    .measured-note { max-width: 820px; margin: 0 auto 28px; color: var(--text-dim); font-size: 14.5px; text-align: center; }
+    .measured-note code, .rounds code { background: var(--bg); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--accent-2); }
+    .table-wrap { max-height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 40px; }
+    table.rounds { width: 100%; border-collapse: collapse; font-size: 14px; }
+    table.rounds th, table.rounds td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.rounds thead th { position: sticky; top: 0; background: var(--bg-soft); font-weight: 600; z-index: 1; }
+    table.rounds tbody tr:hover { background: rgba(91,140,255,.07); }
+    table.rounds td.ok { color: #38e0c8; font-weight: 600; }
+    table.rounds td.bad { color: #ff8a8a; font-weight: 600; }
+    .sub-title { font-size: 20px; font-weight: 700; margin: 0 0 20px; text-align: center; }
+    .shot { margin: 0 auto 32px; max-width: 900px; }
+    .shot img { width: 100%; border: 1px solid var(--border); border-radius: var(--radius); display: block; }
+    .shot figcaption { color: var(--text-dim); font-size: 13.5px; text-align: center; margin-top: 10px; }
+
     footer { border-top: 1px solid var(--border); padding: 40px 0; text-align: center; color: var(--text-dim); font-size: 14px; }
     footer a { color: var(--accent); }
 
@@ -244,6 +263,101 @@
         <span class="chip">DashScope / 通义千问</span>
         <span class="chip">MCP</span>
       </div>
+    </div>
+  </section>
+
+  <section id="measured">
+    <div class="wrap">
+      <h2 class="section-title">AIOps 诊断能力实测</h2>
+      <p class="section-sub">同一故障场景连续 38 轮真实诊断 · 全部结论来自真实模型 + 真实 Probe 证据</p>
+
+      <div class="stat-row">
+        <div class="stat"><div class="stat-num">22/38</div><div class="stat-label">确认直接原因</div></div>
+        <div class="stat"><div class="stat-num">497</div><div class="stat-label">真实模型请求</div></div>
+        <div class="stat"><div class="stat-num">38/38</div><div class="stat-label">报告持久化可读</div></div>
+        <div class="stat"><div class="stat-num">38/38</div><div class="stat-label">环境清理干净</div></div>
+      </div>
+
+      <p class="measured-note">
+        场景: localapp 启动时加载的连接配置把下游端口指到一个无人监听的端口,而登记的下游服务在另一个端口正常监听 ——
+        入口 <code>/api/availability</code> 因此返回 503。期望结论是「配置的下游端点与登记端点不一致」。
+        每轮都是一次独立的真实诊断: 新建隔离环境、真实 Probe/MCP 采集证据、真实模型决策、结论落库、刷新与重启后仍可读。
+        每轮花费为按峰值费率预留的上界(元),不是最终账单。
+      </p>
+
+      <div class="table-wrap">
+        <table class="rounds">
+          <thead>
+            <tr><th>轮次</th><th>结论</th><th>诊断等级</th><th>模型请求</th><th>预留花费(元)</th></tr>
+          </thead>
+          <tbody>
+          <tr><td>036</td><td class="ok">通过</td><td>confirmed_cause</td><td>17</td><td>0.833756</td></tr>
+          <tr><td>037</td><td class="ok">通过</td><td>confirmed_cause</td><td>17</td><td>0.920086</td></tr>
+          <tr><td>038</td><td class="ok">通过</td><td>confirmed_cause</td><td>15</td><td>0.794704</td></tr>
+          <tr><td>039</td><td class="bad">未通过</td><td>localized_fault</td><td>14</td><td>0.613538</td></tr>
+          <tr><td>040</td><td class="ok">通过</td><td>confirmed_cause</td><td>15</td><td>0.776214</td></tr>
+          <tr><td>041</td><td class="bad">未通过</td><td>localized_fault</td><td>13</td><td>0.669814</td></tr>
+          <tr><td>042</td><td class="ok">通过</td><td>confirmed_cause</td><td>14</td><td>0.647550</td></tr>
+          <tr><td>043</td><td class="ok">通过</td><td>confirmed_cause</td><td>9</td><td>0.359006</td></tr>
+          <tr><td>044</td><td class="bad">未通过</td><td>unlocated</td><td>12</td><td>0.590998</td></tr>
+          <tr><td>045</td><td class="ok">通过</td><td>confirmed_cause</td><td>9</td><td>0.424168</td></tr>
+          <tr><td>046</td><td class="ok">通过</td><td>confirmed_cause</td><td>14</td><td>0.720520</td></tr>
+          <tr><td>047</td><td class="ok">通过</td><td>confirmed_cause</td><td>9</td><td>0.402616</td></tr>
+          <tr><td>048</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.614854</td></tr>
+          <tr><td>049</td><td class="bad">未通过</td><td>localized_fault</td><td>15</td><td>0.851434</td></tr>
+          <tr><td>050</td><td class="bad">未通过</td><td>localized_fault</td><td>9</td><td>0.392268</td></tr>
+          <tr><td>051</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.643992</td></tr>
+          <tr><td>052</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.654384</td></tr>
+          <tr><td>053</td><td class="bad">未通过</td><td>localized_fault</td><td>12</td><td>0.575370</td></tr>
+          <tr><td>054</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.564620</td></tr>
+          <tr><td>055</td><td class="ok">通过</td><td>confirmed_cause</td><td>16</td><td>0.812852</td></tr>
+          <tr><td>056</td><td class="ok">通过</td><td>confirmed_cause</td><td>15</td><td>0.743634</td></tr>
+          <tr><td>057</td><td class="ok">通过</td><td>confirmed_cause</td><td>14</td><td>0.715024</td></tr>
+          <tr><td>058</td><td class="bad">未通过</td><td>localized_fault</td><td>11</td><td>0.567754</td></tr>
+          <tr><td>059</td><td class="bad">未通过</td><td>localized_fault</td><td>11</td><td>0.533412</td></tr>
+          <tr><td>060</td><td class="bad">未通过</td><td>localized_fault</td><td>15</td><td>0.797578</td></tr>
+          <tr><td>061</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.578820</td></tr>
+          <tr><td>062</td><td class="bad">未通过</td><td>localized_fault</td><td>16</td><td>0.849890</td></tr>
+          <tr><td>063</td><td class="bad">未通过</td><td>unlocated</td><td>10</td><td>0.379516</td></tr>
+          <tr><td>064</td><td class="bad">未通过</td><td>localized_fault</td><td>14</td><td>0.674874</td></tr>
+          <tr><td>065</td><td class="ok">通过</td><td>confirmed_cause</td><td>12</td><td>0.556728</td></tr>
+          <tr><td>066</td><td class="ok">通过</td><td>confirmed_cause</td><td>11</td><td>0.489786</td></tr>
+          <tr><td>067</td><td class="ok">通过</td><td>confirmed_cause</td><td>10</td><td>0.448322</td></tr>
+          <tr><td>068</td><td class="ok">通过</td><td>confirmed_cause</td><td>18</td><td>1.061668</td></tr>
+          <tr><td>069</td><td class="bad">未通过</td><td>localized_fault</td><td>12</td><td>0.516396</td></tr>
+          <tr><td>070</td><td class="bad">未通过</td><td>localized_fault</td><td>13</td><td>0.704734</td></tr>
+          <tr><td>071</td><td class="ok">通过</td><td>confirmed_cause</td><td>13</td><td>0.599166</td></tr>
+          <tr><td>072</td><td class="bad">未通过</td><td>localized_fault</td><td>16</td><td>0.779426</td></tr>
+          <tr><td>073</td><td class="bad">未通过</td><td>localized_fault</td><td>11</td><td>0.533658</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="sub-title">修掉的 5 处系统侧缺陷</h3>
+      <div class="grid">
+        <div class="card"><h3>① 待核实说明一票否决结论</h3><p>模型写的「待核实说明」被当成反证,导致证据齐全的正确结论被降级。改为只让系统自己判定出的现场事实冲突否决结论。</p></div>
+        <div class="card"><h3>② 完整结论被抢排检查</h3><p>结论已完整时,后续策略仍抢先安排一次检查,把结论顶掉。改为模型给出完整终态时不再抢排。</p></div>
+        <div class="card"><h3>③ 空壳终态被接受</h3><p>模型末轮交出没有原因、没有引用的空壳提议时被当成终态接受。改为显式拒绝并要求继续调查。</p></div>
+        <div class="card"><h3>④ 合法检查参数被丢弃</h3><p>模型给了完全合法的 Probe 参数、只是没写散文式说明,整条检查被丢弃并换成别的检查。改为「参数即意图」: 参数可执行就执行。</p></div>
+        <div class="card"><h3>⑤ 收束说明被当成不可执行检查</h3><p>模型把「证据齐了,不再查」写在检查字段里,被当成坏检查而清空结论。改为识别为收束。</p></div>
+      </div>
+
+      <h3 class="sub-title">前端实际呈现</h3>
+      <p class="measured-note">下面两张图来自真实归档轮次(第 061 轮)的数据库,由前端页面读取并渲染,不是设计稿。</p>
+      <figure class="shot">
+        <img src="aiops-report-page.png" alt="AIOps 诊断页面: 原因已确认、现场观察与证据链接" loading="lazy" />
+        <figcaption>诊断结论页: 顶部结论徽标「原因已确认」、现场观察与可点击的证据 ID</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="aiops-report-top.png" alt="诊断报告正文: 现场观察、证据说明、人工处理建议" loading="lazy" />
+        <figcaption>报告正文: 现场观察、证据说明、人工处理建议、替代解释核查、未决问题、限制与待核实说明</figcaption>
+      </figure>
+
+      <p class="note">
+        📌 诚实边界: 这是同一故障场景下的重复测量,不是通用故障诊断准确率。
+        仍有若干轮未通过,其中大多数是模型自身的判断问题(把未核实解释标成关键、漏采一类必需证据),
+        这类问题没有通过放松校验来掩盖。完整记录见仓库 <code>docs/aiops-goal-acceptance-plan-20261106.md</code>。
+      </p>
     </div>
   </section>
 
