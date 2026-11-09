@@ -3784,20 +3784,21 @@ def decide_from_evidence(state, proposed, records, *, previous_records=None,
             decision.root_cause, decision.root_cause_code = '', ''
             decision.outcome, decision.conclusion_level = 'investigating', 'unlocated'
     # A model sometimes restates its conclusion in next_check instead of
-    # clearing the field, e.g. "证据链已齐备…；不再新增工具检查。".  With no
-    # executable field set the text is a closing note, so it may not turn a
-    # complete cause into an incomplete check proposal.
+    # clearing the field, e.g. "证据链已齐备…；不再新增工具检查。".  When the cause
+    # is complete and every required observation is cited, a trailing text that
+    # carries no executable argument map is that closing note: it may not turn a
+    # complete cause into an incomplete check proposal.  A check whose argument
+    # map the guards can actually run is still scheduled instead.
     if (decision.outcome == 'root_cause' and bool(decision.root_cause)
             and bool(required_cause_evidence)
             and required_cause_evidence <= {citation.evidence_id
                                             for citation in decision.supporting_evidence}
-            and not decision.next_tools and not decision.next_arguments
-            and not decision.discriminating_question.strip()
-            and not decision.expected_observation.strip()
+            and not _concrete_probe_arguments(decision.model_dump(), state)
             and decision.next_check.strip()):
         decision.validation_issues.append(
             '模型把收束说明写在 next_check 里；本轮按停止处理，不把它当作可执行检查。')
         decision.next_check = ''
+        decision.next_tools, decision.next_arguments = [], None
     model_terminal_cause = (decision.outcome == 'root_cause' and bool(decision.root_cause)
         and bool(required_cause_evidence)
         and required_cause_evidence <= {citation.evidence_id

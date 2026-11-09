@@ -1813,3 +1813,68 @@ limitation: 缺少 14000 端口历史监听记录、该进程的启动/停止请
 - 影响面是真实的但不大：204 个提议分布在 30 轮；其中**只有 060 一轮**因为被替换而导致某类证据整轮从未采集（`runtime/real_loss.py`：`kind_never_collected=2`，两条都在 060）。
 - 修好 060 也不会让它通过：决定性反事实（`runtime/decisive_060.py`）已证明，即使补上那条 `dependency_probe(downstream)`，060 仍是 `localized_fault`——它还缺 localapp 侧同一 `request_id` 的失败日志链。
 - 所以这次修的是**语义正确性**（引擎不该把「模型已经说清楚要查什么」判成「没提出检查」），不是通过率。这一点必须如实记录，不能用它来宣称准确率提升。
+
+## 判定逻辑修复之五：收束说明不再被当成不可执行检查（2026-11-09，用户 m11102「动，第一性原理最小化修改」）
+
+### 一、问题本质
+
+模型有时不把结论写进结构化字段，而是在 `next_check` 里写一句收束说明（「证据链已齐备…；不再新增工具检查。」），同时把上一轮用过的 `discriminating_question` / `expected_observation` 留空或不留空。引擎原本有一个「收束说明」识别块，但它的前置条件是 **`next_tools`、`next_arguments`、`discriminating_question`、`expected_observation` 四项全空**。只要模型多留了一句问题或预期观察，识别块就不触发，这句收束说明会被当成「检查提议不完整」，走 `blocked_reason` 兜底把 `root_cause` 清空，把一轮本可收束的诊断降级成 `localized_fault`。
+
+059 与 073 就是这两种形态：
+
+| 轮次 | 末轮 `next_check` | `next_tools` | `next_arguments` | `discriminating_question` / `expected_observation` | 旧规则 | 结果 |
+|---|---|---|---|---|---|---|
+| 059 | 「读取 localapp 白名单日志 … 核对同一 request_id …」 | `['probe_text_log']` | `None`（被 `require_concrete_checks` 注入成 `{}`） | 均非空 | 不触发（被 `not next_tools` 挡） | 降级 `localized_fault` |
+| 073 | 「证据链已齐备：核对同一运行内 localapp 加载配置快照（downstream_port=6905…）」 | `[]` | `{}` | 均非空 | 不触发（被 `not discriminating_question` 挡） | 降级 `localized_fault` |
+
+### 二、改动（一处，最小化）
+
+`src/agent/aiops/strategies/investigation.py` 的收束说明识别块：把「四项全空」换成「没有可执行的参数映射」，并在识别成立时一并清空 `next_tools` / `next_arguments`。
+
+```python
+if (decision.outcome == 'root_cause' and bool(decision.root_cause)
+        and bool(required_cause_evidence)
+        and required_cause_evidence <= {citation.evidence_id
+                                        for citation in decision.supporting_evidence}
+        and not _concrete_probe_arguments(decision.model_dump(), state)
+        and decision.next_check.strip()):
+    decision.validation_issues.append(
+        '模型把收束说明写在 next_check 里；本轮按停止处理，不把它当作可执行检查。')
+    decision.next_check = ''
+    decision.next_tools, decision.next_arguments = [], None
+```
+
+语义：**只有当原因完整、必需证据全部被引用、并且没有任何一份可执行的参数映射时**，`next_check` 里的文字才被当作收束说明。如果模型真的给了一份守卫能跑的 `next_arguments`，它仍然会被正常排队执行（`_concrete_probe_arguments` 会返回非空，块不触发）。
+
+### 三、一次被回退的改动（重要）
+
+原本还想同时修「`require_concrete_checks` 把 `next_arguments=None` 注入成 `{}`，导致 059 的 `probe_text_log` 被判『参数必须与工具逐项对应』」这一条。删掉注入块、并把 `followup_check_error` 的 `if arguments is not None:` 改成 `if arguments:` 之后，**8 个既有测试立刻失败**：
+
+- `tests/test_investigation_strategy.py::test_invalid_check_can_fall_back_to_uncovered_allowlisted_dependency`
+- `tests/test_investigation_strategy.py::test_uncovered_scope_fallback_keeps_scope_and_tool_guards[unmatched-tools0-dependencies0-expected0]`
+- `tests/test_investigation_strategy.py::test_uncovered_scope_fallback_keeps_scope_and_tool_guards[resolved-tools2-dependencies2-expected2]`
+- `tests/test_investigation_strategy.py::test_uncovered_scope_fallback_skips_already_observed_dependency`
+- `tests/test_investigation_strategy.py::test_invalid_check_gets_one_correction_before_uncovered_scope_fallback`
+- `tests/test_product_direct_causes.py::test_incomplete_cause_check_is_corrected_before_terminal_review[False]`
+- `tests/test_product_direct_causes.py::test_incomplete_cause_check_is_corrected_before_terminal_review[True]`
+- `tests/test_concrete_investigation_checks.py::test_fresh_model_missing_arguments_stops_and_preserves_original_proposal`
+
+原因：注入 `{}` 是**既有安全契约的一部分**——它让「只有散文、没有参数映射」的新提议被视为契约不完整，从而进入一次性纠正或安全回退路径。删掉它等于放开「模型说一句话就能开查」。所以这一条**主动回退**，只保留收束说明这一处改动。
+
+### 四、验证
+
+| 项目 | 结果 |
+|---|---|
+| 九套判定测试（含 `test_causal_environment_closeout.py`、`test_identity_followup.py`） | **497 passed**，仅既有 PyMilvus 弃用警告 |
+| 回放门禁 `pytest -q tests/test_recorded_round_replay.py` | **4 passed**（38 轮语料无回归） |
+| 全量 `pytest -q tests` | **2072 passed / 37 failed / 99 deselected**，37 个与改动前同一批既存失败（matching503 24、four_issue 6、agent_knowledge 5、probe_summary 1、live_probe 1） |
+| 新增单测 `test_closing_note_is_recognised_even_with_leftover_prose_fields` | 通过：完整原因 + 收束说明 + 残留散文 → `plan == []`、`kind == 'confirmed_cause'`、`next_check` 被清空 |
+| 收束说明识别块的实际覆盖（`runtime/closing_note_reach.py`，全 38 轮） | 新规则命中 **3** 个 checkpoint，旧规则命中 **1** 个；新捕获的两条正是 059 `1f1dbe4e-8583` 与 073 `1f1dbf10-ba8f` |
+| 059 / 073 复算（`runtime/verify_059_073.py`） | 两者都出现「模型把收束说明写在 next_check 里」issue，`plan == []`，不再被当作检查 |
+| 059 / 073 把 `limitation` 移进 `noncritical_reason` 后复算（`runtime/verify_059_073_after_move.py`） | **两轮都变成 `confirmed_cause` + `configured_downstream_endpoint_mismatch`** |
+
+### 五、诚实边界
+
+- 这次修的是**系统侧误判**：引擎不该把「原因完整、证据齐全、只是多说了一句收束话」当成「检查不可执行」。这是语义正确性，不是通过率。
+- 059 / 073 要真正通过，还需要模型把排除理由写进 `noncritical_reason` 而不是 `limitation`（第三处模型侧行为，未修、也不该由系统代填）。两处叠加才通过——这一点已用三重变体（`runtime/compound_059_073.py`）验证。
+- 全量里新增的 1 个 passing 来自新增单测，不是既有用例翻转；37 个既存失败与改动前完全同一批。

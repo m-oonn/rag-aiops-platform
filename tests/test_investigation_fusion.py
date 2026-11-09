@@ -341,6 +341,27 @@ def test_incomplete_check_still_stops_when_the_cause_is_not_complete():
     assert memory['conclusion_level'] != 'confirmed_cause'
 
 
+def test_closing_note_is_recognised_even_with_leftover_prose_fields():
+    """A model that leaves stale question/observation prose but names no executable
+    check has still finished; the prose must not turn the note into a dead check."""
+    state = _endpoint_state_with_request_logs()
+    state['investigation_tools'] = [{'name': 'probe_port_snapshot'}]
+    records = inv.evidence_index(state)
+    decision = _endpoint_cause_decision(state, records,
+        next_check='证据链已齐备：downstream_port=11751 无监听且登记端点 11750 正常；不再新增工具检查。',
+        next_tools=[], next_arguments={},
+        discriminating_question='入口 503 是 edge 自身故障还是 localapp 转发失败？',
+        expected_observation='若 edge 自身故障则 edge 日志无上游请求记录。')
+
+    accepted = inv.decide_from_evidence(state, decision, records)
+
+    memory = accepted['investigation_memory']
+    assert accepted['plan'] == []
+    assert accepted['diagnosis']['kind'] == 'confirmed_cause'
+    assert memory['next_check'] == ''
+    assert '模型把收束说明写在 next_check 里' in ' '.join(memory['validation_issues'])
+
+
 def test_endpoint_missing_configured_upstream_probe_is_scheduled_before_localized_stop():
     state = _wrong_endpoint_state(omit=('upstream',))
     state['target_resolution']['allowed_services'].append('edge')
