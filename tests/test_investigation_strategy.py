@@ -1041,7 +1041,7 @@ def test_missing_dependency_address_is_not_reported_as_a_remote_target():
     assert '依赖在远端' not in gaps[0]['limitation']
 
 
-def _configuration_error_evidence(*, event_logs_available=False, matching_hash=True):
+def _configuration_error_evidence(*, event_logs_available=False, matching_hash=True, repeats=1):
     from src.probe.protocol import evidence
     from src.settings import settings
 
@@ -1052,13 +1052,17 @@ def _configuration_error_evidence(*, event_logs_available=False, matching_hash=T
         'configuration': {'source': path, 'field': 'max_attempts', 'value': 'invalid',
             'expected': 'integer-convertible',
             'source_sha256': source_hash if matching_hash else 'sha256:other-source'}}
+    # One read of a failing application log returns every failed request, so the
+    # same contradictory field arrives once per request.
+    lines = [json.dumps({**log_event, 'at': f'2026-11-03T00:00:0{index}Z'})
+             for index in range(repeats)]
     raw = [
         ('inventory', evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
             'configured_services': {'app': {'kind': 'process', 'process_names': ['app.exe'],
                 'event_logs_available': event_logs_available, 'configuration_available': True,
                 'text_logs_available': True}}, 'configured_dependencies': []})),
         ('log', evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
-            'service': 'app', 'path': 'D:/runtime/app.log', 'lines': [json.dumps(log_event)]})),
+            'service': 'app', 'path': 'D:/runtime/app.log', 'lines': lines})),
         ('config', evidence(target_id=settings.PROBE_TARGET_ID, operation='configuration', payload={
             'service': 'app', 'path': path, 'source_sha256': source_hash,
             'values': {'max_attempts': 'invalid'}, 'missing_keys': []})),
@@ -1144,6 +1148,45 @@ def test_config_report_explains_observed_failure_and_separates_history_gap():
     assert report.count('未查清：app 的配置错误由谁在何时引入？') == 1
     assert result['diagnosis']['kind'] == 'localized_fault'
     assert all(row['causal'] is False for row in result['diagnosis']['observed_findings'])
+
+
+def test_repeated_config_error_logs_report_one_finding_and_one_history_gap():
+    current = _configuration_error_evidence(repeats=4)
+    records = module.evidence_index(current)
+    findings = [row for row in module._localized_findings(records, current)
+                if row['code'] == 'configuration_error_log_matches_snapshot']
+    assert len(findings) == 1
+
+    gaps = [row for row in module.investigation_gaps(current, decision(), records)
+            if row['id'].startswith('gap-config-history-')]
+    assert len(gaps) == 1
+
+    result = module.decide_from_evidence(current, decision(), records)
+    history = [row for row in result['diagnosis']['unresolved_questions']
+               if row['id'].startswith('gap-config-history-')]
+    assert len(history) == 1
+
+
+def test_distinct_configuration_fields_stay_separate_findings():
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    current = _configuration_error_evidence(repeats=3)
+    step, raw = current['raw_evidence'][1]
+    observed = json.loads(raw)
+    other = json.loads(observed['payload']['lines'][0])
+    other['configuration'] = {**other['configuration'], 'field': 'downstream_port', 'value': 'wrong'}
+    emitted = evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
+        'service': 'app', 'path': 'D:/runtime/app.log',
+        'lines': [*observed['payload']['lines'], json.dumps(other)]})
+    current['raw_evidence'][1] = (step, json.dumps(emitted))
+    current['raw_evidence'][2] = (current['raw_evidence'][2][0], json.dumps(evidence(
+        target_id=settings.PROBE_TARGET_ID, operation='configuration', payload={
+            'service': 'app', 'path': 'D:/runtime/app.mode', 'source_sha256': 'sha256:config-source',
+            'values': {'max_attempts': 'invalid', 'downstream_port': 'wrong'}, 'missing_keys': []})))
+    records = module.evidence_index(current)
+    findings = [row for row in module._localized_findings(records, current)
+                if row['code'] == 'configuration_error_log_matches_snapshot']
+    assert sorted(row['scope']['field'] for row in findings) == ['downstream_port', 'max_attempts']
 
 
 def test_downstream_stop_log_is_reported_as_source_statement_with_unknown_actor():

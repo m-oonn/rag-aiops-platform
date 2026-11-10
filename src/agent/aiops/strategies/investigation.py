@@ -527,7 +527,11 @@ def unresolved_questions(decision, state=None, records=None):
                                   'limitation': next((g['limitation'] for g in gaps
                                       if g['id'] == 'gap-' + hashlib.sha256(identity.encode()).hexdigest()[:12]),
                                       _public_alternative(alternative)['limitation'])})
-    questions.extend(g for g in gaps if g['id'].startswith(('gap-dependency-', 'gap-config-history-')))
+    seen_gaps = set()
+    for gap in gaps:
+        if gap['id'].startswith(('gap-dependency-', 'gap-config-history-')) and gap['id'] not in seen_gaps:
+            seen_gaps.add(gap['id'])
+            questions.append(gap)
     return questions
 
 
@@ -2390,6 +2394,7 @@ def _configuration_error_findings(records, state):
             snapshots[key] = (evidence_id, raw, body)
 
     findings = []
+    seen = set()
     for evidence_id, record in current.items():
         raw = json.loads(record['payload'])
         body = raw.get('payload') or {}
@@ -2417,6 +2422,14 @@ def _configuration_error_findings(records, state):
             snapshot_id, snapshot_raw, snapshot_body = snapshot
             if snapshot_body.get('values', {}).get(field) != logged.get('value'):
                 continue
+            # The same contradictory field value appears once per failed request in
+            # the log, and one text_logs read returns several of them.  They are one
+            # fact about the configuration, not one fact per request, so keep the
+            # first and let the log evidence keep the rest.
+            identity = (service, field, source_hash)
+            if identity in seen:
+                continue
+            seen.add(identity)
             findings.append({
                 'code': 'configuration_error_log_matches_snapshot',
                 'evidence_id': evidence_id,
@@ -3080,8 +3093,15 @@ def investigation_gaps(state, decision, records):
     configured = next((raw.get('payload', {}).get('configured_services', {})
                        for raw in reversed(inventories) if not raw.get('truncated')
                        and not raw.get('payload', {}).get('error')), {})
+    gap_ids = set()
     for finding in _configuration_error_findings(records, state):
         service = finding['scope']['service']
+        # One history question per service: several contradictory fields in the same
+        # file still leave the same single unknown about who changed it and when.
+        gap_id = 'gap-config-history-' + hashlib.sha256(service.encode()).hexdigest()[:12]
+        if gap_id in gap_ids:
+            continue
+        gap_ids.add(gap_id)
         config = configured.get(service, {})
         event_rows = [(key, json.loads(row['payload'])) for key, row in current.items()
             if row.get('provenance', {}).get('operation') == 'event_logs'
