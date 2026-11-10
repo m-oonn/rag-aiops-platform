@@ -11,6 +11,7 @@ user prompt 中出现 "json" 关键词,否则 400 报错(InternalError.Algo.Inva
 
 import json as _json
 import re
+import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, TypeVar
@@ -69,8 +70,28 @@ class StructuredOutputError(ValueError):
         self.code = code
 
 
+def _unknown_tool_name(error: Exception) -> bool:
+    """True when the tool parser rejected a tool name it was never given.
+
+    A model may answer the decision contract with a call to a tool it can see in
+    the conversation (for example the evidence reader).  LangChain's tool parser
+    then looks the name up in its own schema dictionary and raises a bare
+    KeyError from `parse_result`, which says nothing about the model text but does
+    mean the output did not follow the requested schema.  Treating it as a format
+    failure keeps one malformed turn from aborting the whole investigation; the
+    plain JSON fallback below still has to satisfy the same schema.
+    """
+    if not isinstance(error, KeyError):
+        return False
+    frames = traceback.extract_tb(error.__traceback__)
+    return any(frame.name == 'parse_result' and 'output_parsers' in frame.filename
+               for frame in frames)
+
+
 def _format_failure(error: Exception) -> bool:
     if isinstance(error, (ValidationError, OutputParserException, _json.JSONDecodeError, NotImplementedError)):
+        return True
+    if _unknown_tool_name(error):
         return True
     # Some compatible APIs reject the function-call format but support plain JSON.
     return (getattr(error, 'status_code', None) == 400

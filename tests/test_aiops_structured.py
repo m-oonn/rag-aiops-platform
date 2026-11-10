@@ -196,3 +196,44 @@ async def test_failure_traceback_cannot_expose_fallback_response(monkeypatch):
         await module.ainvoke_structured(llm, Answer, ChatPromptTemplate.from_template('{input}'), {'input': 'x'})
     rendered = ''.join(traceback.format_exception(raised.value))
     assert 'private-response-no-json' not in rendered
+
+
+def _parser_key_error(name='read_run_evidence'):
+    """Reproduce LangChain's bare KeyError for a tool name it was not given."""
+    namespace = {}
+    code = compile('def parse_result():\n    raise KeyError(%r)\n' % name,
+                   '<output_parsers/openai_tools.py>', 'exec')
+    exec(code, namespace)
+    try:
+        namespace['parse_result']()
+    except KeyError as error:
+        return error
+    raise AssertionError('fixture must raise')
+
+
+def test_unknown_tool_name_from_tool_parser_is_a_format_failure():
+    assert module._format_failure(_parser_key_error()) is True
+
+
+def test_unrelated_key_error_is_still_raised_as_a_defect():
+    try:
+        {}['missing']
+    except KeyError as error:
+        assert module._format_failure(error) is False
+    else:
+        raise AssertionError('fixture must raise')
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_name_falls_back_to_json_instead_of_aborting(monkeypatch):
+    llm = RunnableLambda(lambda _: None)
+    llm.with_structured_output = Mock(return_value=RunnableLambda(lambda _: None))
+    invoke = AsyncMock(side_effect=[_parser_key_error(), SimpleNamespace(content='{"value":"ok"}')])
+    monkeypatch.setattr(module, 'ainvoke_with_retry', invoke)
+
+    result = await module.ainvoke_structured(
+        llm, Answer, ChatPromptTemplate.from_template('{input}'), {'input': 'check'})
+
+    assert result == Answer(value='ok')
+    assert invoke.await_count == 2
+
