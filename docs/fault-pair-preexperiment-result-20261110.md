@@ -76,7 +76,7 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 ## 仍然存在的缺陷（未修）
 
 1. **下游场的「证据支持的解释」仍偏通用**：`confirmed_cause` 三场写得具体，但 `localized_fault` 的 G10 只堆现场条件，没有把 lifecycle 三件套提升为解释。
-2. **配置错误场为何只到 `localized_fault`**：四场都引到了 `configuration_error_log_matches_snapshot`，模型却没有把它提升为 `confirmed_cause`，需判断是提示词门槛过高还是证据链缺一环。
+2. **配置错误场只到 `localized_fault`：不是证据缺环，是原因码只有两个。** 用四场存档证据回放（`runtime/e2_config_chain.py`）：每场都能在**同一 request_id** 上凑齐「配置快照 `source_sha256` → 应用日志同哈希、同字段、同值、`error_type=ValueError`、`/api/availability`、`status>=500` → edge 同 request_id、同 status 的 503」这条链，四场各有一条（`22f42ad3cecd…`、`84513f082f0c…`、`3bc3859f0a68…`、`52bcb463c8a2…`），`statuses_match=true`。也就是说证据形态与 `configured_downstream_endpoint_mismatch` 完全同构，缺的只是一个原因码：`InvestigationDecision.root_cause_code` 的 `Literal` 只有 `configured_downstream_endpoint_mismatch` 与 `downstream_stopped_after_request`，`_direct_cause_evidence()` 也只登记这两把钥匙，因此 `decide_from_evidence` 的「根因缺少受支持的原因码或完整同请求证据链」分支必然把 `confirmed_cause` 打回 `unlocated`。G00 那场模型在 `root_cause` 里原话写了「该解释不属于两类可确认直接原因码，故仅定位到故障层，不升级为 confirmed_cause」——它在按契约办事，不是判断失误。**要不要加第三个原因码（如 `configuration_value_rejected`）属逻辑/架构改动，须先确认再做。**
 
 ## 费用、审核与验证
 
