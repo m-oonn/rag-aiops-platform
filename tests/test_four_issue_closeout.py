@@ -101,7 +101,11 @@ def test_stop_audit_replays_validated_repeat_history(mutation):
     current, snapshots = repeated_stop_trace()
     history = snapshots[-1]['behavior_context']['observation_history']
     assert len(history) == 2
-    assert 'raw_hash' in json.dumps(snapshots[-1]['tracking']['blocked_check_review'])
+    review = snapshots[-1]['tracking']['blocked_check_review']
+    # The stop is a reviewed saved-candidate stop: every saved check that was not
+    # resampled is recorded with its rejection reason, so the stop is auditable.
+    assert review['kind'] == 'no_eligible_saved_candidate'
+    assert review['rejected_candidates'] and all(item['reason'] for item in review['rejected_candidates'])
     if mutation in {'payload', 'object'}:
         record = next(iter(history.values()))
         raw = json.loads(record['payload'])

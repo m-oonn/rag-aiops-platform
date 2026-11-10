@@ -107,8 +107,15 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
     cause = '下游进程崩溃导致入口503'  # Deliberately excessive proposal, never an injected observation.
     unverified_claim = '已排除进程缺失，根因确认是数据库崩溃'
 
+    # The cause-review prompt carries its own input subset, so remember the last
+    # collected evidence instead of assuming every call receives 'evidence'.
+    collected = {'context': []}
+
     async def decision(*args, **kwargs):
-        context = json.loads(args[3]['evidence'])
+        inputs = args[3] if len(args) > 3 else {}
+        if 'evidence' in inputs:
+            collected['context'] = json.loads(inputs['evidence'])
+        context = collected['context']
         count = len(context)
         if count < evidence_count:
             next_name, next_args = step_calls[count]
@@ -231,7 +238,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             assert [e['collected_at'] for e in emitted] == [r['raw']['collected_at'] for r in rows[:evidence_count]]
             assert calls == [(name, next(iter(args.values()))) for name, args in step_calls[:evidence_count]]
             assert execution_decisions.await_count == 2  # Follow-ups run concrete checks without executor LLM calls.
-            assert fixed_decisions.await_count == evidence_count
+            assert fixed_decisions.await_count == evidence_count + 1  # One terminal cause review round.
             assert next(event for event in events if event['type'] == 'usage')['llm_calls'] == 0
             assert run_store.get_run(tid).status == 'completed'
             assert run_store.get_run(tid).report == complete['response']
@@ -287,7 +294,7 @@ async def test_real_sse_and_reopened_refresh_preserve_historical_fault_boundary(
             app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=18, role='auditor')
             assert (await client.get(f'/api/v1/aiops/runs/{tid}')).status_code == 404
             assert (await client.get(f'/api/v1/aiops/runs/{tid}/evidence')).status_code == 404
-            assert calls == calls_before and fixed_decisions.await_count == evidence_count
+            assert calls == calls_before and fixed_decisions.await_count == evidence_count + 1
             assert FIXTURE.read_bytes() == original
             (tmp_path / 'output-audit.json').write_text(json.dumps({'mode': 'historical_fixed_decision_api_check',
                 'case': case, 'group': f'G{int(protection)}{int(trigger)}', 'evidence_count': evidence_count,

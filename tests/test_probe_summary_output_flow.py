@@ -143,12 +143,16 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
             assert {f['code'] for f in complete['diagnosis']['observed_findings']} == {'dependency_tcp_failed'}
             assert complete['diagnosis']['kind'] == 'localized_fault'
             question = complete['diagnosis']['unresolved_questions'][0]
-            assert question['question'] == 'TCP失败的更深原因是否已核实'
-            assert ('检查已执行' in question['limitation']
-                    or '已有现场结果' in question['limitation'])
-            assert '尚未执行' not in question['limitation']
-            assert '不代表问题已查清' in question['limitation']
-            assert question['expected_observation'] == '能独立验证连接失败原因的现场证据'
+            # The scripted repeat check is rejected as an unexplained resample, so the
+            # engine records that reviewed stop and drops the rejected check instead of
+            # advertising it as a pending question.  The still-unverified dependency gap
+            # remains the open question.
+            assert question['id'].startswith('gap-dependency-')
+            assert question['question'] == 'downstream 连接失败的更深原因是什么？'
+            assert '无法核查退出或启动失败原因' in question['limitation']
+            assert question['evidence_ids'] == [emitted[-1]['evidence_id']]
+            assert '首选检查受阻' in complete['diagnosis']['stop_reason']
+            assert '再次采样须说明复核目的' in complete['diagnosis']['stop_reason']
             assert next(e for e in events if e['type'] == 'usage')['llm_calls'] == 0
             tid = complete['thread_id']
     finally:
