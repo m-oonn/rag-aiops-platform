@@ -62,11 +62,21 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 
 三次失败都是**系统侧**，不是模型或夹具问题，共花 2.056796 CNY / 38 请求（占本批 30%）。每次修完都跑了免费门禁（`--scenario-preflight`、`--evaluation-preflight`，零模型调用）与全量回归（2102→2105 passed / 0 failed），再回放失败场确认判据正确。
 
+## 重复 finding 与重复未决问题（已修，`cbe9375`）
+
+配置场四场的报告里，同一个矛盾被报了四遍。根因有两层，都属系统侧：
+
+1. **一条日志证据里有四条失败请求。** 一次 `probe_text_log` 返回整个日志尾部，而配置错误的 localapp 每次失败请求都会写一行 `error_type=ValueError` 的 `request_completed`；该场日志里有 4 行，且 4 行的 `service`/`field`/`source_sha256` 完全相同。`_configuration_error_findings` 对每行 append 一个 finding，于是同一个「`max_attempts` 与快照矛盾」变成 4 条 finding。
+2. **未决问题按 finding 逐条生成。** `investigation_gaps` 对每条 finding 各 append 一个 `gap-config-history-<hash(service)>`，4 条 finding 就产生 4 条 id 相同、问题文本相同的未决问题；`unresolved_questions` 只是把它们原样 `extend` 进结果。
+
+修法：finding 按 `(service, field, source_sha256)` 去重——一次日志读取里的同一处矛盾只保留第一条，其余仍留在证据原文里；未决问题按 `gap id` 去重（同一服务的配置变更历史只有一个「谁在何时改的」未知）。**不同字段仍然各自成条**，不合并。
+
+用该批四场的存档证据回放（`runtime/e2_b1b_dedup_replay.py`）：修复前每场 4 条 finding + 4 条未决问题（合计 16/16），修复后每场 1 + 1（合计 4/4）；下游四场本就没有该 finding，前后都是 0。新增两条回归测试，其中一条专门断言「同文件不同字段仍是两条 finding」。
+
 ## 仍然存在的缺陷（未修）
 
-1. **未决问题重复**：配置场四场的 `unresolved_questions` 里 `gap-config-history-8ba36f55dd85`（「localapp 的配置错误由谁在何时引入？」）都出现 4 次。`_configuration_error_findings` 逐行 append finding、`investigation_gaps` 又按 finding 逐条生成未决问题，两处都不去重。
-2. **`configuration_error_log_matches_snapshot` 可能重复**：同一场两条配置错误日志会产生两条同 code、同 scope、同 evidence_id、同 raw_hash 的 finding。
-3. **下游场的「证据支持的解释」仍偏通用**：`confirmed_cause` 三场写得具体，但 `localized_fault` 的 G10 只堆现场条件。
+1. **下游场的「证据支持的解释」仍偏通用**：`confirmed_cause` 三场写得具体，但 `localized_fault` 的 G10 只堆现场条件，没有把 lifecycle 三件套提升为解释。
+2. **配置错误场为何只到 `localized_fault`**：四场都引到了 `configuration_error_log_matches_snapshot`，模型却没有把它提升为 `confirmed_cause`，需判断是提示词门槛过高还是证据链缺一环。
 
 ## 费用、审核与验证
 
