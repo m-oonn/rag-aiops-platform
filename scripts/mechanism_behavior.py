@@ -375,16 +375,26 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
                     valid = (valid and event.get('previous_leader_id') == leader['id'] and ident != leader['id']
                              and candidate.get('status') in {'active', 'protected'} and not _contradicted(candidate, records))
                 else:
+                    # Mirror the engine's own eligibility predicate for a replacement
+                    # candidate, so "no alternative existed" is judged by the same rule
+                    # the engine used rather than a looser one.
                     alternatives = [c for c in current.values() if c['id'] != leader['id']
                         and c['status'] in {'active', 'protected'}
+                        and c['relation'] != 'contradict' and c.get('condition_binding') == 'bound'
                         and not _contradicted(c, records) and inv._candidate_check(c, state, records)]
                     # The mechanism layer stopping is a fact about its own candidate
-                    # pool: no alternative discriminating check existed.  A saved-check
-                    # fallback is a separate, independently audited layer that may still
-                    # schedule a prior check in the same turn; its plan, tools and
-                    # execution are validated above, so it does not falsify the stop.
+                    # pool: no alternative discriminating check existed.  Other layers
+                    # may still schedule a check in the same turn without falsifying
+                    # that stop: a saved-check fallback, or the model's own fully
+                    # specified Probe arguments, which the engine restates verbatim
+                    # as the check text.  Both are independently validated above, so
+                    # the stop is judged on the candidate pool, not on the plan list.
+                    model_check = inv._concrete_probe_arguments(context['model_suggestion'], state)
+                    model_plan = ([inv._describe_concrete_check(model_check)]
+                                  if model_check and row.get('next_arguments') == model_check else [])
                     valid = (valid and ident == leader['id'] and not alternatives
-                             and (not row['plan'] or bool(tracking.get('blocked_check_recovery'))))
+                             and (not row['plan'] or row['plan'] == model_plan
+                                  or bool(tracking.get('blocked_check_recovery'))))
             selected = kind in {'protection_check_selected', 'contradiction_triggered'}
             executed = False
             if selected:

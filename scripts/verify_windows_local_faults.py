@@ -971,7 +971,11 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
     edge_mode.write_text('normal', encoding='utf-8')
     dep_config.write_text(json.dumps({'downstream_port': None, 'upstream_timeout_seconds': 0.5}),
         encoding='utf-8')
-    edge_config.write_text(json.dumps({'downstream_port': app_port, 'upstream_timeout_seconds': 0.5}),
+    # The entry service waits longer than the application's own upstream timeout so
+    # the forwarded request finishes after the application logged its failure; an
+    # equal timeout lets the entry give up first and the two logs stop agreeing on
+    # which one happened first.
+    edge_config.write_text(json.dumps({'downstream_port': app_port, 'upstream_timeout_seconds': 1.5}),
         encoding='utf-8')
     (out / 'config.toml').write_text('\n'.join([f"target_id = '{target}'",
         f"gateway_url = 'ws://127.0.0.1:{gateway_port}/probe/ws'",
