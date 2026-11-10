@@ -103,6 +103,7 @@ async def test_model_runner_passes_selected_symptom_profile_to_child(tmp_path, p
     assert symptom_path.read_text(encoding='utf-8') == module.symptom_text(profile)
 
 
+@pytest.mark.integration
 def test_real_disposable_cases_are_independently_checked_and_recovered(tmp_path):
     ports = [module.free_port()]
     while len(ports) < 2:

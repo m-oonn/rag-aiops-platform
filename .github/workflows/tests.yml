@@ -13,6 +13,11 @@ on:
 jobs:
   pytest-offline:
     runs-on: ubuntu-latest
+    env:
+      # 离线单测用固定假模型/脚本化决策,不会真的发出请求;但 LLMClient 构造时
+      # 仍要求凭据存在(否则 openai.OpenAIError: Missing credentials 会让用例失败)。
+      # 这里只放一个占位值,真实密钥永远不进 CI。
+      LLM_API_KEY: sk-ci-placeholder
     steps:
       - uses: actions/checkout@v4
 

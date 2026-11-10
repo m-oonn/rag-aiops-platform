@@ -47,6 +47,7 @@ def test_stop_mode_rejects_unknown_values():
         CompetingFaultFixture('normal', stop_mode='unknown')
 
 
+@pytest.mark.integration
 def test_same_downstream_outage_has_distinct_real_application_cause_logs(tmp_path):
     from src.probe.evidence import validate_observation_window, EvidenceValidationError
     with CompetingFaultFixture('normal', tmp_path, stop_mode='request') as fixture:

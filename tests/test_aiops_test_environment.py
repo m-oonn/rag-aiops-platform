@@ -12,6 +12,7 @@ from scripts.competing_hypothesis_fixture import CompetingFaultFixture
 from scripts.verify_competing_hypothesis_scenario import write_scenario_files
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('fault,status', [('localapp_wrong_endpoint', 503),
     ('downstream_unreachable', 503), ('normal', 200)])
 def test_real_request_after_reset_has_current_matching_logs_and_preserves_previous_round(tmp_path, fault, status):

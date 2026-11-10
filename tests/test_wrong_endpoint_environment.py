@@ -2,6 +2,7 @@ import hashlib
 import json
 
 import psutil
+import pytest
 
 from scripts.competing_hypothesis_fixture import CompetingFaultFixture
 from scripts.verify_windows_local_faults import get_local
@@ -30,6 +31,7 @@ def test_controller_business_request_precedes_first_log_snapshot(tmp_path):
         assert 'later-business-request' not in original
 
 
+@pytest.mark.integration
 def test_wrong_endpoint_is_loaded_once_and_repair_requires_restart(tmp_path):
     with CompetingFaultFixture('localapp_wrong_endpoint', tmp_path, stop_mode='request') as fixture:
         collector = WindowsCollector(ProbeConfig(
@@ -73,6 +75,7 @@ def test_wrong_endpoint_is_loaded_once_and_repair_requires_restart(tmp_path):
     assert fixture.cleanup_result == {'remaining_listener_ports': [], 'cleanup_errors': []}
 
 
+@pytest.mark.integration
 def test_same_business_symptom_can_distinguish_wrong_endpoint_from_stopped_downstream(tmp_path):
     with CompetingFaultFixture('localapp_wrong_endpoint', tmp_path, stop_mode='request') as fixture:
         wrong = get_local(fixture.edge_port, path='/api/availability')
