@@ -255,19 +255,34 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
                 from src.agent.aiops.probe_checks import progress_error
                 blocked = progress_error(proposal.model_dump(), state, records)
             blocked = blocked or not proposal.next_check.strip() or proposal.next_check.strip() in {s.strip() for s, _ in state.get('past_steps', [])}
-            expected = inv._blocked_check_candidate_followup(policy_state, records) if blocked else None
-            check = (expected or {}).get('check') or {}
-            candidate = next((item for item in saved.values()
-                              if item.get('id') == blocked_recovery.get('candidate_id')), {})
-            if (identity_errors or not blocked or not expected
-                    or blocked_recovery != expected.get('selection')
-                    or row['plan'] != [check.get('next_check')]
-                    or row.get('next_tools') != check.get('next_tools')
-                    or row.get('next_arguments') != check.get('next_arguments')
-                    or len(executed_steps) <= step or executed_steps[step] != check.get('next_check')
-                    or not inv._candidate_check(candidate, state, records)
-                    or not _executed_candidate(candidate, check, execution_records)):
-                issues.append('不可执行检查后的候选回退与前轮状态/现场/计划/执行不一致')
+            if blocked_recovery.get('kind') == 'uncovered_scope_check':
+                # The engine also falls back to a bounded check on an in-scope
+                # object that has no live observation yet.  Rebuild that decision
+                # from the previous state instead of assuming a saved candidate.
+                uncovered = inv._uncovered_scope_followup(policy_state, records) if blocked else None
+                check = (uncovered or {}).get('check') or {}
+                if (identity_errors or not blocked or not uncovered
+                        or blocked_recovery.get('arguments') != check.get('next_arguments')
+                        or row['plan'] != [check.get('next_check')]
+                        or row.get('next_tools') != check.get('next_tools')
+                        or row.get('next_arguments') != check.get('next_arguments')
+                        or len(executed_steps) <= step or executed_steps[step] != check.get('next_check')
+                        or not _executed_candidate({}, check, execution_records)):
+                    issues.append('不可执行检查后的候选回退与前轮状态/现场/计划/执行不一致')
+            else:
+                expected = inv._blocked_check_candidate_followup(policy_state, records) if blocked else None
+                check = (expected or {}).get('check') or {}
+                candidate = next((item for item in saved.values()
+                                  if item.get('id') == blocked_recovery.get('candidate_id')), {})
+                if (identity_errors or not blocked or not expected
+                        or blocked_recovery != expected.get('selection')
+                        or row['plan'] != [check.get('next_check')]
+                        or row.get('next_tools') != check.get('next_tools')
+                        or row.get('next_arguments') != check.get('next_arguments')
+                        or len(executed_steps) <= step or executed_steps[step] != check.get('next_check')
+                        or not inv._candidate_check(candidate, state, records)
+                        or not _executed_candidate(candidate, check, execution_records)):
+                    issues.append('不可执行检查后的候选回退与前轮状态/现场/计划/执行不一致')
         elif blocked_review:
             policy_state = dict(state)
             policy_state['investigation_memory'] = {'hypothesis_tracking': previous}
