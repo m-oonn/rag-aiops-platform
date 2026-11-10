@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Callable
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -80,6 +81,55 @@ def _fact_text(finding, record):
     return f"{label}：{detail} [{finding['evidence_id']}]"
 
 
+def _lifecycle_stop(records, service):
+    """Return the controlled stop one witness service recorded for one instance.
+
+    A stopped dependency leaves the same three lifecycle events in its own log:
+    a start with the listening port, a controlled stop request and a completed
+    exit.  They describe what the log states about one process, not why anyone
+    asked it to stop.
+    """
+    events, evidence_ids = [], []
+    for evidence_id, record in (records or {}).items():
+        raw = json.loads(record['payload'])
+        body = raw.get('payload') or {}
+        if (raw.get('operation') != 'text_logs' or body.get('error')
+                or body.get('service') != service):
+            continue
+        for line in body.get('lines') or []:
+            try:
+                event = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(event, dict):
+                events.append((evidence_id, event))
+        evidence_ids.append(evidence_id)
+    for evidence_id, exited in events:
+        if exited.get('event') != 'service_exited' or exited.get('reason') != 'shutdown_completed':
+            continue
+        pid, instance = exited.get('pid'), exited.get('instance_id')
+        started = next((event for _, event in events if event.get('event') == 'service_started'
+            and event.get('pid') == pid and (instance is None or event.get('instance_id') == instance)), None)
+        stopped = next((event for _, event in events if event.get('event') == 'shutdown_requested'
+            and event.get('pid') == pid and event.get('reason') == 'controlled_stop'), None)
+        if started is None or stopped is None:
+            continue
+        return {'evidence_ids': list(dict.fromkeys(evidence_ids)), 'pid': pid,
+                'listen_port': started.get('listen_port'), 'started_at': started.get('at', ''),
+                'stopped_at': stopped.get('at', ''),
+                'channel': (stopped.get('stop_request') or {}).get('channel') or '未记录'}
+    return None
+
+
+def _lifecycle_text(service, stop):
+    """Describe what the witness log states, keeping the unproven part unproven."""
+    return (f'{service} 自身日志按同一 PID {stop["pid"]} 记录：先以监听端口 '
+            f'{stop["listen_port"]} 启动（{stop["started_at"]}），随后收到 controlled_stop '
+            f'停止请求（{stop["stopped_at"]}，渠道 {stop["channel"]}），并完成 shutdown_completed 退出；'
+            '当前连接失败、端口无监听与未观察到配置身份进程与该退出一致。'
+            '该日志没有记录这次停止由谁请求、因何触发，异常传播路径也未证实。')
+
+
 def build_bundle(diagnosis, *, records=None, resolution=None):
     """Inputs are the strategy's validated diagnosis and, when available, current evidence."""
     findings = diagnosis.get('observed_findings', [])
@@ -134,7 +184,11 @@ def build_bundle(diagnosis, *, records=None, resolution=None):
         if not note.startswith('检查受限') and not any(note in f['text'] for f in facts.values()):
             if note.startswith('独立采集说明'):
                 note = note.split('。', 1)[0] + '。仅限配置身份、可枚举范围与采样时刻，不能证明启动或退出历史。'
-            facts[f'note-{index}'] = {'text': note}
+            key = f'note-{index}'
+            facts[key] = {'text': note}
+            witness = re.match(r'现场日志观察 \[([^\]]+)\]', note)
+            if witness and records is not None and witness.group(1) in records:
+                facts[key]['evidence_ids'] = [witness.group(1)]
     direct = [key for key, obj in objects.items() if set(obj['codes']) & _DIRECT_CODES]
     # Stronger object-level evidence goes first; all independent direct faults stay present.
     def priority(key):
@@ -145,16 +199,28 @@ def build_bundle(diagnosis, *, records=None, resolution=None):
     for obj in objects.values():
         if sum(other['label'] == obj['label'] for other in objects.values()) > 1:
             obj['label'] += '（' + '/'.join(obj['scope']) + '）'
+
+    def lifecycle(obj):
+        """Prefer a logged stop over the generic sentence when one is witnessed."""
+        service = (obj.get('scope') or {}).get('service')
+        stop = _lifecycle_stop(records, service) if service and records else None
+        if not stop:
+            return None, []
+        witnesses = [key for key, fact in facts.items()
+                     if set(fact.get('evidence_ids', [])) & set(stop['evidence_ids'])
+                     and fact['text'].startswith('现场日志观察')]
+        return (_lifecycle_text(service, stop) if witnesses else None), witnesses
     explanations = {}
     for key in direct:
         obj = objects[key]
+        logged, witnesses = lifecycle(obj)
         text = ('优先支持配置解析失败这一解释；这是日志陈述与独立快照的交叉支持，尚未独立复现因果。'
                 if 'configuration_error_log_matches_snapshot' in obj['codes'] else
                 '配置快照显示应用连接端口与登记服务端口不一致；失败探测与登记服务成功响应支持端点错配解释，但不证明配置变更原因或历史。'
                 if 'configured_downstream_endpoint_mismatch' in obj['codes'] else
-                '上述有限观测支持该对象当前异常；启动、退出及异常传播原因尚未确认。')
+                logged or '上述有限观测支持该对象当前异常；启动、退出及异常传播原因尚未确认。')
         explanations['explain-' + key] = {'text': obj['label'] + '：' + text,
-                                        'fact_ids': obj['facts']}
+                                        'fact_ids': obj['facts'] + witnesses}
     if diagnosis.get('kind') == 'confirmed_cause':
         facts['note-confirmed-cause'] = {'text': '直接根因：' + diagnosis['conclusion'] + '；支持证据：'
             + '、'.join(dict.fromkeys('[' + ref['evidence_id'] + ']' for ref in diagnosis['evidence']))}
@@ -252,8 +318,9 @@ def render_report(bundle, layout):
             for fact_id in explanation.get('fact_ids', [])
             for evidence_id in bundle['facts'].get(fact_id, {}).get('evidence_ids', [])
         ))
-        citation = '；依据：' + '、'.join(f'[{evidence_id}]' for evidence_id in evidence_ids) if evidence_ids else ''
-        lines.append(explanation['text'] + citation)
+        citation = '依据：' + '、'.join(f'[{evidence_id}]' for evidence_id in evidence_ids) if evidence_ids else ''
+        separator = '' if explanation['text'].endswith(('。', '；', '！', '？')) else '；'
+        lines.append(explanation['text'] + separator + citation)
     if not layout.explanation_ids:
         lines.append('已观察到异常；仅凭这些事实尚不能确定故障原因。')
     lines.append('人工处理建议（待人工核对，尚未执行；不作为根因证明）：')

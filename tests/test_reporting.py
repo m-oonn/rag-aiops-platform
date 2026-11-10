@@ -9,7 +9,7 @@ from src.probe.protocol import evidence
 from src.settings import settings
 
 
-def report_input(*, two_faults=False, mapped=True):
+def report_input(*, two_faults=False, mapped=True, stopped=False):
     rows = [
         ('inventory', {'configured_services': {name: {'process_names': [name + '.exe']}
                         for name in ('downstream', 'localapp', 'edge')}}),
@@ -25,6 +25,18 @@ def report_input(*, two_faults=False, mapped=True):
         ('text_logs', {'service': 'localapp', 'path': 'D:/localapp.log',
                        'lines': ['upstream connection failed'], 'line_limit': 20}),
     ]
+    if stopped:
+        # One instance start, stop request and exit, as the stopped dependency writes them.
+        lifecycle = [
+            {'at': '2026-11-10T11:58:01.201909+00:00', 'event': 'service_started', 'pid': 19352,
+             'instance_id': 'bb51f348aa094dcc9a732d18e3ded5bb', 'listen_port': 13980},
+            {'at': '2026-11-10T11:58:01.404816+00:00', 'event': 'shutdown_requested', 'pid': 19352,
+             'reason': 'controlled_stop', 'stop_request': {'channel': 'file_presence', 'initiator': 'unknown'}},
+            {'at': '2026-11-10T11:58:01.499254+00:00', 'event': 'service_exited', 'pid': 19352,
+             'instance_id': 'bb51f348aa094dcc9a732d18e3ded5bb', 'reason': 'shutdown_completed'},
+        ]
+        rows.append(('text_logs', {'service': 'downstream', 'path': 'D:/downstream.log',
+                                   'lines': [json.dumps(event) for event in lifecycle], 'line_limit': 20}))
     if two_faults:
         rows.append(('services', {'service': 'edge', 'state': 'stopped'}))
     current = {'input': 'entry unavailable', 'plan': [], 'past_steps': [], 'raw_evidence': [],
@@ -92,6 +104,23 @@ def test_legacy_explanation_without_fact_links_still_renders():
 
     assert explanation['text'] in report
     assert '证据支持的解释：' in report
+
+
+def test_stopped_dependency_explains_its_logged_stop_instead_of_the_generic_sentence():
+    from src.agent.aiops.reporting import build_bundle, render_report, rule_layout
+    current, diagnosis, records = report_input(stopped=True)
+    bundle = build_bundle(diagnosis, records=records, resolution=current['target_resolution'])
+    report = render_report(bundle, rule_layout(bundle))
+    section = report.split('证据支持的解释：', 1)[1].split('人工处理建议', 1)[0]
+
+    assert 'PID 19352' in section
+    assert '监听端口 13980' in section
+    assert 'controlled_stop' in section and 'file_presence' in section
+    assert 'shutdown_completed' in section
+    assert '上述有限观测支持该对象当前异常' not in section
+    assert '。；依据：' not in report
+    # What the log cannot say stays unconfirmed in the same sentence.
+    assert '没有记录这次停止由谁请求、因何触发' in section
 
 
 def test_independent_fault_cannot_be_hidden_by_model_layout():
