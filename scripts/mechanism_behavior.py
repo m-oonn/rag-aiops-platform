@@ -378,7 +378,13 @@ def _audit_behavior(snapshots, executed_steps, execution_records):
                     alternatives = [c for c in current.values() if c['id'] != leader['id']
                         and c['status'] in {'active', 'protected'}
                         and not _contradicted(c, records) and inv._candidate_check(c, state, records)]
-                    valid = valid and ident == leader['id'] and not row['plan'] and not alternatives
+                    # The mechanism layer stopping is a fact about its own candidate
+                    # pool: no alternative discriminating check existed.  A saved-check
+                    # fallback is a separate, independently audited layer that may still
+                    # schedule a prior check in the same turn; its plan, tools and
+                    # execution are validated above, so it does not falsify the stop.
+                    valid = (valid and ident == leader['id'] and not alternatives
+                             and (not row['plan'] or bool(tracking.get('blocked_check_recovery'))))
             selected = kind in {'protection_check_selected', 'contradiction_triggered'}
             executed = False
             if selected:
