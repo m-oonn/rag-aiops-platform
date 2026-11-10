@@ -40,7 +40,7 @@ FOUR_GROUP_SUITES = {
 SYMPTOM_PROFILES = {
     'neutral': '请只读检查配置中的 localapp 是否可用；自行核实入口、相关依赖和允许的日志，说明证据与无法确认的部分。',
     'candidate-opportunity': (
-        '请只读调查配置中的 localapp 当前不可用问题。入口可能返回失败状态，但状态码本身不能确认根因。'
+        '请只读调查配置中的 edge 业务入口当前不可用问题。入口可能返回失败状态，但状态码本身不能确认根因。'
         '请从允许检查的入口、配置、相关依赖和日志中保留仍合理的候选；为每个未排除候选指定一个具体、可执行且能区分解释的检查，'
         '根据现场结果更新候选，遇到可靠相反证据时改查其他解释，最后分别说明已核实、未核实和检查受限之处。'
     ),
@@ -139,7 +139,10 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
                     # The controller may inject invalid application configuration.
                     parsed = json.loads(mode)
                     int(parsed['max_attempts'])
-                    mode = 'normal'
+                    # A startup connection file doubles as the mode file so the
+                    # loaded configuration hash and the injected mode stay identical.
+                    mode = parsed.get('mode') if isinstance(parsed, dict) and parsed.get('mode') in {
+                        'application_error', 'http_error'} else 'normal'
                 except (ValueError, TypeError, KeyError) as exc:
                     status, body = 503, 'temporarily unavailable'
                     detail, error_type = 'invalid max_attempts configuration', type(exc).__name__
@@ -173,8 +176,9 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
                 emit({'event': 'request_completed', 'request_id': request_id, 'path': self.path,
                     'status': status, 'detail': detail or body,
                     'duration_ms': round((time.monotonic() - started) * 1000, 3),
-                    'configuration': loaded,
+                    'configuration': configuration or loaded,
                     'upstream': {'host': '127.0.0.1', 'port': downstream},
+                    **({'error_type': error_type} if error_type else {}),
                     **({'upstream_request': upstream_trace} if upstream_trace else {}),
                     **({'error_type': type(connection_error).__name__,
                         'errno': getattr(connection_error, 'errno', None)} if connection_error else {})})
@@ -297,7 +301,7 @@ def cleanup_owned(processes, ports):
         'remaining_listeners': listeners, 'ports_released': listeners == [], 'cleanup_errors': errors}
 
 
-def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None):
+def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None, edge=None, edge_port=None):
     """Controller-only observations; never supplied as Agent evidence or answers."""
     expected = {'normal': (200, 200), 'downstream_unreachable': (503, None),
         'application_error': (500, 200), 'application_exit': (None, 200),
@@ -319,6 +323,17 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
     checks = snapshot['checks']
     app_status, dep_status = expected[case]
     checks['http_states'] = (snapshot['app']['http_status'], snapshot['downstream']['http_status']) == (app_status, dep_status)
+    if edge_port is not None:
+        try:
+            status, body = get_local(edge_port, path='/api/availability')
+            snapshot['edge'] = {'http_status': status, 'body': body}
+        except (URLError, OSError) as exc:
+            snapshot['edge'] = {'http_status': None, 'error_type': type(exc).__name__}
+        # The entry service forwards the application status; a stopped application
+        # surfaces as an unavailable entry response.
+        edge_expected = app_status if app_status is not None else 503
+        checks['edge_http'] = snapshot['edge']['http_status'] == edge_expected
+        checks['edge_process'] = edge.poll() is None
     checks['app_process'] = (app.poll() is not None) == (case in {'application_exit', 'port_conflict'})
     checks['downstream_process'] = (dep.poll() is not None) == (case == 'downstream_unreachable')
     for name, process, port, absent in [('app', blocker if case == 'port_conflict' else app, app_port,
@@ -493,7 +508,8 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
     recommendations = diagnosis.get('recommendations', [])
     advice_citations = [ref for item in recommendations for ref in item.get('evidence', [])]
     all_citations = citations + advice_citations
-    expected = {'normal': ['healthy_within_scope'], 'downstream_unreachable': ['localized_fault'],
+    expected = {'normal': ['healthy_within_scope'],
+        'downstream_unreachable': ['localized_fault', 'confirmed_cause'],
         'application_error': ['localized_fault'], 'application_config_error': ['localized_fault'],
         'application_exit': ['localized_fault'],
         'port_conflict': ['localized_fault', 'confirmed_cause'], 'missing_evidence': ['unlocated', 'localized_fault']}
@@ -911,11 +927,11 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
 
     target, token = 'windows-local-01', uuid.uuid4().hex + uuid.uuid4().hex
     ports = []
-    while len(ports) < 4:
+    while len(ports) < 5:
         candidate = free_port()
         if candidate not in ports:
             ports.append(candidate)
-    gateway_port, app_port, dep_port, knowledge_port = ports
+    gateway_port, edge_port, app_port, dep_port, knowledge_port = ports
     out.mkdir(parents=True, exist_ok=False)
     if os.name == 'nt':
         _set_acl(out)
@@ -939,18 +955,38 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
     log.touch()
     dep_log = out / 'downstream.log'
     dep_log.touch()
-    app_mode, dep_mode = out / 'app.mode', out / 'downstream.mode'
-    app_mode.write_text(json.dumps({'max_attempts': 3}), encoding='utf-8')
+    edge_log = out / 'edge.log'
+    edge_log.touch()
+    app_mode, dep_mode, edge_mode = out / 'app.mode', out / 'downstream.mode', out / 'edge.mode'
+    dep_config, edge_config = out / 'downstream.connection.json', out / 'edge.connection.json'
+
+    def write_app_mode(**fields):
+        # The localapp startup connection file doubles as its mode file, so the
+        # loaded configuration hash and the injected mode can never diverge.
+        app_mode.write_text(json.dumps({'max_attempts': 3, 'downstream_port': dep_port,
+            'upstream_timeout_seconds': 0.5, **fields}), encoding='utf-8')
+
+    write_app_mode()
     dep_mode.write_text('normal', encoding='utf-8')
+    edge_mode.write_text('normal', encoding='utf-8')
+    dep_config.write_text(json.dumps({'downstream_port': None, 'upstream_timeout_seconds': 0.5}),
+        encoding='utf-8')
+    edge_config.write_text(json.dumps({'downstream_port': app_port, 'upstream_timeout_seconds': 0.5}),
+        encoding='utf-8')
     (out / 'config.toml').write_text('\n'.join([f"target_id = '{target}'",
         f"gateway_url = 'ws://127.0.0.1:{gateway_port}/probe/ws'",
         f"token_file = '{(out / 'token').as_posix()}'", 'baseline_interval_seconds = 60',
+        '[services.edge]', "kind = 'process'",
+        "process_names = ['python.exe']", f"text_logs = ['{edge_log.as_posix()}']",
+        f"process_args = ['--mode-file', '{edge_mode}']",
         '[services.localapp]', "kind = 'process'",
         "process_names = ['python.exe']", f"text_logs = ['{log.as_posix()}']",
-        f"config_file = '{app_mode.as_posix()}'", "config_keys = ['max_attempts']",
+        f"config_file = '{app_mode.as_posix()}'", "config_keys = ['max_attempts', 'downstream_port']",
         f"process_args = ['--mode-file', '{app_mode}']",
         '[services.downstream]', "kind = 'process'", "process_names = ['python.exe']",
         f"process_args = ['--mode-file', '{dep_mode}']", f"text_logs = ['{dep_log.as_posix()}']",
+        '[dependencies.edge]', "host = '127.0.0.1'", f'port = {edge_port}',
+        "health_scheme = 'http'", "health_path = '/health'",
         '[dependencies.localapp]', "host = '127.0.0.1'", f'port = {app_port}',
         "health_scheme = 'http'", "health_path = '/health'",
         '[dependencies.downstream]', "host = '127.0.0.1'", f'port = {dep_port}',
@@ -1004,8 +1040,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     pass
             stop(proc)
 
-        def application(port, mode, name, dependency=None):
-            app_log = log if port == app_port else dep_log
+        def application(port, mode, name, dependency=None, runtime_config=None, log_path=None):
+            app_log = log_path or (log if port == app_port else dep_log)
             args = [str(Path(__file__).resolve()), '--serve', str(port), '--log', str(app_log), '--mode-file', str(mode)]
             if dependency is not None:
                 args += ['--downstream', str(dependency)]
@@ -1013,6 +1049,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 stop_file = out / (name + '.stop')
                 stop_file.unlink(missing_ok=True)
                 args += ['--stop-file', str(stop_file)]
+            if runtime_config is not None:
+                args += ['--runtime-config', str(runtime_config)]
             proc = launch(args, name)
             if dependency is None:
                 process_stop_files[proc.pid] = stop_file
@@ -1021,8 +1059,10 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
 
         probe = None
         try:
-            dep = application(dep_port, dep_mode, 'downstream')
-            app = application(app_port, app_mode, 'application', dep_port)
+            dep = application(dep_port, dep_mode, 'downstream', runtime_config=dep_config)
+            app = application(app_port, app_mode, 'application', dep_port, runtime_config=app_mode)
+            edge = application(edge_port, edge_mode, 'edge', app_port, runtime_config=edge_config,
+                log_path=edge_log)
             gateway = launch(['-m', 'uvicorn', 'mcp_servers.probe_gateway:app', '--host', '127.0.0.1',
                 '--port', str(gateway_port)], 'gateway')
             wait_listener(gateway_port, gateway)
@@ -1094,14 +1134,14 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 code = await asyncio.to_thread(process.wait, 45)
                 assert code == 0, 'evaluation preflight failed: ' + case
                 result = json.loads((result_dir / 'preflight.json').read_text(encoding='utf-8'))
-                assert result['ok'] and result['model_calls'] == 0 and result['evidence_count'] == 5
+                assert result['ok'] and result['model_calls'] == 0 and result['evidence_count'] == 7
                 assert not (result_dir / 'cost.json').exists(), 'free preflight entered paid budget path'
                 assert set(result['tool_names']) == set(PROBE_TOOL_OPERATIONS) | {'probe_list_evidence', 'search_knowledge_base'}
                 assert result['knowledge_mcp']['transport'] == 'streamable_http_loopback'
                 assert not result['knowledge_mcp']['autonomously_selected']
                 tool_trace = json.loads((result_dir / 'tool_trace.json').read_text(encoding='utf-8'))
-                assert len(tool_trace) == 6
-                assert sum(row['validated_live_evidence'] for row in tool_trace) == 5
+                assert len(tool_trace) == 8
+                assert sum(row['validated_live_evidence'] for row in tool_trace) == 7
                 knowledge_rows = [row for row in tool_trace if row['tool'] == 'search_knowledge_base']
                 assert len(knowledge_rows) == 1 and knowledge_rows[0]['source'] == 'knowledge_base'
                 assert not knowledge_rows[0]['validated_live_evidence']
@@ -1126,9 +1166,10 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             await check_evaluation_entry('normal')
             blocker = None
             async def set_model_case(case):
-                nonlocal dep, app, blocker
+                nonlocal dep, app, edge, blocker
                 log.write_text('', encoding='utf-8')
                 dep_log.write_text('', encoding='utf-8')
+                edge_log.write_text('', encoding='utf-8')
                 if blocker and blocker.poll() is None:
                     stop_owned(blocker)
                 blocker = None
@@ -1136,22 +1177,41 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     stop_owned(app)
                 if dep.poll() is None:
                     stop_owned(dep, graceful=(case == 'downstream_unreachable'))
-                app_mode.write_text(json.dumps({'max_attempts': 'invalid'}) if case == 'application_config_error'
-                    else 'application_error' if case in {'application_error', 'missing_evidence'}
-                    else json.dumps({'max_attempts': 3}), encoding='utf-8')
+                if edge.poll() is None:
+                    stop_owned(edge)
+                if case == 'application_config_error':
+                    write_app_mode(max_attempts='invalid')
+                elif case in {'application_error', 'missing_evidence'}:
+                    write_app_mode(mode='application_error')
+                else:
+                    write_app_mode()
                 dep_mode.write_text('normal', encoding='utf-8')
                 if case == 'downstream_unreachable':
-                    pass
+                    # Start the dependency so its log carries the start identity, then
+                    # stop it gracefully before any Probe observation so the stop is provable.
+                    dep = application(dep_port, dep_mode, 'model-dependency-' + uuid.uuid4().hex,
+                        runtime_config=dep_config)
+                    stop_owned(dep, graceful=True)
                 else:
-                    dep = application(dep_port, dep_mode, 'model-dependency-' + uuid.uuid4().hex)
+                    dep = application(dep_port, dep_mode, 'model-dependency-' + uuid.uuid4().hex,
+                        runtime_config=dep_config)
                 if case == 'port_conflict':
                     blocker = application(app_port, dep_mode, 'model-owner-' + uuid.uuid4().hex)
                     app = launch([str(Path(__file__).resolve()), '--serve', str(app_port), '--log', str(log),
-                        '--mode-file', str(app_mode), '--downstream', str(dep_port)], 'model-bind-' + uuid.uuid4().hex)
+                        '--mode-file', str(app_mode), '--downstream', str(dep_port),
+                        '--runtime-config', str(app_mode)], 'model-bind-' + uuid.uuid4().hex)
                     assert await asyncio.to_thread(app.wait, 5) != 0
                 elif case != 'application_exit':
-                    app = application(app_port, app_mode, 'model-app-' + uuid.uuid4().hex, dep_port)
-                snapshot = verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker)
+                    app = application(app_port, app_mode, 'model-app-' + uuid.uuid4().hex, dep_port,
+                        runtime_config=app_mode)
+                edge = application(edge_port, edge_mode, 'edge', app_port, runtime_config=edge_config,
+                    log_path=edge_log)
+                if case == 'downstream_unreachable':
+                    status, _ = await asyncio.to_thread(get_local, edge_port, path='/api/availability',
+                        request_id=uuid.uuid4().hex)
+                    assert status == 503, 'stopped dependency did not fail the business entry'
+                snapshot = verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker,
+                    edge=edge, edge_port=edge_port)
                 return {**snapshot, 'app_pids': [row['pid'] for row in snapshot['listeners'] if row['port'] == app_port],
                     'downstream_pids': [row['pid'] for row in snapshot['listeners'] if row['port'] == dep_port]}
             if scenario_preflight:
@@ -1185,7 +1245,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                         if case == 'application_config_error':
                             snapshot = (await query('probe_config_snapshot', {'service': 'localapp'},
                                 'controller-' + case))['payload']
-                            assert snapshot['values'] == {'max_attempts': 'invalid'}
+                            assert snapshot['values']['max_attempts'] == 'invalid'
+                            assert snapshot['values']['downstream_port'] == dep_port
                             assert snapshot['source_sha256'] == hashlib.sha256(app_mode.read_bytes()).hexdigest()
                             assert any(row.get('configuration', {}).get('source_sha256') == snapshot['source_sha256']
                                 for row in entries)
@@ -1207,6 +1268,47 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                                   'model_calls': 0, 'autonomous_model_investigation': False})
                 await set_model_case('normal')
                 assert get_local(app_port)[0] == get_local(dep_port)[0] == 200
+                # The stopped-dependency direct cause must be derivable from this
+                # fixture's own evidence.  This is the structural check behind the
+                # widened result level: it proves the lifecycle chain is complete
+                # before any paid round is spent trying to use it.
+                await set_model_case('downstream_unreachable')
+                from scripts.evaluate_windows_probe import business_catalog
+                from src.probe.windows.config import load_config
+                from src.agent.aiops.target_catalog import resolve_target
+                from src.agent.aiops.strategies import investigation
+                collected = [
+                    ('inventory', await query('probe_inventory', {}, 'stopped-cause')),
+                    ('downstream-log', await query('probe_text_log',
+                        {'service': 'downstream', 'path': str(dep_log), 'lines': 100}, 'stopped-cause')),
+                    ('edge-log', await query('probe_text_log',
+                        {'service': 'edge', 'path': str(edge_log), 'lines': 100}, 'stopped-cause')),
+                    ('app-log', await query('probe_text_log',
+                        {'service': 'localapp', 'path': str(log), 'lines': 100}, 'stopped-cause')),
+                    ('app-config', await query('probe_config_snapshot', {'service': 'localapp'}, 'stopped-cause')),
+                    ('dependency', await query('probe_dependency_probe', {'dependency': 'downstream'}, 'stopped-cause')),
+                    ('ports', await query('probe_port_snapshot',
+                        {'local_port': dep_port, 'listening_only': True}, 'stopped-cause')),
+                    ('processes', await query('probe_process_snapshot', {'service': 'downstream'}, 'stopped-cause'))]
+                stopped_state = {'input': 'edge 业务入口不可用', 'autonomous_investigation': True,
+                    'past_steps': [],
+                    'raw_evidence': [(name, json.dumps(raw)) for name, raw in collected],
+                    'target_resolution': resolve_target(business_catalog(load_config(out / 'config.toml')),
+                        'edge', collected[0][1]['payload'], target),
+                    'investigation_tools': [{'name': name} for name in tools],
+                    'investigation_config': {'hypothesis_protection': False, 'contradiction_trigger': False}}
+                assert stopped_state['target_resolution']['status'] == 'resolved', stopped_state['target_resolution']
+                direct = investigation._direct_cause_evidence(
+                    investigation.evidence_index(stopped_state), stopped_state)
+                assert direct['downstream_stopped_after_request'], sorted(direct)
+                (out / 'stopped-cause-evidence.json').write_text(json.dumps({
+                    'direct_cause_evidence': {key: sorted(value) for key, value in direct.items()},
+                    'evidence': [{'case': name, 'evidence_id': raw.get('raw_hash')} for name, raw in collected],
+                    'model_calls': 0, 'fixed_decisions': True}, ensure_ascii=False, indent=2), encoding='utf-8')
+                cases.append({'case': 'downstream_stopped_cause_derivable', 'status': 'passed',
+                    'model_calls': 0, 'autonomous_model_investigation': False,
+                    'cause_code': 'downstream_stopped_after_request'})
+                await set_model_case('normal')
                 left, right = matching_503['downstream_unreachable'], matching_503['application_config_error']
                 assert left['entry']['http']['status'] == right['entry']['http']['status'] == 503
                 assert left['entry']['http']['body_prefix'] == right['entry']['http']['body_prefix'] == 'temporarily unavailable'
@@ -1273,7 +1375,7 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             after_exit = await query('probe_process_snapshot', {'service': 'localapp'}, 'application_exit')
             assert not app_pids & {row['pid'] for row in after_exit['payload']['processes']}
             exited['status'] = 'passed'
-            app = application(app_port, app_mode, 'application-recovered', dep_port)
+            app = application(app_port, app_mode, 'application-recovered', dep_port, runtime_config=app_mode)
             recovered, _ = await observe('application_recovered')
             assert recovered['app_http'] == 200
             recovered['status'] = 'passed'
@@ -1336,11 +1438,11 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
             assert http['dependency_tcp'] == 'ok' and http['dependency_http'] == http['app_http'] == 503
             http['status'] = 'passed'
             dep_mode.write_text('normal', encoding='utf-8')
-            app_mode.write_text('application_error', encoding='utf-8')
+            write_app_mode(mode='application_error')
             error, logs = await observe('application_error')
             assert error['app_http'] == 500 and error['dependency_http'] == 200 and 'request failed' in str(logs)
             error['status'] = 'passed'
-            app_mode.write_text(json.dumps({'max_attempts': 3}), encoding='utf-8')
+            write_app_mode()
             stop_owned(app)
             blocker = application(app_port, dep_mode, 'port-owner')
             failed = launch([str(Path(__file__).resolve()), '--serve', str(app_port), '--log', str(log),

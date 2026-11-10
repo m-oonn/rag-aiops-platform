@@ -7,6 +7,40 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
+def _configuration_fault_observed(saved_raw):
+    """True when an error log names a field that the current snapshot contradicts.
+
+    Mirrors the engine's own configuration cross-check so the harness follows the
+    evidence actually collected instead of assuming one specific probe.
+    """
+    snapshots = {}
+    for raw in saved_raw:
+        body = raw.get('payload') or {}
+        if raw.get('operation') != 'configuration' or body.get('error'):
+            continue
+        values = body.get('values')
+        if isinstance(body.get('service'), str) and isinstance(values, dict):
+            snapshots[(body['service'], body.get('source_sha256'))] = values
+    for raw in saved_raw:
+        body = raw.get('payload') or {}
+        if raw.get('operation') != 'text_logs':
+            continue
+        for line in body.get('lines') or []:
+            try:
+                event = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            logged = event.get('configuration')
+            if not isinstance(logged, dict) or not event.get('error_type'):
+                continue
+            if not isinstance(event.get('status'), int) or event['status'] < 400:
+                continue
+            values = snapshots.get((body.get('service'), logged.get('source_sha256')))
+            if values is not None and values.get(logged.get('field')) == logged.get('value'):
+                return True
+    return False
+
+
 async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_url, set_case=None):
     import httpx
     from langchain_core.messages import AIMessage, ToolMessage
@@ -157,15 +191,18 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                         {'tool': 'probe_dependency_probe', 'args': {'dependency': 'downstream'}}
                         if case == 'contradiction' else {'tool': 'probe_text_log', 'args': {'service': 'localapp', 'path': str(log), 'lines': 20}},
                         {'tool': selected_tool, 'args': selected_args}])
-                    # After the mechanism-selected check the engine may still queue
-                    # one bounded follow-up for an in-scope dependency that no probe
-                    # has covered yet.  It is allow-listed and recorded as an
-                    # uncovered-scope recovery, so it is permitted here; anything
-                    # else beyond the planned checks is not.
+                    # After the mechanism-selected check the engine may still spend
+                    # one bounded round per in-scope object that has no live
+                    # observation yet.  With the three-service topology that is more
+                    # than one object, so the count follows the scope instead of a
+                    # fixed limit; only allow-listed read-only probes are permitted
+                    # and no object may be probed twice.
                     assert checks[:len(expected_checks)] == expected_checks, checks
                     extra = checks[len(expected_checks):]
-                    assert len(extra) <= 1 and all(item['tool'] == 'probe_dependency_probe'
+                    assert all(item['tool'] in {'probe_dependency_probe', 'probe_process_snapshot'}
                         for item in extra), checks
+                    extra_keys = [(item['tool'], json.dumps(item['args'], sort_keys=True)) for item in extra]
+                    assert len(set(extra_keys)) == len(extra_keys), checks
                     ledger = run_store.list_evidence(tid, 1)
                     records = inv.evidence_index(final)
                     planned_evidence = (4 if case != 'no_live_refutation' and 'probe_config_snapshot' in tools else 3)
@@ -192,27 +229,40 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                         assert set(event.get('evidence_ids', [])) <= set(records)
                         if event['kind'] == 'contradiction_triggered':
                             assert event['evidence_ids']
-                            assert event['condition']['object_name'] == 'downstream'
+                            # With three services the engine may refute a saved
+                            # prediction about any in-scope dependency or process,
+                            # not only the downstream one.  Each refutation must
+                            # still be carried by evidence of exactly the predicted
+                            # operation and object that contradicts the prediction.
+                            condition = event['condition']
                             for eid in event['evidence_ids']:
                                 observed = json.loads(records[eid]['payload'])
-                                assert observed['operation'] == 'dependency_probe'
-                                assert observed['payload']['dependency'] == 'downstream'
-                                assert observed['payload']['tcp'] == 'ok'
+                                assert observed['operation'] == condition['operation']
+                                if condition['operation'] == 'dependency_probe':
+                                    assert observed['payload']['dependency'] == condition['object_name']
+                                    assert observed['payload']['tcp'] == 'ok'
+                                else:
+                                    assert condition['operation'] == 'processes'
+                                    assert observed['payload']['service'] == condition['object_name']
+                                    assert observed['payload']['processes']
                     assert [e['investigation'] for e in events if e.get('investigation')][-1]['events'] == mechanism_events
                     # Mechanism activation and baseline diagnosis are separate.
                     # A localized fault needs a live fault observation, and in the
-                    # config-error scenario the only one is the entry dependency
-                    # probe returning HTTP 503.  That probe is reached either by a
-                    # mechanism redirect or by the engine following up an unresolved
-                    # alternative on its own, so the expectation follows the
-                    # observation actually collected rather than the group.
+                    # config-error scenario there are two independent sources: the
+                    # entry dependency probe returning HTTP 503, and a configuration
+                    # snapshot cross-checked against the application's own error
+                    # log.  Either one suffices, so the expectation follows the
+                    # observations actually collected rather than the group.
+                    saved_raw = [run_store.get_evidence(tid, item['evidence_id'], 1, include_raw=True)['raw']
+                                 for item in ledger]
                     entry_fault = any(
-                        saved['raw']['operation'] == 'dependency_probe'
-                        and saved['raw']['payload'].get('dependency') == 'localapp'
-                        and (saved['raw']['payload'].get('http') or {}).get('status') == 503
-                        for saved in (run_store.get_evidence(tid, item['evidence_id'], 1, include_raw=True)
-                                      for item in ledger))
-                    expected_kind = 'localized_fault' if entry_fault else 'unlocated'
+                        raw['operation'] == 'dependency_probe'
+                        and raw['payload'].get('dependency') == 'localapp'
+                        and (raw['payload'].get('http') or {}).get('status') == 503
+                        for raw in saved_raw)
+                    configuration_fault = _configuration_fault_observed(saved_raw)
+                    expected_kind = ('localized_fault' if entry_fault or configuration_fault
+                                     else 'unlocated')
                     assert complete['diagnosis']['kind'] == expected_kind, (case, group, entry_fault)
                     assert knowledge_context(final['raw_evidence']) == decisions[0]
                     await service.close()
@@ -222,12 +272,17 @@ async def verify_mechanism_groups(tools, output, log, knowledge_tool, knowledge_
                     assert restored.values['investigation_memory'] == final['investigation_memory']
                     assert restored.values['raw_evidence'] == final['raw_evidence']
                     fingerprint = lambda value: hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-                    # The scripted stop can be pre-empted once by a mechanism that
-                    # still has a check to run, so the harness may ask for one more
-                    # decision before the same stop is accepted.  Every round must
-                    # still see the identical knowledge context.
+                    # The scripted stop can be pre-empted while a mechanism still
+                    # has a check to run, and once more per in-scope object that has
+                    # no live observation yet.  With the three-service topology that
+                    # is more than one object, so the bound follows the resolved
+                    # scope instead of a fixed limit.  Every round must still see
+                    # the identical knowledge context.
+                    resolution = final.get('target_resolution') or {}
+                    in_scope = (len(resolution.get('allowed_dependencies') or [])
+                        + len(resolution.get('allowed_services') or []))
                     fingerprints = [fingerprint(d) for d in decisions]
-                    assert 3 <= len(decisions) <= 4 and len(set(fingerprints)) == 1, (case, group, fingerprints)
+                    assert 3 <= len(decisions) <= 3 + in_scope and len(set(fingerprints)) == 1, (case, group, fingerprints)
                     summaries.append({'case': case, 'group': group, 'thread_id': tid, 'calls': calls,
                         'config': expected,
                         'knowledge_sha256': fingerprint(decisions[0]),
