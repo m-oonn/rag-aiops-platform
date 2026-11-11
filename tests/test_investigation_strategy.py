@@ -1041,13 +1041,15 @@ def test_missing_dependency_address_is_not_reported_as_a_remote_target():
     assert '依赖在远端' not in gaps[0]['limitation']
 
 
-def _configuration_error_evidence(*, event_logs_available=False, matching_hash=True, repeats=1):
+def _configuration_error_evidence(*, event_logs_available=False, matching_hash=True, repeats=1,
+                                 entry_log=None, entry_request_id='req-0001', edge_request_id=None):
     from src.probe.protocol import evidence
     from src.settings import settings
 
     path = 'D:/runtime/app.mode'
     source_hash = 'sha256:config-source'
     log_event = {'at': '2026-11-03T00:00:00Z', 'pid': 1234, 'status': 503,
+        'event': 'request_completed', 'path': '/api/availability', 'request_id': entry_request_id,
         'error_type': 'ValueError', 'detail': 'invalid max_attempts configuration',
         'configuration': {'source': path, 'field': 'max_attempts', 'value': 'invalid',
             'expected': 'integer-convertible',
@@ -1067,10 +1069,18 @@ def _configuration_error_evidence(*, event_logs_available=False, matching_hash=T
             'service': 'app', 'path': path, 'source_sha256': source_hash,
             'values': {'max_attempts': 'invalid'}, 'missing_keys': []})),
     ]
+    if entry_log is not None:
+        # The entry service logs its own request id; a direct cause needs that id
+        # to equal the one the rejected load carried.
+        raw.append(('edge-log', evidence(target_id=settings.PROBE_TARGET_ID, operation='text_logs', payload={
+            'service': 'edge', 'path': 'D:/runtime/edge.log',
+            'lines': [json.dumps({'at': '2026-11-03T00:00:05Z', 'event': 'request_completed',
+                'path': '/api/availability', 'status': entry_log,
+                'request_id': edge_request_id or entry_request_id})]})))
     current = state()
     current.update(raw_evidence=[(step, json.dumps(payload)) for step, payload in raw],
         target_resolution={'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
-            'allowed_services': ['app'], 'allowed_dependencies': [],
+            'allowed_services': ['app', 'edge'], 'allowed_dependencies': [],
             'dependency_services': {}, 'services': {'app': {'probe_service': 'app'}}},
         investigation_tools=[{'name': 'probe_event_log'}])
     return current
@@ -1187,6 +1197,43 @@ def test_distinct_configuration_fields_stay_separate_findings():
     findings = [row for row in module._localized_findings(records, current)
                 if row['code'] == 'configuration_error_log_matches_snapshot']
     assert sorted(row['scope']['field'] for row in findings) == ['downstream_port', 'max_attempts']
+
+
+def test_rejected_config_value_becomes_a_direct_cause_when_the_entry_request_matches():
+    current = _configuration_error_evidence(entry_log=503)
+    records = module.evidence_index(current)
+    chain = module._direct_cause_evidence(records, current)
+    assert len(chain['configuration_value_rejected']) == 3
+    assert not chain['downstream_stopped_after_request']
+
+    ids = chain['configuration_value_rejected']
+    answer = decision(next_check='', next_tools=[], next_arguments=None,
+        discriminating_question='', expected_observation='', outcome='root_cause',
+        conclusion_level='confirmed_cause', root_cause_code='configuration_value_rejected',
+        root_cause='应用加载的 max_attempts 值为 invalid，加载被拒绝，本次请求返回 503。',
+        scope='本次入口 /api/availability 请求及采样窗口',
+        supporting_evidence=[module.Citation(evidence_id=i, quote=records[i]['payload'])
+                             for i in sorted(ids)],
+        alternatives=[module.Alternative(explanation='配置变更者与动机', status='unavailable',
+            critical=False, limitation='应用日志未记录变更者。',
+            noncritical_reason='不影响本次配置加载被拒的直接运行链。')])
+    result = module.decide_from_evidence(current, answer, records)
+    assert result['diagnosis']['kind'] == 'confirmed_cause'
+    assert result['diagnosis']['root_cause_code'] == 'configuration_value_rejected'
+
+
+def test_rejected_config_value_needs_the_matching_entry_request_to_confirm():
+    no_entry = _configuration_error_evidence()
+    assert not module._direct_cause_evidence(
+        module.evidence_index(no_entry), no_entry)['configuration_value_rejected']
+
+    other_entry = _configuration_error_evidence(entry_log=503, edge_request_id='req-other')
+    assert not module._direct_cause_evidence(
+        module.evidence_index(other_entry), other_entry)['configuration_value_rejected']
+
+    successful_entry = _configuration_error_evidence(entry_log=200)
+    assert not module._direct_cause_evidence(
+        module.evidence_index(successful_entry), successful_entry)['configuration_value_rejected']
 
 
 def test_downstream_stop_log_is_reported_as_source_statement_with_unknown_actor():

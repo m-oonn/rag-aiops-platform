@@ -510,7 +510,7 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
     all_citations = citations + advice_citations
     expected = {'normal': ['healthy_within_scope'],
         'downstream_unreachable': ['localized_fault', 'confirmed_cause'],
-        'application_error': ['localized_fault'], 'application_config_error': ['localized_fault'],
+        'application_error': ['localized_fault'], 'application_config_error': ['localized_fault', 'confirmed_cause'],
         'application_exit': ['localized_fault'],
         'port_conflict': ['localized_fault', 'confirmed_cause'], 'missing_evidence': ['unlocated', 'localized_fault']}
     allowed = {'probe_inventory', 'probe_resource_snapshot', 'probe_service_status', 'probe_process_snapshot',
@@ -1312,6 +1312,35 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 cases.append({'case': 'downstream_stopped_cause_derivable', 'status': 'passed',
                     'model_calls': 0, 'autonomous_model_investigation': False,
                     'cause_code': 'downstream_stopped_after_request'})
+                # The rejected-configuration cause is the same kind of structural
+                # claim.  Prove its chain is derivable from this fixture too, so
+                # the widened result level rests on live evidence.
+                await set_model_case('application_config_error')
+                config_collected = [
+                    ('inventory', await query('probe_inventory', {}, 'config-cause')),
+                    ('app-log', await query('probe_text_log',
+                        {'service': 'localapp', 'path': str(log), 'lines': 100}, 'config-cause')),
+                    ('edge-log', await query('probe_text_log',
+                        {'service': 'edge', 'path': str(edge_log), 'lines': 100}, 'config-cause')),
+                    ('app-config', await query('probe_config_snapshot', {'service': 'localapp'}, 'config-cause'))]
+                config_state = {'input': 'edge 业务入口不可用', 'autonomous_investigation': True,
+                    'past_steps': [],
+                    'raw_evidence': [(name, json.dumps(raw)) for name, raw in config_collected],
+                    'target_resolution': resolve_target(business_catalog(load_config(out / 'config.toml')),
+                        'edge', config_collected[0][1]['payload'], target),
+                    'investigation_tools': [{'name': name} for name in tools],
+                    'investigation_config': {'hypothesis_protection': False, 'contradiction_trigger': False}}
+                assert config_state['target_resolution']['status'] == 'resolved', config_state['target_resolution']
+                config_direct = investigation._direct_cause_evidence(
+                    investigation.evidence_index(config_state), config_state)
+                assert config_direct['configuration_value_rejected'], sorted(config_direct)
+                (out / 'config-cause-evidence.json').write_text(json.dumps({
+                    'direct_cause_evidence': {key: sorted(value) for key, value in config_direct.items()},
+                    'evidence': [{'case': name, 'evidence_id': raw.get('raw_hash')} for name, raw in config_collected],
+                    'model_calls': 0, 'fixed_decisions': True}, ensure_ascii=False, indent=2), encoding='utf-8')
+                cases.append({'case': 'config_error_cause_derivable', 'status': 'passed',
+                    'model_calls': 0, 'autonomous_model_investigation': False,
+                    'cause_code': 'configuration_value_rejected'})
                 await set_model_case('normal')
                 left, right = matching_503['downstream_unreachable'], matching_503['application_config_error']
                 assert left['entry']['http']['status'] == right['entry']['http']['status'] == 503

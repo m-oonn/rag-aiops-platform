@@ -96,8 +96,9 @@ class InvestigationDecision(BaseModel):
     discriminating_question: str = Field(default='', description='next_check非空时必填：要区分的具体解释或未决问题')
     expected_observation: str = Field(default='', description='next_check非空时必填：什么实际工具结果会改变判断')
     root_cause: str = ""
-    root_cause_code: Literal['', 'configured_downstream_endpoint_mismatch', 'downstream_stopped_after_request'] = Field(default='',
-        description='直接原因：端点错配或下游收到停止请求后退出；不裁决变更者、停止发起者或动机')
+    root_cause_code: Literal['', 'configured_downstream_endpoint_mismatch', 'downstream_stopped_after_request',
+                             'configuration_value_rejected'] = Field(default='',
+        description='直接原因：端点错配、下游收到停止请求后退出，或配置值被应用拒绝加载；不裁决变更者、停止发起者或动机')
     supporting_evidence: list[Citation] = Field(default_factory=list,
         description='最终结论必填实际证据ID及逐字引用；healthy须覆盖每个允许依赖及服务进程，不能只在hypothesis文字中叙述')
     alternatives: list[Alternative] = Field(default_factory=list,
@@ -151,7 +152,8 @@ contradictions 只保存待核实说明；日志为空、缺少退出历史不�
 若原因果解释的必要预期已被反驳且没有其他独立依据，更新为已核验的有限条件，不继续将同一无依据解释作为独立关键项。原提议仍留在调查轨迹；真正未决的关键问题须保留并调查。
 可确认的直接原因码有 configured_downstream_endpoint_mismatch：必须引用同一运行的加载配置快照、配置端点失败探测、登记端点成功探测、带同一配置哈希的应用失败请求日志、及匹配请求ID的入口503日志。缺少任一项时不得确认。
 另一原因码 downstream_stopped_after_request：须引用下游同PID/实例的启动、停止请求、完成退出日志，退出后的配置身份进程缺失、无监听、登记端点失败探测，以及配置端口与登记一致的快照、同配置哈希的应用失败日志、同request_id入口503日志。仅无监听不能证明停止原因。
-两类结论只回答本次请求的直接运行原因，不说明变更者、停止发起者、动机或完整历史；不影响当前直接原因的历史问题保留 unresolved，标为非关键并说明理由。原因齐备后，无下一项工具检查时清空next_check/next_tools/next_arguments/discriminating_question/expected_observation，不把“核对已有证据并总结”写成工具检查。
+第三原因码 configuration_value_rejected：须引用同一运行的配置快照、应用自身记录该字段值被拒绝的失败请求日志（error_type 与 HTTP 状态均非空、同 source_sha256、同字段、同值）、以及匹配同一 request_id 的入口503日志。缺任一项不得确认；仅凭“值看起来不对”不能确认。
+三类结论只回答本次请求的直接运行原因，不说明变更者、停止发起者、动机或完整历史；不影响当前直接原因的历史问题保留 unresolved，标为非关键并说明理由。原因齐备后，无下一项工具检查时清空next_check/next_tools/next_arguments/discriminating_question/expected_observation，不把“核对已有证据并总结”写成工具检查。
 继续检查时填写 next_question_id，使用此前记忆中未决问题的稳定 ID；没有旧问题时可留空。
 localized_fault 只填写已被证据直接确认的故障现象。healthy_within_scope 只描述核查的具体对象及窗口，
 故障层有直接证据时，即使更深原因 unavailable/unresolved，也可报告 localized_fault，并保留这些限制；
@@ -2373,7 +2375,8 @@ def _confirmed_stopped_cause_evidence(records, state):
 
 def _direct_cause_evidence(records, state):
     return {'configured_downstream_endpoint_mismatch': _confirmed_endpoint_cause_evidence(records, state),
-            'downstream_stopped_after_request': _confirmed_stopped_cause_evidence(records, state)}
+            'downstream_stopped_after_request': _confirmed_stopped_cause_evidence(records, state),
+            'configuration_value_rejected': _confirmed_configuration_cause_evidence(records, state)}
 
 
 def _configuration_error_findings(records, state):
@@ -2452,6 +2455,54 @@ def _configuration_error_findings(records, state):
                 'snapshot_collected_at': snapshot_raw.get('collected_at'),
             })
     return findings
+
+
+def _confirmed_configuration_cause_evidence(records, state):
+    """Return the chain for a configuration value the application itself rejected.
+
+    The paired finding already proves the log line and the independently read
+    snapshot describe the same file, field and value.  The cause still needs the
+    failed request that carried the value and the entry log for that request.
+    """
+    current = current_probe_records(records)
+    for finding in _configuration_error_findings(records, state):
+        error = finding['configuration_error']
+        source_hash = json.loads(finding['related_evidence'][0]['quote']).get('source_sha256')
+        if not source_hash:
+            continue
+        service = finding['scope']['service']
+        app_events, edge_events = [], []
+        for evidence_id, record in current.items():
+            raw = json.loads(record['payload'])
+            body = raw.get('payload') or {}
+            if raw.get('operation') != 'text_logs' or body.get('error') or raw.get('truncated'):
+                continue
+            for line in body.get('lines', []):
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                status, configuration = event.get('status'), event.get('configuration')
+                if (body.get('service') == service and event.get('event') == 'request_completed'
+                        and event.get('path') == '/api/availability' and type(status) is int and status >= 500
+                        and isinstance(configuration, dict)
+                        and configuration.get('source_sha256') == source_hash
+                        and configuration.get('field') == error['field']
+                        and configuration.get('value') == error['value']
+                        and event.get('request_id')):
+                    app_events.append((evidence_id, event))
+                elif (body.get('service') == 'edge' and event.get('event') == 'request_completed'
+                        and event.get('path') == '/api/availability' and type(status) is int and status >= 500
+                        and event.get('request_id')):
+                    edge_events.append((evidence_id, event))
+        for app_id, app_event in app_events:
+            for edge_id, edge_event in edge_events:
+                if app_event['request_id'] == edge_event['request_id']:
+                    return {finding['evidence_id'],
+                        *[item['evidence_id'] for item in finding['related_evidence']], app_id, edge_id}
+    return set()
 
 
 def _observation_conflicts(records, state):
