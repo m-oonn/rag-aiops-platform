@@ -1,0 +1,678 @@
+{
+  "module_id": "rag-qa",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:40:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-RAG-001",
+      "assertion_id": "ASRT-RAG-001",
+      "feature_id": "FEAT-RAG-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-001"],
+      "rule_refs": ["RULE-RAG-001"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于既未选助手也未选知识库的提问；只要选了其中任一，就应走 CASE-RAG-002。",
+      "preconditions": [
+        "Web 控制台可访问（前端 axios baseURL 为 /api/v1，见 frontend/src/api/index.js:4）",
+        "已登录并停留在 /chat 页",
+        "左侧『选择助手』下拉为空、『直接选择知识库（旧版）』下拉也为空"
+      ],
+      "steps": [
+        "1. 打开浏览器开发者工具 Network 面板，勾选保留日志",
+        "2. 在 /chat 输入框输入『你好』并按回车（或点『发送』）",
+        "3. 观察 Network 中新增的请求 URL 与响应 Content-Type",
+        "4. 观察消息区是否逐字出现 assistant 文本",
+        "5. 等待流结束后记录最终出现的 assistant 消息全文"
+      ],
+      "expected": [
+        "步骤3：只出现一条 POST /api/v1/chat/stream，响应 Content-Type 含 text/event-stream",
+        "步骤3：全程没有 POST /api/v1/chat/ 请求",
+        "步骤4：assistant 内容逐字增长（至少观察到 2 次增量渲染）",
+        "步骤5：消息区不显示『参考来源：』块（纯聊天不返回来源）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "Network 面板截图（URL、请求方法、Content-Type、事件流内容）",
+        "逐字增长过程中至少两张截图或帧记录",
+        "最终消息区截图（确认无『参考来源：』）"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["打开 /chat", "在输入框输入并回车", "抓取浏览器网络请求"],
+      "required_capabilities": ["browser", "devtools_network_capture", "authenticated_session", "model_service_available"],
+      "resource_requirements": ["可用的 LLM 服务（该路径会真实调用模型）"],
+      "resource_refs": [
+        "frontend/src/views/Chat.vue:331-343",
+        "frontend/src/views/Chat.vue:377-427",
+        "src/api/routers/chat.py:210-278",
+        "src/api/routers/chat.py:216-221"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次自动创建的会话：DELETE /api/v1/chat/sessions/{session_id}"
+    },
+    {
+      "case_id": "CASE-RAG-002",
+      "assertion_id": "ASRT-RAG-002",
+      "feature_id": "FEAT-RAG-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-001"],
+      "rule_refs": ["RULE-RAG-001"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于已选中任一助手（或任一知识库）后的提问；纯聊天场景不适用。",
+      "preconditions": [
+        "已登录并停留在 /chat 页",
+        "已存在至少一个属于当前用户的助手（可在 /assistants 页确认）",
+        "Network 面板已打开"
+      ],
+      "steps": [
+        "1. 在左侧『选择助手』下拉选中该助手",
+        "2. 确认『直接选择知识库（旧版）』下拉变为不可用（disabled）",
+        "3. 输入『你好』并回车",
+        "4. 记录出现的请求 URL、响应 Content-Type、响应是否为单个 JSON",
+        "5. 观察等待期间消息区是否出现 assistant 占位气泡"
+      ],
+      "expected": [
+        "步骤2：知识库下拉为禁用状态",
+        "步骤4：只出现 POST /api/v1/chat/（无 /chat/stream），Content-Type 为 application/json",
+        "步骤4：响应体为单个 JSON，含 session_id / query / answer / source_documents 四个键",
+        "步骤5：等待期间消息区只有 user 气泡，没有逐字增长的 assistant 文本"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["Network 面板截图", "响应 JSON 全文（脱敏后可保留结构）", "等待期间的界面截图"],
+      "execution_kind": "live_ui",
+      "required_actions": ["打开 /chat", "选择助手", "输入并回车", "抓取浏览器网络请求"],
+      "required_capabilities": ["browser", "devtools_network_capture", "authenticated_session", "model_service_available"],
+      "resource_requirements": ["已配置的助手", "可用 LLM 服务"],
+      "resource_refs": [
+        "frontend/src/views/Chat.vue:345-358",
+        "frontend/src/views/Chat.vue:56",
+        "src/api/routers/chat.py:64-169"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-003",
+      "assertion_id": "ASRT-RAG-003",
+      "feature_id": "FEAT-RAG-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-001"],
+      "rule_refs": ["RULE-RAG-002"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于直接请求流式端点；不适用于带 assistant_id / kb_id 的同步端点（那是 SIG-RAG 的另一条链路）。",
+      "preconditions": ["已登录并拿到 JWT（POST /api/v1/auth/login/access-token（form 字段 username/password））"],
+      "steps": [
+        "1. 用 curl -N 发 POST http://127.0.0.1:8200/api/v1/chat/stream，Header 'Authorization: Bearer <token>'，body {\"query\":\"你好\"}",
+        "2. 完整收集响应事件流（保持连接直到结束）",
+        "3. 逐条记录事件类型与字段名",
+        "4. 检查是否存在任何 source_documents / 检索相关字段"
+      ],
+      "expected": [
+        "步骤2：响应 Content-Type 含 text/event-stream",
+        "步骤3：事件序列中出现多条 {\"type\":\"token\",\"content\":...}，最后一条为 {\"type\":\"done\",\"session_id\":\"...\"}",
+        "步骤4：事件中不出现 source_documents、retrieved、metadata 等检索字段（该端点不检索）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["curl -N 的原始输出（保留 SSE 数据行）", "响应头原文", "done 事件里的 session_id"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/stream", "POST /api/v1/auth/login/access-token（form 字段 username/password）"],
+      "required_capabilities": ["authenticated_http_client", "sse_stream_reading", "model_service_available"],
+      "resource_requirements": ["可用 LLM 服务"],
+      "resource_refs": [
+        "src/api/routers/chat.py:210-278",
+        "src/api/routers/chat.py:249-268"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/chat/sessions/{session_id}"
+    },
+    {
+      "case_id": "CASE-RAG-004",
+      "assertion_id": "ASRT-RAG-005",
+      "feature_id": "FEAT-RAG-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-002"],
+      "rule_refs": ["RULE-RAG-004"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于长度 <15 且含问候词的输入；长度 ≥15 时即使含问候词也不走该短路（长度条件是必要条件）。",
+      "preconditions": [
+        "已登录",
+        "已有一个含已就绪文档的知识库 kb_id（用于排除『没有库所以没检索』的干扰）",
+        "服务端可观察日志（能看到是否出现 [retrieval_quality] 行）"
+      ],
+      "steps": [
+        "1. 清空服务端日志观察窗口",
+        "2. POST /api/v1/chat/，body {\"query\":\"你好\",\"kb_id\":<kb_id>}",
+        "3. 记录响应 source_documents 的长度",
+        "4. 在服务端日志中搜索 '[retrieval_quality]'",
+        "5. 再发一次 body {\"query\":\"你好请问一下今天天气怎么样呢我想知道\",\"kb_id\":<kb_id>}（长度 >15），记录 source_documents 长度与日志线索"
+      ],
+      "expected": [
+        "步骤3：source_documents 为 []",
+        "步骤4：日志中无 '[retrieval_quality]' 行（未进入检索路径）",
+        "步骤5：source_documents 非空或日志出现 '[retrieval_quality]' 行（长度 >15 不再被规则短路，改由 LLM 判定）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["短问候与长句在同一 kb 下的分支差异"],
+      "evidence": ["两次响应 JSON 的 source_documents 数组长度", "两次阶段的服务端日志片段（含或不含 [retrieval_quality]）"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/", "log_capture"],
+      "required_capabilities": ["authenticated_http_client", "log_capture", "model_service_available"],
+      "resource_requirements": ["含已就绪文档的知识库", "可用 LLM 服务（步骤5 需要意图分析）"],
+      "resource_refs": [
+        "src/services/rag_service.py:15-18",
+        "src/services/rag_service.py:28-46",
+        "src/services/rag_service.py:107-117",
+        "src/services/rag_service.py:49-64"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次创建的会话"
+    },
+    {
+      "case_id": "CASE-RAG-005",
+      "assertion_id": "ASRT-RAG-006",
+      "feature_id": "FEAT-RAG-002",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-002", "REQ-RAG-005"],
+      "rule_refs": ["RULE-RAG-004", "RULE-RAG-006", "RULE-RAG-016"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于用户没有可用 Agent 的场景；若该用户有 Agent，diagnosis 会走 _agent_path，此时来源同样为空但内部检索过（见 RULE-RAG-016）。",
+      "preconditions": [
+        "已登录的用户名下没有任何 Agent（GET /api/v1/agents/ 返回空）",
+        "有一个含已就绪文档的知识库 kb_id",
+        "该知识库里恰好有一份文档正文含『超时』且内容可被检索到"
+      ],
+      "steps": [
+        "1. POST /api/v1/chat/，body {\"query\":\"超时\",\"kb_id\":<kb_id>}",
+        "2. 记录响应 source_documents 与 answer",
+        "3. 对照服务端日志判断走的是 diagnosis 还是 chat 分支（看是否出现检索相关日志）",
+        "4. 再发 body {\"query\":\"超时\",\"kb_id\":<kb_id>, \"session_id\":<上一步 session_id>} 确认同一会话内行为一致"
+      ],
+      "expected": [
+        "步骤1：HTTP 200",
+        "步骤2：source_documents **非空**——『超时』含诊断词且长度 <15，规则层判 diagnosis；本用例前置为无 Agent，分派矩阵落到 _rag_path（src/services/rag_service.py:143-146），该路径会带回来源",
+        "步骤2：answer 非空且不以 'Error generating response:' 开头",
+        "步骤3：日志显示进入检索路径（出现 [retrieval_quality] 行），而非 _general_chat",
+        "步骤4：同一会话内第二次请求行为一致，响应 session_id 与第一次相同"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["无 agent 的 diagnosis 请求实际落入 _rag_path 还是 _general_chat", "有无 Agent 时 source_documents 的差异"],
+      "evidence": [
+        "两次响应 JSON 全文",
+        "服务端日志中该请求的意图判定与分支（如有 logger 输出）",
+        "GET /api/v1/agents 的空结果作为前置证明"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/", "GET /api/v1/agents/", "log_capture"],
+      "required_capabilities": ["authenticated_http_client", "log_capture", "model_service_available"],
+      "resource_requirements": ["含『超时』字样的已就绪文档", "可用 LLM 与 embedding 服务"],
+      "resource_refs": [
+        "src/services/rag_service.py:20-25",
+        "src/services/rag_service.py:28-46",
+        "src/services/rag_service.py:140-149",
+        "src/services/rag_service.py:196-228"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-006",
+      "assertion_id": "ASRT-RAG-008",
+      "feature_id": "FEAT-RAG-010",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-010"],
+      "rule_refs": ["RULE-RAG-021"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于请求显式传 llm_model 的情形；不传时校验不触发（走助手或默认模型）。",
+      "preconditions": ["已登录", "GET /api/v1/health/models 可返回可用模型列表"],
+      "steps": [
+        "1. GET http://127.0.0.1:8200/api/v1/health/models，记录返回的 models 数组",
+        "2. POST /api/v1/chat/，body {\"query\":\"你好\",\"llm_model\":\"gpt-4o\"}",
+        "3. 记录状态码与 detail",
+        "4. POST /api/v1/chat/，body {\"query\":\"你好\",\"llm_model\":<步骤1 中第一个合法模型名>}",
+        "5. 记录状态码"
+      ],
+      "expected": [
+        "步骤1：返回 JSON 含 models 数组，非空",
+        "步骤3：HTTP 422，detail 中包含 '不支持的模型' 字样并列出可用模型",
+        "步骤5：HTTP 200（合法模型通过校验）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["/health/models 响应 JSON", "步骤3 的状态码与 detail 原文", "步骤5 的状态码"],
+      "execution_kind": "live_api",
+      "required_actions": ["GET /api/v1/health/models", "POST /api/v1/chat/"],
+      "required_capabilities": ["authenticated_http_client", "model_service_available"],
+      "resource_requirements": ["可用 LLM 服务（步骤5 会真实生成）"],
+      "resource_refs": [
+        "src/api/routers/chat.py:22-40",
+        "src/api/routers/health.py:176-195",
+        "src/settings.py:77-79"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-007",
+      "assertion_id": "ASRT-RAG-010",
+      "feature_id": "FEAT-RAG-009",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-009"],
+      "rule_refs": ["RULE-RAG-019"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于他人私有/公开知识库 id 被作为 kb_id 传入的情形；与 CASE-KB-006 的『读库 403/404』形成对照（此处问答应为 200）。",
+      "preconditions": [
+        "用户 A 建一个 is_public=false 的库 kb_private 并上传一份已就绪文档",
+        "用户 B 已登录"
+      ],
+      "steps": [
+        "1. 用 B 的 token 发 POST /api/v1/chat/，body {\"query\":\"这份手册里连接拒绝怎么处理\",\"kb_id\":<kb_private>}",
+        "2. 记录状态码、source_documents 长度、answer 前 100 字",
+        "3. 检查响应中是否有任何错误提示字段",
+        "4. 用 B 的 token 发 GET /api/v1/knowledge-bases/{kb_private} 作对照"
+      ],
+      "expected": [
+        "步骤2：HTTP **200**（不是 403、不是 404），source_documents 为 []",
+        "步骤2：answer 非空，属通用回答（因为无可用库，分派落到 _general_chat）",
+        "步骤3：响应中无 error/detail 字段，前端也不会弹错误提示",
+        "步骤4：HTTP 403 或 404（读库被拒，与问答的静默降级形成对比）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["问答接口对无权库的处理 vs 知识库接口对无权库的处理"],
+      "evidence": ["两次请求的状态码与响应 JSON", "B 的 GET /api/v1/knowledge-bases/ 列表（确认看不到该库）", "前端截图（无错误提示）"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/", "GET /api/v1/knowledge-bases/{kb_id}"],
+      "required_capabilities": ["two_authenticated_users", "model_service_available"],
+      "resource_requirements": ["两个账号", "可用 LLM 服务"],
+      "resource_refs": [
+        "src/api/routers/chat.py:89-94",
+        "src/api/routers/chat.py:135-136",
+        "src/api/routers/knowledge_base.py:272-283"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "删除 B 本次会话；A 删除 kb_private"
+    },
+    {
+      "case_id": "CASE-RAG-008",
+      "assertion_id": "ASRT-RAG-012",
+      "feature_id": "FEAT-RAG-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-005"],
+      "rule_refs": ["RULE-RAG-014"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于 hybrid 或 bm25 库中确有相关文档的情形；若知识库为空或索引陈旧（见 CASE-RAG-010）则来源可能为空。",
+      "preconditions": [
+        "已登录",
+        "有一个 hybrid 库，内含一份已 status=2 的多页 PDF，其第 N 页含唯一术语 'ZTX-9917'",
+        "服务启动后尚未执行过任何问答（保证 BM25 索引在本次第一问时建立并包含该文档）"
+      ],
+      "steps": [
+        "1. POST /api/v1/chat/，body {\"query\":\"ZTX-9917 是什么\",\"kb_id\":<kb_id>}",
+        "2. 记录 source_documents 的条数与每项的 id / score / metadata 键",
+        "3. 记录 metadata.filename 与 metadata.page",
+        "4. 检查 answer 是否引用了段落编号或包含该术语",
+        "5. 核对 metadata.page 是否等于 PDF 中该术语所在真实页"
+      ],
+      "expected": [
+        "步骤2：source_documents 非空，每项含 id、text、score、metadata 四个键",
+        "步骤3：metadata.filename 非空且等于上传的文件名；metadata.page 为 ≥1 的整数",
+        "步骤4：answer 非空且不是 'Error generating response:' 开头",
+        "步骤5：metadata.page 与 PDF 真实页码一致（PDF 走真实页号切分，src/worker/tasks.py:112-115）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "响应 JSON 全文（含 source_documents 明细）",
+        "该 PDF 对应页码的截图（用于核对 page）",
+        "服务端日志中的 [retrieval_quality] 行（count/max/avg）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/", "log_capture"],
+      "required_capabilities": ["authenticated_http_client", "log_capture", "model_service_available"],
+      "resource_requirements": ["含唯一术语的多页 PDF", "可用 LLM/embedding/rerank 服务"],
+      "resource_refs": [
+        "src/services/rag_service.py:337-350",
+        "src/services/rag_service.py:352-356",
+        "src/worker/tasks.py:182-193",
+        "src/worker/tasks.py:112-115",
+        "src/services/rag_service.py:49-64"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-009",
+      "assertion_id": "ASRT-RAG-013",
+      "feature_id": "FEAT-RAG-005",
+      "role": "experience",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-005"],
+      "rule_refs": ["RULE-RAG-015"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于响应 source_documents 非空的前端渲染；空来源时不渲染该块。",
+      "preconditions": [
+        "已有 CASE-RAG-008 的成功响应（source_documents 非空）",
+        "已登录并停留在 /chat 页，选中同一个助手或知识库"
+      ],
+      "steps": [
+        "1. 在 /chat 页提出与 CASE-RAG-008 相同的问题，等待回答完成",
+        "2. 截图回答下方区域",
+        "3. 用浏览器元素检查器读取『参考来源：』块的文本内容",
+        "4. 在页面文本中搜索文件名（如样例 PDF 的实际文件名）与『第』字",
+        "5. 同时打开接口响应（Network 面板）对照 metadata 中的 filename 与 page"
+      ],
+      "expected": [
+        "步骤3：来源块每行形如 '（片段前 50 字）...（相关度：0.xx）'",
+        "步骤4：页面文本中**不出现**文件名，也不出现页码（虽然接口已返回 metadata.filename 与 metadata.page）",
+        "步骤5：接口响应里 metadata.filename 与 metadata.page 均非空 → 属『数据有、界面不显示』的缺口"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["接口已有 metadata 与界面实际渲染的差异"],
+      "evidence": [
+        "回答区截图（含来源块）",
+        "来源块的 DOM 文本",
+        "Network 中该次响应的 source_documents 明细（证明 filename/page 存在）",
+        "页面全文搜索 '第' 与文件名均无结果的截图"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["打开 /chat", "输入并发送问题", "读取 DOM 文本", "抓取浏览器网络请求"],
+      "required_capabilities": ["browser", "devtools_network_capture", "dom_text_extraction", "authenticated_session", "model_service_available"],
+      "resource_requirements": ["有可命中文档的知识库", "可用 LLM 服务"],
+      "resource_refs": [
+        "frontend/src/views/Chat.vue:96-103",
+        "src/services/rag_service.py:337-350",
+        "src/worker/tasks.py:182-193"
+      ],
+      "dependencies": ["CASE-RAG-008"],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-010",
+      "assertion_id": "ASRT-RAG-015",
+      "feature_id": "FEAT-RAG-003",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-RAG-003"],
+      "rule_refs": ["RULE-RAG-009"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "仅在『API 进程启动后先发生过检索、之后才新增文档』的顺序下可复现；若先上传文档再首次问答，BM25 索引会包含新文档，本用例不适用。",
+      "preconditions": [
+        "一个 hybrid 库 kb_id，内含一份已 status=2 的文档 A",
+        "API 进程刚重启，且**尚未**执行过任何检索类请求",
+        "准备一份内容唯一的文档 B（正文含唯一串 'QRX-5540'），尚未上传"
+      ],
+      "steps": [
+        "1. 重启 API 进程，等待健康检查通过",
+        "2. 向 kb_id 提一个能命中文档 A 的问题（POST /api/v1/chat/），此步触发 BM25 索引首次建立，记录 source_documents",
+        "3. 上传文档 B 到同一 kb_id，轮询 documents 直到其 status=2 且 chunk_count>0",
+        "4. 提问『QRX-5540 是什么』（POST /api/v1/chat/，kb_id 同上），记录 source_documents 条数与其 text",
+        "5. 发 POST /api/v1/knowledge-bases/{kb_id}/search，body {\"query\":\"QRX-5540\",\"top_k\":5}",
+        "6. 对比步骤4 与步骤5 的命中情况"
+      ],
+      "expected": [
+        "步骤4：source_documents 中**不出现**含 'QRX-5540' 的片段（BM25 路不含新文档；若向量路单独命中则需记录该例外）",
+        "步骤5：results 非空且首条 content 含 'QRX-5540'（该入口每次现场重建索引）",
+        "两步的差异即为『同一关键词检索能力、两个入口新鲜度不同』的直接证据"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["混合检索 vs 本地关键词检索对同一新文档的可见性", "同一进程内加入新文档前后的检索结果"],
+      "evidence": [
+        "步骤1 的进程启动时间戳",
+        "步骤2 的响应（证明索引已在此时建立）",
+        "步骤3 的最终 status 与 chunk_count",
+        "步骤4 与步骤5 的完整响应 JSON",
+        "服务端日志中 BM25 建索引相关输出"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["restart_api_process", "POST /api/v1/knowledge-bases/{kb_id}/upload", "POST /api/v1/chat/", "POST /api/v1/knowledge-bases/{kb_id}/search"],
+      "required_capabilities": ["service_restart", "authenticated_http_client", "polling", "log_capture", "model_service_available"],
+      "resource_requirements": ["可重启的 API 进程", "两份内容唯一的文档", "可用 LLM/embedding 服务"],
+      "resource_refs": [
+        "src/retrieval/hybrid_retriever.py:79-149",
+        "src/retrieval/hybrid_retriever.py:85-86",
+        "src/retrieval/bm25_retriever.py:43",
+        "src/retrieval/knowledge_bm25.py:7-19",
+        "src/worker/tasks.py:34-232"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "删除文档 B；删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-011",
+      "assertion_id": "ASRT-RAG-017",
+      "feature_id": "FEAT-RAG-007",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-007"],
+      "rule_refs": ["RULE-RAG-018"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于通过助手提问的场景；只用 kb_id 直连知识库时无 rag_config，不适用。",
+      "preconditions": [
+        "已登录",
+        "已有一个助手，其 rag_config 初始为 {\"top_k\":5,\"enable_rerank\":true}",
+        "该助手绑定了一个含 ≥3 份已就绪文档的知识库",
+        "构造一个稳定可复现的问题（同一知识库、同一问法，连续两次结果集合应基本一致）"
+      ],
+      "steps": [
+        "1. 在 /chat 页选中该助手，提问固定问题 Q，记录 source_documents 的条数与每项 id/score",
+        "2. 打开助手配置面板，把『Top-K』滑块从 5 拉到 20、把『重排序』开关关闭，点保存（出现『已保存为 vX.Y.Z』提示）",
+        "3. 用 PUT /api/v1/assistants/{id} 之后的 GET 确认 rag_config 已变为 {\"top_k\":20,\"enable_rerank\":false}",
+        "4. 新建会话后再问同一个问题 Q，记录 source_documents 的条数与每项 id/score",
+        "5. 比较两次结果的条数与 id 集合"
+      ],
+      "expected": [
+        "步骤3：assistant.rag_config 确已写入新值（配置层生效）",
+        "步骤4：source_documents 条数仍 ≤ 5（top_k 未被消费），与步骤1 一致",
+        "步骤5：两次 id 集合相同、score 序列相同（enable_rerank 开关未影响重排）",
+        "结论：助手面板的 Top-K 与重排序对本模块检索行为无效"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["配置改动前/后 source_documents 条数", "配置改动前/后 score 序列"],
+      "evidence": [
+        "助手 GET 响应中的 rag_config 前后值",
+        "两次问答的完整响应 JSON（source_documents 明细）",
+        "配置面板与保存成功提示的截图"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "PUT /api/v1/assistants/{id}（改 rag_config；前端另有 POST /api/v1/assistants/{id}/versions 记录版本）",
+        "GET /api/v1/assistants/{id}",
+        "POST /api/v1/chat/"
+      ],
+      "required_capabilities": ["authenticated_http_client", "model_service_available"],
+      "resource_requirements": ["助手 + 含多文档的知识库", "可用 LLM/embedding/rerank 服务"],
+      "resource_refs": [
+        "src/services/rag_service.py:84-92",
+        "src/api/routers/chat.py:22-40",
+        "src/api/routers/chat.py:133-142",
+        "src/api/routers/assistant.py:24",
+        "src/database/models.py:188"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 240,
+      "readonly_retry_max": 0,
+      "cleanup": "把助手 rag_config 改回 {\"top_k\":5,\"enable_rerank\":true}；删除会话"
+    },
+    {
+      "case_id": "CASE-RAG-012",
+      "assertion_id": "ASRT-RAG-004",
+      "feature_id": "FEAT-RAG-001",
+      "role": "performance",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-001"],
+      "rule_refs": ["RULE-RAG-003"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于带 kb_id 或 assistant_id 的同步问答；纯聊天流式路径不适用（那条路径逐 token 返回）。这是运行预算测量，不是性能 SLA。",
+      "preconditions": [
+        "已登录",
+        "有一个含已就绪文档的知识库 kb_id",
+        "Network 面板开启，且能记录请求发起时间与响应完成时间"
+      ],
+      "steps": [
+        "1. 在 /chat 页选中该知识库，输入固定问题 Q 并回车，立即开始记录时间",
+        "2. 记录从回车到 assistant 消息首次出现在页面上的毫秒数（T_render）",
+        "3. 记录从回车到 Network 中 POST /api/v1/chat/ 显示 complete 的毫秒数（T_total）",
+        "4. 记录等待期间页面是否有任何中间文本（逐字增长、'检索中'字样、骨架屏）",
+        "5. 重复 3 次，列出 3 组 T_render / T_total"
+      ],
+      "expected": [
+        "步骤4：等待期间页面**没有任何**中间反馈（只有 user 气泡）",
+        "步骤2 与步骤3 的数值接近（T_render ≈ T_total，因为答案一次性渲染）",
+        "3 组数据全部可测并记录；不设通过线，只报数值与样本条件",
+        "结论性观察：RAG 路径的等待时长 = 检索 + rerank + 整段生成的最长链，用户全程无反馈"
+      ],
+      "evaluation_mode": "measurement",
+      "comparison_dimensions": ["T_render vs T_total", "三次重复的离散度", "与流式路径首 token 时间的对比（可选做一次 /chat/stream 参照）"],
+      "evidence": [
+        "3 组 (T_render, T_total) 数值与单位（毫秒）",
+        "Network 面板中 3 次请求的 timing 截图",
+        "等待期间的页面截图（证明无中间反馈）",
+        "参照：一次 /chat/stream 的首个 token 到达时间"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["打开 /chat", "选择知识库", "输入并发送问题", "抓取浏览器网络请求", "记录时间戳"],
+      "required_capabilities": ["browser", "devtools_network_capture", "timestamp_recording", "authenticated_session", "model_service_available"],
+      "resource_requirements": ["含已就绪文档的知识库", "可用 LLM/embedding/rerank 服务", "稳定的网络环境（数值受其影响，须记录条件）"],
+      "resource_refs": [
+        "src/api/routers/chat.py:144-150",
+        "frontend/src/views/Chat.vue:335-358",
+        "frontend/src/views/Chat.vue:385-392",
+        "src/llm/llm_client.py:75"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-013",
+      "assertion_id": "ASRT-RAG-007",
+      "feature_id": "FEAT-RAG-002",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-RAG-002"],
+      "rule_refs": ["RULE-RAG-004", "RULE-RAG-006"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "适用于含诊断词但语义指向知识库的提问；这类问题会被规则层抢先判成 diagnosis，属规则优先于语义的已知偏差。",
+      "preconditions": ["已登录", "当前用户无 Agent", "有一个含已就绪文档的知识库 kb_id"],
+      "steps": [
+        "1. POST /api/v1/chat/，body {\"query\":\"手册里接口报错怎么配\",\"kb_id\":<kb_id>}（含诊断词『报错』）",
+        "2. 记录 source_documents 长度与 answer 前 100 字",
+        "3. POST /api/v1/chat/，body {\"query\":\"手册里接口失败怎么配\",\"kb_id\":<kb_id>}（『失败』不在诊断词表中）",
+        "4. 对比两次的 source_documents 长度与 answer 是否引用了检索内容"
+      ],
+      "expected": [
+        "步骤1：判为 diagnosis（含『报错』），无 agent 且 has_kb 为真 → 落 _rag_path，source_documents **非空**",
+        "步骤3：不含诊断词 → 交 LLM 判定，预期判为 knowledge 并落 _rag_path，source_documents 非空",
+        "两次 answer 均可读，不出现 'Error generating response:' 前缀",
+        "记录点：『超时/报错/异常/慢』等常用词一律先判 diagnosis 而非 knowledge，这是规则表（src/services/rag_service.py:20-25）带来的口径"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["含诊断词 vs 不含诊断词时实际落入的分支", "两次答案是否都引用了知识库内容"],
+      "evidence": ["两次响应 JSON（source_documents 明细 + answer）", "服务端日志中的意图判定痕迹"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/chat/", "GET /api/v1/agents/", "log_capture"],
+      "required_capabilities": ["authenticated_http_client", "log_capture", "model_service_available"],
+      "resource_requirements": ["含相关内容的已就绪文档", "可用 LLM/embedding/rerank 服务"],
+      "resource_refs": [
+        "src/services/rag_service.py:20-25",
+        "src/services/rag_service.py:107-117",
+        "src/services/rag_service.py:140-149"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次会话"
+    },
+    {
+      "case_id": "CASE-RAG-014",
+      "assertion_id": "ASRT-RAG-019",
+      "feature_id": "FEAT-RAG-010",
+      "role": "experience",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-RAG-010"],
+      "rule_refs": ["RULE-RAG-022"],
+      "flow_refs": ["FLOW-RAG-QUERY"],
+      "applicability": "仅适用于故障注入场景（令 LLM 及其 fallback 同时失败）；正常环境请用 CASE-RAG-006。",
+      "preconditions": [
+        "已登录",
+        "可能过期的模型 API Key 或可控的网络阻断手段（例如把 LLM 上游域名解析到不可达地址），使 ChatOpenAI 主/备模型都失败",
+        "有一个知识库 kb_id（用于走 RAG 路径）"
+      ],
+      "steps": [
+        "1. 注入故障：使 LLM 上游不可达（同时影响主模型与 fallback 模型）",
+        "2. POST /api/v1/chat/，body {\"query\":\"连接拒绝怎么处理\",\"kb_id\":<kb_id>}",
+        "3. 记录 HTTP 状态码",
+        "4. 记录响应体 answer 字段开头 40 个字符",
+        "5. 观察前端：消息区是否把这段英文错误当成正常答案渲染"
+      ],
+      "expected": [
+        "步骤3：HTTP **200**（不是 5xx）",
+        "步骤4：answer 以 'Error generating response:' 开头",
+        "步骤5：前端把该字符串当作正常 assistant 回答渲染，无错误提示气泡（因为不是 role=system）",
+        "对照：若检索前置异常导致接口整体抛错，则走全局 handler 返回 500 与 '服务处理异常，请稍后重试'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["生成层失败（200 + 错误字符串）与整体失败（500）的表现差异"],
+      "evidence": ["故障注入方式说明", "响应状态码与 answer 原文", "前端渲染截图", "服务端日志中的异常栈片段"],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["inject_llm_outage", "POST /api/v1/chat/", "log_capture"],
+      "required_capabilities": ["fault_injection", "authenticated_http_client", "log_capture"],
+      "resource_requirements": ["可控的 LLM 上游故障注入能力"],
+      "resource_refs": [
+        "src/llm/llm_client.py:142-174",
+        "src/llm/llm_client.py:267-282",
+        "src/llm/llm_client.py:17-25",
+        "src/main.py:246-252",
+        "frontend/src/views/Chat.vue:361-372"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 LLM 上游网络；删除本次会话"
+    }
+  ]
+}

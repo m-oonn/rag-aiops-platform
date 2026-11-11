@@ -1,0 +1,645 @@
+{
+  "module_id": "evaluation",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:50:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-EVAL-001",
+      "assertion_id": "ASRT-EVAL-001",
+      "feature_id": "FEAT-EVAL-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-001"],
+      "rule_refs": ["RULE-EVAL-001"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于 is_custom_upload=false 的 POST /evaluations/generate。不适用于 custom 分支（不走三道门）。本用例不触发任何模型调用。",
+      "preconditions": [
+        "后端已在 http://127.0.0.1:8200 启动（src/main.py:288），API 前缀 /api/v1（src/settings.py:12）",
+        "已用 POST /api/v1/auth/login 拿到用户 A 的 JWT（Authorization: Bearer <token>）",
+        "另有一个用户 B 的 JWT",
+        "A 名下存在三个知识库：KB-EMPTY（无文档）、KB-NOTREADY（只有 status=0/1 的文档）、KB-READY（至少 1 个 status=2 且 chunk_count>0 的文档）",
+        "B 名下存在 KB-B"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/evaluations/generate，body {\"kb_id\":999999,\"num_questions\":10,\"mode\":\"kb\",\"is_custom_upload\":false}，记录状态码与 detail",
+        "2. A 用 B 的 KB-B 的 id 发同一请求，记录状态码与 detail",
+        "3. A 用自己的 KB-EMPTY 的 id 发同一请求，记录状态码与 detail",
+        "4. A 用自己的 KB-READY 的 id 发同一请求，记录状态码与响应体的 id/name/status",
+        "5. 每一步后查询 evaluation_tasks 表行数（sqlite3 <repo>/data/*.db \"select count(*) from evaluation_tasks\"）"
+      ],
+      "expected": [
+        "步骤1：HTTP 404，detail 字符串等于 '知识库不存在'",
+        "步骤2：HTTP 403，detail 字符串等于 '无权操作该知识库'",
+        "步骤3：HTTP 400，detail 字符串包含 '知识库为空或文档尚未处理完成，请先上传文档并等待处理完成'",
+        "步骤4：HTTP 200，响应体 status 为 0，含非空 name 与整数 id",
+        "步骤5：步骤1-3 之后 evaluation_tasks 行数不变；步骤4 之后增加 1 行"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1-4 的完整请求 URL 与 body、响应状态码、响应体 JSON",
+        "步骤4 返回的任务 id（后续清理用）",
+        "每一步前后 evaluation_tasks 的 count(*)"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "GET /api/v1/knowledge-bases/{kb_id}"],
+      "required_capabilities": ["authenticated_http_client", "sqlite_read"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:283-335",
+        "src/api/routers/evaluation.py:292-306"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body [步骤4 的任务 id]，预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-002",
+      "assertion_id": "ASRT-EVAL-003",
+      "feature_id": "FEAT-EVAL-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-001"],
+      "rule_refs": ["RULE-EVAL-003"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于所有 /generate 请求的参数校验层。断言的是'后端不校验'这一现状，不是'应该不校验'。不触发模型调用（num_questions=0 时 ceil 全为 0，无出题循环）。",
+      "preconditions": [
+        "已登录用户 A 且有 KB-READY（含 status=2 且 chunk_count>0 的文档）",
+        "记录 A 的 KB-READY 的 id"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/evaluations/generate，body {\"kb_id\":<KB-READY>,\"num_questions\":0,\"ratios\":{\"single_hop\":0.7,\"multi_hop\":0.2,\"error\":0.1}}，记录状态码",
+        "2. 再发一次，num_questions 改为 -5，记录状态码",
+        "3. 再发一次，num_questions=10 且 ratios 为 {\"single_hop\":0.3,\"multi_hop\":0.3,\"error\":0.3}（和=0.9），记录状态码",
+        "4. 再发一次，num_questions=10 且 ratios 为 {}（空对象），记录状态码与任务是否创建",
+        "5. 对步骤 1-3 创建出的任务，等待 10 秒后查 GET /api/v1/evaluations/{id} 的 status"
+      ],
+      "expected": [
+        "步骤1：HTTP 200（不是 422）",
+        "步骤2：HTTP 200（负数未被拒绝）",
+        "步骤3：HTTP 200（比例和 0.9 未被拒绝）",
+        "步骤4：HTTP 200 且任务被创建（ratios 为空时 targets 为空，数据集条数 0）",
+        "步骤5：步骤1/2 的任务因 targets 全为 0 而无任何 dataset item，最终 status 为 4 且 total_count 为 0"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "4 次请求的 body、状态码与响应体",
+        "步骤5 的 status 与 total_count 值",
+        "对比记录：前端 el-input-number 对 num_questions 设了 :min=5 :max=2000（frontend/src/views/Evaluation.vue:70），但接口层无对应约束"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "GET /api/v1/evaluations/{task_id}"],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:44-52",
+        "src/api/routers/evaluation.py:111-114",
+        "frontend/src/views/Evaluation.vue:65-92"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body 为步骤 1-3 创建出的所有任务 id 组成的数组，预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-003",
+      "assertion_id": "ASRT-EVAL-004",
+      "feature_id": "FEAT-EVAL-002",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-002", "REQ-EVAL-003"],
+      "rule_refs": ["RULE-EVAL-004", "RULE-EVAL-005"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于非 custom 生成路径。**会消耗模型费用**：一次生成至少 ceil(10*0.7)=7 条 single_hop、2 条 multi_hop、1 条 error，按每批最多 5 题计，至少 3 次 LLM 出题调用；若模型返回条数不足会重试至多 3 次/类型。资料本身不运行，此条由执行方在预算允许时跑。",
+      "preconditions": [
+        "已登录用户 A，有 KB-READY（至少 1 个 status=2 且 chunk_count>0 的文档，且文档必须有 DocumentChunk 记录，否则会走占位字符串分支）",
+        "模型服务可用（LLM_API_KEY 有效），否则本用例无意义",
+        "记录调用前的预算基线（本用例预计 3-6 次 LLM 调用）"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/evaluations/generate，body {\"kb_id\":<KB-READY>,\"num_questions\":10,\"mode\":\"kb\",\"num_docs\":5,\"ratios\":{\"single_hop\":0.7,\"multi_hop\":0.2,\"error\":0.1},\"is_custom_upload\":false}，记录返回的任务 id",
+        "2. 轮询 GET /api/v1/evaluations/{id}，直到 status 为 4 或 3（最多等 300 秒），记录最终 status",
+        "3. 发 GET /api/v1/evaluations/{id}/dataset，按 qa_type 分组计数",
+        "4. 查 evaluation_tasks.total_count 与数据集实际条数"
+      ],
+      "expected": [
+        "步骤2：最终 status 为 4（数据集就绪），不是 3",
+        "步骤3：qa_type 分组计数近似 single_hop 7 / multi_hop 2 / error 1；因 LLM 非确定性允许个别类型少 1-2 条，但**三类都必须出现**（都不为 0）",
+        "步骤3：每条记录的 question 非空，ground_truth 非空",
+        "步骤4：total_count 等于数据集实际条数（不是固定等于 10）"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["三类 qa_type 是否都非 0", "total_count 与实际行数是否一致", "总数与目标 10 的偏差"],
+      "evidence": [
+        "任务 id 与最终 status",
+        "dataset 接口的完整响应（含每条 question/ground_truth/qa_type）",
+        "按 qa_type 的分组计数表",
+        "total_count 值与实际行数",
+        "本次消耗的模型调用次数（从服务端日志统计 LLM 请求数）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "GET /api/v1/evaluations/{task_id}", "GET /api/v1/evaluations/{task_id}/dataset"],
+      "required_capabilities": ["authenticated_http_client", "llm_available"],
+      "resource_requirements": ["真实 LLM 调用 3-6 次（出题阶段，每批最多 5 题）", "一个含 chunk 的已就绪知识库", "预算：单次生成约 3 次 chat completion"],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:111-154",
+        "src/services/qa_generator.py:10-57"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 360,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body [本任务 id]，预期 200；报告目录若产生文件不需处理（本用例不执行评测）"
+    },
+    {
+      "case_id": "CASE-EVAL-004",
+      "assertion_id": "ASRT-EVAL-005",
+      "feature_id": "FEAT-EVAL-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-003"],
+      "rule_refs": ["RULE-EVAL-005"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于非 custom 生成路径。**会消耗模型费用**：需要两次独立生成（各至少 1 次 LLM 调用，合计约 6 次）。只适用于参数完全相同的两次调用，以排除参数差异导致的文本差异。",
+      "preconditions": [
+        "已登录用户 A，有 KB-READY（文档含 chunk）",
+        "模型服务可用且 temperature 不为 0（若模型 temperature=0 严格确定性，两次结果可能相同，此时本用例改为比对'题目内容与文档正文的相关性'）"
+      ],
+      "steps": [
+        "1. 用同一组参数连续创建两个任务：POST /api/v1/evaluations/generate 两次，body 均为 {\"kb_id\":<KB-READY>,\"num_questions\":10,\"mode\":\"kb\",\"num_docs\":1,\"ratios\":{\"single_hop\":1.0,\"multi_hop\":0.0,\"error\":0.0}}",
+        "2. 等两个任务都到 status=4，分别 GET /{id}/dataset",
+        "3. 取出两次生成的 question 文本集合，检查是否有重合",
+        "4. 取其中任意一条 question，人工比对它是否引用了 KB-READY 文档的实际内容（而非 'Document content for xxx' 占位串）"
+      ],
+      "expected": [
+        "步骤2：两个任务 status 均为 4",
+        "步骤3：两次生成的 question 文本集合**不完全相同**（至少半数的题面不同），证明不是固定模板",
+        "步骤4：question 涉及的内容与文档正文主题相关，且题面中不出现字面串 'Document content for'"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["两次题面的重合率", "题面与文档正文的主题相关性"],
+      "evidence": [
+        "两个任务的 id 与 dataset 全量响应",
+        "两次 question 集合的交集大小",
+        "被抽检的那条 question 与对应文档正文片段"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "GET /api/v1/evaluations/{task_id}/dataset"],
+      "required_capabilities": ["authenticated_http_client", "llm_available"],
+      "resource_requirements": ["真实 LLM 调用 2-6 次（两次生成，各至少 1 次出题调用）", "一个含 chunk 的已就绪知识库"],
+      "resource_refs": [
+        "src/services/qa_generator.py:10-57",
+        "src/api/routers/evaluation.py:116-146"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body 为两个任务 id 数组，预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-005",
+      "assertion_id": "ASRT-EVAL-006",
+      "feature_id": "FEAT-EVAL-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-EVAL-003"],
+      "rule_refs": ["RULE-EVAL-005"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "需要故障注入——把 LLM 端替换为'恒返回非 JSON 文本'的桩。**若不注入则可直接用真实模型跑一次（会消耗费用，约 3-4 次调用）**；注入方式决定是否消耗费用。适用于非 custom 生成路径。",
+      "preconditions": [
+        "已登录用户 A，有 KB-READY（文档含 chunk）",
+        "可通过环境变量把 LLM base_url 指向本地桩服务（或临时 monkeypatch src/services/qa_generator.py 的 llm_client.generate_custom_response 返回固定字符串 'sorry, I cannot'）",
+        "桩服务不产生真实模型费用"
+      ],
+      "steps": [
+        "1. 启动桩：让 generate_custom_response 恒返回 'I cannot generate JSON'（非 JSON 文本）",
+        "2. A 发 POST /api/v1/evaluations/generate，body {\"kb_id\":<KB-READY>,\"num_questions\":10,\"mode\":\"kb\",\"num_docs\":1,\"ratios\":{\"single_hop\":1.0,\"multi_hop\":0.0,\"error\":0.0}}",
+        "3. 轮询 GET /{id} 直到 status 不再是 0（最多 120 秒）",
+        "4. GET /{id}/dataset 看条目数",
+        "5. 检查服务端 stdout 是否有 'QA Gen Error' 或 qa_generator 的 logger.error 输出",
+        "6. 恢复 LLM 配置"
+      ],
+      "expected": [
+        "步骤3：最终 status 为 **4**（不是 3）——出题失败被吞掉，任务仍被视为'数据集就绪'",
+        "步骤4：dataset 返回空数组，任务 total_count 为 0",
+        "步骤5：stdout/日志中有 JSONDecodeError 相关的 logger.error（'Failed to parse QA pairs from LLM response'），但没有任何 HTTP 层错误",
+        "步骤6 之后系统回到正常状态，无需重启"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "任务最终 status 与 total_count",
+        "dataset 接口响应",
+        "服务端日志中含 'Failed to parse QA pairs' 的行",
+        "对照组：同一注入下 /chat 是否也失败（用于确认注入确实生效）"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["POST /api/v1/evaluations/generate", "GET /api/v1/evaluations/{task_id}", "GET /api/v1/evaluations/{task_id}/dataset", "启动/恢复 LLM 桩"],
+      "required_capabilities": ["authenticated_http_client", "llm_stub_control", "server_log_access"],
+      "resource_requirements": ["可控 LLM 桩（返回非 JSON 文本）", "可重启的被测服务实例"],
+      "resource_refs": [
+        "src/services/qa_generator.py:52-57",
+        "src/api/routers/evaluation.py:123-161"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 1,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete 删除本任务；恢复 LLM 配置并重启服务进程"
+    },
+    {
+      "case_id": "CASE-EVAL-006",
+      "assertion_id": "ASRT-EVAL-007",
+      "feature_id": "FEAT-EVAL-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-004"],
+      "rule_refs": ["RULE-EVAL-007"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于 POST /{task_id}/upload-dataset 的扩展名分支。**不触发任何模型调用**（custom 分支不派发生成）。只适用于当前任务 status 允许写入的场景（实现未校验 status，任意 status 均可上传）。",
+      "preconditions": [
+        "已登录用户 A",
+        "已创建一个 custom 任务（POST /generate，body {\"num_questions\":1,\"is_custom_upload\":true}），记下任务 id；其 status 初始为 0",
+        "本地准备一个 1KB 的 .txt 文件和一个语法错误的 .json 文件（内容 'not json'）"
+      ],
+      "steps": [
+        "1. A 用 multipart 发 POST /api/v1/evaluations/{id}/upload-dataset，file 字段为那个 .txt 文件，记录状态码与响应体",
+        "2. GET /api/v1/evaluations/{id}，记录 status 与 total_count",
+        "3. GET /api/v1/evaluations/{id}/dataset，记录返回条数",
+        "4. 另建一个 custom 任务，上传语法错误的 .json，记录状态码与 detail"
+      ],
+      "expected": [
+        "步骤1：HTTP **200**（不是 400/415），响应体 message 等于 'Uploaded 0 items'",
+        "步骤2：status 变为 **4**，total_count 为 0",
+        "步骤3：dataset 返回空数组",
+        "步骤4：HTTP **400**，detail 以 'Invalid file:' 开头"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两个上传请求的完整 multipart 内容与响应",
+        "步骤2/3 的 status、total_count 与 dataset 内容",
+        "对照记录：前端 accept 仅允许 .json/.csv/.xlsx（frontend/src/views/Evaluation.vue:22-29），但接口层无白名单"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "POST /api/v1/evaluations/{task_id}/upload-dataset", "GET /api/v1/evaluations/{task_id}", "GET /api/v1/evaluations/{task_id}/dataset"],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:337-385"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body 为两个 custom 任务 id 数组，预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-007",
+      "assertion_id": "ASRT-EVAL-010",
+      "feature_id": "FEAT-EVAL-003",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-004", "REQ-EVAL-009"],
+      "rule_refs": ["RULE-EVAL-009"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于同一 custom 任务被重复上传。断言的是'行叠加但计数覆盖'这一现状。不触发模型调用。",
+      "preconditions": [
+        "已登录用户 A",
+        "已创建 custom 任务，记下 id",
+        "准备两份合法 JSON 题库：qa5.json（5 条）与 qa3.json（3 条），每条形如 {\"question\":\"q1\",\"ground_truth\":\"a1\",\"type\":\"single_hop\"}"
+      ],
+      "steps": [
+        "1. 上传 qa5.json → POST /{id}/upload-dataset，记录响应 message",
+        "2. GET /{id}/dataset，记录条数；GET /{id}，记录 total_count",
+        "3. 上传 qa3.json → 记录响应 message",
+        "4. 再 GET /{id}/dataset 记录条数；GET /{id} 记录 total_count"
+      ],
+      "expected": [
+        "步骤1：message 为 'Uploaded 5 items'",
+        "步骤2：dataset 5 条，total_count 5",
+        "步骤3：message 为 'Uploaded 3 items'",
+        "步骤4：dataset **8** 条（旧 5 条未被删除），而 total_count 为 **3**（被覆盖而非累加）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两次上传的响应 message",
+        "两次 dataset 查询的条数与 qa_type 分布",
+        "两次 total_count 值",
+        "结论：total_count 与数据集行数不一致，界面进度分母会偏小"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/{task_id}/upload-dataset", "GET /api/v1/evaluations/{task_id}/dataset", "GET /api/v1/evaluations/{task_id}"],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:370-383"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body [本任务 id]，预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-008",
+      "assertion_id": "ASRT-EVAL-011",
+      "feature_id": "FEAT-EVAL-003",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-EVAL-005"],
+      "rule_refs": ["RULE-EVAL-010"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "需要两个账号 A/B。断言的是'单条目端点不做任务归属校验'这一现状，是否属缺陷待产品确认（故 readiness=draft）。作为安全对照，同一用例同时验证 /run 会 403。不触发模型调用。",
+      "preconditions": [
+        "用户 A 与用户 B 均已登录，各自持有 JWT",
+        "A 已建 custom 任务并上传至少 1 条数据（记下 item_id 与 task_id）"
+      ],
+      "steps": [
+        "1. B 用 A 的 item_id 发 PUT /api/v1/evaluations/dataset-items/{A 的 item_id}，body {\"question\":\"hacked\",\"ground_truth\":\"hacked\",\"qa_type\":\"single_hop\"}，记录状态码",
+        "2. A 发 GET /{A 的 task_id}/dataset，检查该条 question 是否被改成 'hacked'",
+        "3. B 用 A 的 item_id 发 DELETE /api/v1/evaluations/dataset-items/{A 的 item_id}，记录状态码",
+        "4. B 用 A 的 task_id 发 POST /api/v1/evaluations/{A 的 task_id}/run，记录状态码与 detail（安全对照）",
+        "5. B 发 GET /api/v1/evaluations/{A 的 task_id}/dataset，记录状态码"
+      ],
+      "expected": [
+        "步骤1：状态码**不是 403**（200 成功或 404 找不到），即未触发任务归属校验",
+        "步骤2：若步骤1 返回 200，该条 question 已变为 'hacked'，证明跨用户写入成功",
+        "步骤3：状态码**不是 403**",
+        "步骤4：HTTP **403**，detail 等于 '无权操作该评估任务'（对照：run 端点做了归属校验）",
+        "步骤5：HTTP 200（读端点也只校验登录态）—— 与步骤4 形成不对称"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["写端点 vs run 端点是否一致做归属校验", "读端点是否泄露他人数据集"],
+      "evidence": [
+        "步骤1/3/4/5 的状态码与响应体",
+        "步骤2 的 dataset 响应（含被改写的条目）",
+        "结论记录：item 级端点无 _check_task_ownership 调用（src/api/routers/evaluation.py:417-458）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["PUT /api/v1/evaluations/dataset-items/{item_id}", "DELETE /api/v1/evaluations/dataset-items/{item_id}", "POST /api/v1/evaluations/{task_id}/run", "GET /api/v1/evaluations/{task_id}/dataset"],
+      "required_capabilities": ["authenticated_http_client", "two_user_accounts"],
+      "resource_requirements": ["两个独立用户账号及其 JWT"],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:417-458",
+        "src/api/routers/evaluation.py:27-42"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，用 A 的 JWT 删除该任务（body [task_id]），预期 200"
+    },
+    {
+      "case_id": "CASE-EVAL-009",
+      "assertion_id": "ASRT-EVAL-013",
+      "feature_id": "FEAT-EVAL-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-006"],
+      "rule_refs": ["RULE-EVAL-012"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于所有 /run 调用的前置校验。**步骤4 会真正执行评测并消耗模型费用**（每题的 RAG 问答 + 打分，至少 2 次/题）；若只想验证 400 分支，可只跑到步骤3 并跳过步骤4-5。",
+      "preconditions": [
+        "已登录用户 A",
+        "已建 custom 任务 T0（status 刚创建为 0，未上传数据集）",
+        "已建 custom 任务 T4 并上传 1 条数据（status=4）"
+      ],
+      "steps": [
+        "1. A 对 T0 发 POST /api/v1/evaluations/{T0}/run，记录状态码与 detail",
+        "2. A 对一个不存在的 id 999999 发 POST /api/v1/evaluations/999999/run，记录状态码与 detail",
+        "3. A 对 T4 发 POST /api/v1/evaluations/{T4}/run，记录状态码与响应体",
+        "4. 轮询 GET /api/v1/evaluations/{T4} 直到 status 为 2 或 3（最多 300 秒），记录过程 status 序列",
+        "5. 再对 T4 发一次 run（此时 status=2），记录状态码"
+      ],
+      "expected": [
+        "步骤1：HTTP **400**，detail 等于 'Dataset not ready'",
+        "步骤2：HTTP **404**，detail 等于 'Task not found'",
+        "步骤3：HTTP **200**，响应体 message 等于 'Evaluation started'",
+        "步骤4：status 序列出现 1（Running）再到 2（Completed）；completed_count 从 0 递增到 1",
+        "步骤5：HTTP **400**，detail 仍为 'Dataset not ready'（status=2 不等于 4）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1/2/3/5 的状态码与 detail",
+        "步骤4 的完整 status 序列与 completed_count 快照",
+        "若执行了步骤3-4：本次消耗的模型调用次数与服务端 LLM 请求日志"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "POST /api/v1/evaluations/{task_id}/upload-dataset", "POST /api/v1/evaluations/{task_id}/run", "GET /api/v1/evaluations/{task_id}"],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload", "llm_available"],
+      "resource_requirements": ["若执行步骤3-5：真实 LLM 调用 ≥2 次（1 题的 RAG 问答 + 1 次打分）", "一个可用知识库（custom 任务 kb_id 为空，实际检索范围见 unresolved）"],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:387-403",
+        "src/api/routers/evaluation.py:165-279"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 420,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/evaluations/tasks/batch-delete，body [T0, T4]，预期 200；若产生 data/reports/eval_{T4}.md 一并删除"
+    },
+    {
+      "case_id": "CASE-EVAL-010",
+      "assertion_id": "ASRT-EVAL-018",
+      "feature_id": "FEAT-EVAL-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-EVAL-007", "REQ-EVAL-006"],
+      "rule_refs": ["RULE-EVAL-016"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "需要故障注入——让打分 LLM 返回两段 JSON 使贪婪正则解析失败。**必须注入，否则无法稳定复现**；注入后不消耗真实模型费用（桩返回固定文本），但 RAG 侧的问答仍会调真实模型。适用于已 status=4 的任务。",
+      "preconditions": [
+        "已登录用户 A，custom 任务 T4 且数据集恰好 1 条（便于逐条核对）",
+        "可 monkeypatch evaluator.llm_client.generate_custom_response 返回 '{ \"note\": \"a\" } 说明文字 { \"scores\": {} }'（两段花括号，贪婪匹配后 json.loads 必失败）",
+        "RAG 侧的模型调用未被注入（保持真实或也注入成固定回答）"
+      ],
+      "steps": [
+        "1. 注入打分桩，使 generate_custom_response 返回含两段花括号的文本",
+        "2. A 发 POST /api/v1/evaluations/{T4}/run，记录状态码",
+        "3. 轮询 GET /{T4} 至 status 为 2 或 3（最多 180 秒）",
+        "4. GET /{T4}/report，记录 content",
+        "5. 直接查库：sqlite3 data/*.db \"select metrics, error_msg from evaluation_results where task_id=<T4>\"",
+        "6. 恢复打分桩"
+      ],
+      "expected": [
+        "步骤2：HTTP 200",
+        "步骤3：最终 status 为 **2**（不是 3）——单题打分失败不算任务失败",
+        "步骤5：结果行存在，`metrics` 中**没有** `scores` 键（只有 first_token_latency/total_latency/qa_type），`error_msg` 为空（因为 evaluator 返回的是字典而非抛异常，异常分支未触发）",
+        "步骤4：报告仍生成，但核心指标区没有分数（空值或 0），证明'失败被静默吞掉'",
+        "步骤6 之后系统恢复正常"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["任务状态是否被污染", "结果行是否有分数", "报告是否暴露了数据缺失"],
+      "evidence": [
+        "任务最终 status 与 completed_count",
+        "evaluation_results 的 metrics 与 error_msg 原文",
+        "报告 content 全文（重点看 1./3. 章节的分数表现）",
+        "服务端日志中 'Evaluation failed' 是否出现（预期不出现，因走的是 error 字典分支）"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["POST /api/v1/evaluations/{task_id}/run", "GET /api/v1/evaluations/{task_id}", "GET /api/v1/evaluations/{task_id}/report", "注入/恢复打分 LLM 桩"],
+      "required_capabilities": ["authenticated_http_client", "llm_stub_control", "sqlite_read"],
+      "resource_requirements": ["可控打分 LLM 桩（返回双段 JSON）", "可重启的被测服务实例", "若 RAG 侧未注入：至少 1 次真实问答模型调用"],
+      "resource_refs": [
+        "src/services/evaluator.py:48-61",
+        "src/api/routers/evaluation.py:202-244"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 240,
+      "readonly_retry_max": 1,
+      "cleanup": "恢复打分桩并重启服务；DELETE /api/v1/evaluations/tasks/batch-delete 删除 T4；删除 data/reports/eval_{T4}.md"
+    },
+    {
+      "case_id": "CASE-EVAL-011",
+      "assertion_id": "ASRT-EVAL-019",
+      "feature_id": "FEAT-EVAL-005",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-007", "REQ-EVAL-008"],
+      "rule_refs": ["RULE-EVAL-017", "RULE-EVAL-018"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "需要一个已完成（status=2）的评测任务，因此**会消耗模型费用**（生成 + 逐题问答 + 逐题打分）。若已有历史报告文件，可改用 static_review 直接读 `data/reports/*.md` 验证第 2/4 条断言，不产生费用。",
+      "preconditions": [
+        "已有一个 status=2 的评测任务 T2（题数 ≥3），或历史遗留的 data/reports/eval_*.md",
+        "已登录用户 A"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/evaluations/{T2}/report，记录 content 全文",
+        "2. 在 content 中检索 'Accuracy' / 'accuracy' 作为章节标题或表格列出现的位置",
+        "3. 在 content 中检索 'Recall' / 'recall'",
+        "4. 检查「核心指标概览」与「场景维度分析」两节的分数项数量",
+        "5. 把 data/reports/eval_{T2}.md 临时改名，再 GET /{T2}/report，记录状态码与 detail",
+        "6. 改回文件名"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，content 以 '# RAG 系统评测分析汇总报告' 开头，且含 '## 1. 核心指标概览' 到 '## 5. 优化建议' 五节",
+        "步骤2：'Accuracy' **不作为章节标题或表头出现**；若出现，只可能在「典型案例分析」里引用模型原始 summary 文本",
+        "步骤3：'Recall' / 'recall' **完全不出现**（证明无 Recall 维度）",
+        "步骤4：核心指标概览只给出 忠实度/相关性/上下文精度/综合得分 四项均值（外加两个延迟均值）——**没有 Accuracy 的均值**",
+        "步骤5：HTTP **404**，detail 等于 'Report not found'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "报告 content 全文（或至少五节标题与指标区）",
+        "grep 结果：Accuracy / Recall 在报告中的出现位置",
+        "步骤5 的 404 响应",
+        "静态对照：grep -rn 'ragas' src/ 为空；grep -rn 'recall' src/services/evaluator.py 为空"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["GET /api/v1/evaluations/{task_id}/report", "POST /api/v1/evaluations/{task_id}/run"],
+      "required_capabilities": ["authenticated_http_client", "filesystem_access"],
+      "resource_requirements": ["一个已完成的评测任务（若现场创建：生成阶段 3-6 次出题调用 + 每题 2 次问答/打分调用）", "对 data/reports 目录的读写权限"],
+      "resource_refs": [
+        "src/services/evaluator.py:63-141",
+        "src/api/routers/evaluation.py:514-532"
+      ],
+      "dependencies": ["CASE-EVAL-003"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "把 data/reports/eval_{T2}.md 改回原名；不删除任务（本用例只读）"
+    },
+    {
+      "case_id": "CASE-EVAL-012",
+      "assertion_id": "ASRT-EVAL-021",
+      "feature_id": "FEAT-EVAL-006",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-009"],
+      "rule_refs": ["RULE-EVAL-019"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "需要一个 status=2 且有报告文件的任务。只删任务不跑评测 → 若复用已有报告则**不消耗模型费用**；若现场生成则会。适用于批量删除端点。",
+      "preconditions": [
+        "已登录用户 A",
+        "存在 status=2 的任务 T2，且 data/reports/eval_{T2}.md 存在（先 ls 确认）"
+      ],
+      "steps": [
+        "1. ls 确认 data/reports/eval_{T2}.md 存在，记录文件大小与 mtime",
+        "2. A 发 DELETE /api/v1/evaluations/tasks/batch-delete，body [T2]（JSON 裸数组，非对象）",
+        "3. 记录状态码与响应体 message",
+        "4. GET /api/v1/evaluations/{T2}，记录状态码",
+        "5. 再次 ls data/reports/eval_{T2}.md，记录是否仍存在"
+      ],
+      "expected": [
+        "步骤3：HTTP 200，message 等于 'Deleted 1 tasks'",
+        "步骤4：HTTP **404**（任务已删除）",
+        "步骤5：data/reports/eval_{T2}.md **仍然存在**，大小与 mtime 未变（代码不删报告文件）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "删除前后的 ls 输出（文件名/大小/mtime）",
+        "删除请求的状态码与 message",
+        "结论：数据库行已清空但磁盘报告残留，属数据一致性问题"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["DELETE /api/v1/evaluations/tasks/batch-delete", "GET /api/v1/evaluations/{task_id}"],
+      "required_capabilities": ["authenticated_http_client", "filesystem_access"],
+      "resource_requirements": ["一个已有报告的 status=2 评测任务"],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:460-482",
+        "src/api/routers/evaluation.py:263-266"
+      ],
+      "dependencies": ["CASE-EVAL-011"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "删除残留的 data/reports/eval_{T2}.md（这是清理被测系统遗留物，不影响其它用例）"
+    },
+    {
+      "case_id": "CASE-EVAL-013",
+      "assertion_id": "ASRT-EVAL-023",
+      "feature_id": "FEAT-EVAL-006",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-EVAL-009"],
+      "rule_refs": ["RULE-EVAL-021"],
+      "flow_refs": ["FLOW-EVAL"],
+      "applicability": "适用于批量删除接口的请求体契约。**不触发模型调用**。注意与其他模块的差异：monitor 的 batch-delete 用 {task_ids:[...]} 对象，evaluations 用裸数组 —— 这是易错点。",
+      "preconditions": [
+        "已登录用户 A",
+        "已创建 2 个 custom 任务 T1、T2（status=0 即可，无需数据集）"
+      ],
+      "steps": [
+        "1. A 发 DELETE /api/v1/evaluations/tasks/batch-delete，body 为 {\"task_ids\":[T1]}（对象形式），记录状态码",
+        "2. A 发同一请求，body 为 [T1, T2]（裸数组），记录状态码与 message",
+        "3. GET /api/v1/evaluations/tasks，确认 T1/T2 均不在列表中"
+      ],
+      "expected": [
+        "步骤1：HTTP **422**（请求体应为数组，对象形式不被接受）",
+        "步骤2：HTTP 200，message 等于 'Deleted 2 tasks'",
+        "步骤3：响应中不含 T1/T2 的 id"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两种 body 的状态码与响应体",
+        "步骤3 的列表快照",
+        "对照记录：前端用 api.delete(url, { data: ids }) 传裸数组（frontend/src/views/Evaluation.vue:364）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/evaluations/generate", "DELETE /api/v1/evaluations/tasks/batch-delete", "GET /api/v1/evaluations/tasks"],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/evaluation.py:460-482",
+        "frontend/src/views/Evaluation.vue:360-371"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none（本用例自身即删除动作，无额外遗留）"
+    }
+  ]
+}

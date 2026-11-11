@@ -1,0 +1,611 @@
+{
+  "module_id": "assistant-agent",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T10:05:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-AGENT-001",
+      "assertion_id": "ASRT-AGENT-001",
+      "feature_id": "FEAT-AGENT-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-001", "REQ-AGENT-005"],
+      "rule_refs": ["RULE-AGENT-001"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "适用于全部 13 个端点（助手 7 + Agent 6）的鉴权层。不触发模型调用。",
+      "preconditions": [
+        "后端已在 http://127.0.0.1:8200 启动（src/main.py:288）",
+        "已通过 POST /api/v1/auth/login 拿到用户 A 的 JWT",
+        "已知至少一个助手 id 与一个 Agent id（可先用自己的 token 创建）"
+      ],
+      "steps": [
+        "1. 不带 Authorization 头发 GET /api/v1/assistants/，记录状态码",
+        "2. 不带 Authorization 头发 POST /api/v1/assistants/（body 任意），记录状态码",
+        "3. 不带 Authorization 头发 GET /api/v1/agents/，记录状态码",
+        "4. 不带 Authorization 头发 POST /api/v1/agents/{id}/execute（body {\"query\":\"hi\"}），记录状态码",
+        "5. 带合法 Bearer token 重复步骤 1 与 3，记录状态码"
+      ],
+      "expected": [
+        "步骤1：HTTP 401",
+        "步骤2：HTTP 401",
+        "步骤3：HTTP 401",
+        "步骤4：HTTP 401（鉴权先于执行，未触达 LLM）",
+        "步骤5：HTTP 200"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "5 次请求的状态码与响应体",
+        "服务端日志中步骤 1-4 均无 LLM 请求记录（证明 401 在执行前返回）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/assistants/",
+        "POST /api/v1/assistants/",
+        "GET /api/v1/agents/",
+        "POST /api/v1/agents/{agent_id}/execute"
+      ],
+      "required_capabilities": ["http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/assistant.py:59",
+        "src/api/routers/agent.py:275-281"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none（未创建任何资源）"
+    },
+    {
+      "case_id": "CASE-AGENT-002",
+      "assertion_id": "ASRT-AGENT-002",
+      "feature_id": "FEAT-AGENT-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-001", "REQ-AGENT-005"],
+      "rule_refs": ["RULE-AGENT-002", "RULE-AGENT-003"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "需要两个账号。验证归属隔离（403）与列表过滤。不触发模型调用。",
+      "preconditions": [
+        "用户 A 的 JWT 与用户 B 的 JWT 均已获取",
+        "A 已创建一个助手 HA 与一个 Agent GA，记下各自 id"
+      ],
+      "steps": [
+        "1. B 用自己 token 发 GET /api/v1/assistants/{HA}，记录状态码与 detail",
+        "2. B 用自己的 token 发 GET /api/v1/agents/{GA}，记录状态码与 detail",
+        "3. B 发 GET /api/v1/assistants/，检查返回列表中是否含 HA 的 id",
+        "4. B 发 GET /api/v1/agents/，检查返回列表中是否含 GA 的 id",
+        "5. B 发 DELETE /api/v1/assistants/{HA}，记录状态码",
+        "6. B 发 GET /api/v1/assistants/999999，记录状态码与 detail"
+      ],
+      "expected": [
+        "步骤1：HTTP 403，detail 等于 'Not authorized'",
+        "步骤2：HTTP 403，detail 等于 'Not authorized'",
+        "步骤3：列表中不含 HA 的 id",
+        "步骤4：列表中不含 GA 的 id",
+        "步骤5：HTTP 403（越权删除被拒）",
+        "步骤6：HTTP 404，detail 等于 'Assistant not found'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1/2/5/6 的状态码与 detail",
+        "步骤3/4 的完整列表 id 集合",
+        "结论：401/403/404 三种码的语义区分清晰，越权与不存在不混淆"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/assistants/{assistant_id}",
+        "GET /api/v1/agents/{agent_id}",
+        "GET /api/v1/assistants/",
+        "GET /api/v1/agents/",
+        "DELETE /api/v1/assistants/{assistant_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client", "two_user_accounts"],
+      "resource_requirements": ["两个独立用户账号及其 JWT"],
+      "resource_refs": [
+        "src/api/routers/assistant.py:96-114",
+        "src/api/routers/agent.py:206-225"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "用 A 的 token 发 DELETE /api/v1/assistants/{HA} 与 DELETE /api/v1/agents/{GA}，预期 200"
+    },
+    {
+      "case_id": "CASE-AGENT-003",
+      "assertion_id": "ASRT-AGENT-004",
+      "feature_id": "FEAT-AGENT-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-001"],
+      "rule_refs": ["RULE-AGENT-004", "RULE-AGENT-005"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "验证创建与更新的 temperature 约束不对称。不触发模型调用（创建助手不会调模型）。",
+      "preconditions": [
+        "用户 A 已登录并持有 JWT"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/assistants/，body {\"name\":\"t\",\"temperature\":3.0}，记录状态码",
+        "2. A 发 POST /api/v1/assistants/，body {\"name\":\"t\",\"temperature\":0.7}，记录状态码与返回 id",
+        "3. A 发 PUT /api/v1/assistants/{步骤2 的 id}，body {\"temperature\":99.0}，记录状态码",
+        "4. A 发 GET /api/v1/assistants/{步骤2 的 id}，读回 temperature",
+        "5. A 发 POST /api/v1/assistants/，body {\"name\":\"t\",\"temperature\":-1.0}，记录状态码"
+      ],
+      "expected": [
+        "步骤1：HTTP 422",
+        "步骤2：HTTP 200，返回体含整数 id",
+        "步骤3：HTTP 200（更新路径无 ge/le 约束）",
+        "步骤4：回读 temperature 等于 99.0",
+        "步骤5：HTTP 422"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "5 步的状态码与响应体",
+        "步骤4 的回读 JSON",
+        "结论：创建有 [-0.0,2.0] 约束，更新无约束，属契约不一致"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/assistants/",
+        "PUT /api/v1/assistants/{assistant_id}",
+        "GET /api/v1/assistants/{assistant_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/assistant.py:19",
+        "src/api/routers/assistant.py:32"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/assistants/{步骤2 的 id}，预期 200"
+    },
+    {
+      "case_id": "CASE-AGENT-004",
+      "assertion_id": "ASRT-AGENT-006",
+      "feature_id": "FEAT-AGENT-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-001"],
+      "rule_refs": ["RULE-AGENT-006", "RULE-AGENT-007"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "验证 kb_ids 有归属校验、agent_ids 无归属校验这一对比。需要两个账号。不触发模型调用。",
+      "preconditions": [
+        "用户 A 与用户 B 均已登录",
+        "B 名下有知识库 KB_B 与 Agent G_B，记下 id",
+        "A 自己也有可用知识库 KB_A"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/assistants/，body {\"name\":\"x\",\"kb_ids\":[KB_B]}，记录状态码与 detail",
+        "2. A 发 POST /api/v1/assistants/，body {\"name\":\"y\",\"kb_ids\":[KB_A]}，记录状态码与 id",
+        "3. A 发 POST /api/v1/assistants/，body {\"name\":\"z\",\"agent_ids\":[G_B 的 id, 999999]}，记录状态码",
+        "4. 若步骤3 成功，GET /api/v1/assistants/{该 id}，读回 agent_ids",
+        "5. A 发 PUT /api/v1/assistants/{步骤2 的 id}，body {\"kb_ids\":[KB_B]}，记录状态码与 detail"
+      ],
+      "expected": [
+        "步骤1：HTTP 400，detail 等于 'Invalid KB IDs: some knowledge bases do not exist or do not belong to you'",
+        "步骤2：HTTP 200",
+        "步骤3：HTTP 200（agent_ids 完全不校验）",
+        "步骤4：回读 agent_ids 为 [G_B 的 id, 999999]，含他人 Agent 与不存在的 id",
+        "步骤5：HTTP 400，detail 同步骤1"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "5 步的状态码与 detail",
+        "步骤4 的 agent_ids 回读值",
+        "结论：kb_ids 有归属校验（创建 + 更新），agent_ids 无任何校验 → 越权面 + 无效引用"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/assistants/",
+        "PUT /api/v1/assistants/{assistant_id}",
+        "GET /api/v1/assistants/{assistant_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client", "two_user_accounts"],
+      "resource_requirements": ["两个独立用户账号", "用户 B 名下至少 1 个知识库与 1 个 Agent"],
+      "resource_refs": [
+        "src/api/routers/assistant.py:66-75",
+        "src/api/routers/assistant.py:131-141",
+        "src/api/routers/assistant.py:26"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/assistants/{步骤2/3 的 id}，预期 200"
+    },
+    {
+      "case_id": "CASE-AGENT-005",
+      "assertion_id": "ASRT-AGENT-008",
+      "feature_id": "FEAT-AGENT-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-002"],
+      "rule_refs": ["RULE-AGENT-008", "RULE-AGENT-009"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "验证版本快照接口无 schema 校验、以及删除助手的级联效果。不触发模型调用。",
+      "preconditions": [
+        "用户 A 已登录",
+        "A 已创建一个助手，记下 id"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/assistants/{id}/versions，body {}，记录状态码与 message",
+        "2. A 发 POST /api/v1/assistants/{id}/versions，body {\"version\":\"1.0.0\",\"config\":{\"name\":\"snap\"}}，记录状态码",
+        "3. A 发 GET /api/v1/assistants/{id}/versions，记录条数与各条的 version/config",
+        "4. 查库 sqlite3 data/*.db \"select count(*) from assistant_versions where assistant_id=<id>\"",
+        "5. A 发 DELETE /api/v1/assistants/{id}，记录状态码",
+        "6. 再查同一 count 语句"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，message 等于 'Version saved'（空 body 也不报错）",
+        "步骤2：HTTP 200",
+        "步骤3：共 2 条，其中一条 version 为 null 且 config 为 {}",
+        "步骤4：count 为 2",
+        "步骤5：HTTP 200",
+        "步骤6：count 为 0（cascade delete-orphan 生效）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1/2/5 的状态码与 message",
+        "步骤3 的版本列表全量",
+        "步骤4/6 的 count 值",
+        "结论：版本号无唯一约束、config 无结构校验，靠前端自律"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/assistants/",
+        "POST /api/v1/assistants/{assistant_id}/versions",
+        "GET /api/v1/assistants/{assistant_id}/versions",
+        "DELETE /api/v1/assistants/{assistant_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client", "sqlite_read"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/assistant.py:172-212",
+        "src/database/models.py:199-201"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "none（步骤5 已删除被测资源，级联清空版本）"
+    },
+    {
+      "case_id": "CASE-AGENT-006",
+      "assertion_id": "ASRT-AGENT-010",
+      "feature_id": "FEAT-AGENT-004",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-AGENT-003"],
+      "rule_refs": ["RULE-AGENT-010", "RULE-AGENT-011"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "**会消耗模型费用**：需要两次真实问答（每次 1 次 LLM 调用，共 2 次）。断言的是'配置不生效'这一现状。若知识库为空，检索结果恒空会导致本用例无区分度，故必须准备有内容的 KB。readiness=draft 因为结论指向缺陷，待产品定性。",
+      "preconditions": [
+        "用户 A 已登录，名下有知识库 KB_A（至少 1 个 status=2 且 chunk_count>0 的文档，且能被默认检索命中）",
+        "已创建一个助手 AS，kb_ids=[KB_A]，rag_config 初始为 {\"top_k\": 5, \"enable_rerank\": true}",
+        "模型服务可用（LLM_API_KEY 有效），否则问答直接 500 或降级，用例无意义"
+      ],
+      "steps": [
+        "1. A 发 PUT /api/v1/assistants/{AS}，body {\"rag_config\":{\"top_k\":1,\"enable_rerank\":false,\"hybrid_weight\":0.1,\"rerank_top_n\":1}}，记录状态码",
+        "2. A 发 POST /api/v1/chat/，body {\"query\":\"<一个 KB_A 能命中的问题>\",\"assistant_id\":AS}，记录 source_documents 条数 N1",
+        "3. A 发 PUT /api/v1/assistants/{AS}，body {\"rag_config\":{\"top_k\":20,\"enable_rerank\":true,\"hybrid_weight\":0.9,\"rerank_top_n\":20}}，记录状态码",
+        "4. A 用**同一个问题**再发 POST /api/v1/chat/（新 session 或同 session 均可，需注明），记录 source_documents 条数 N2",
+        "5. 记录服务端日志中两次请求实际使用的 top_k 与是否 rerank（若日志未打印，则用 grep 确认代码路径）"
+      ],
+      "expected": [
+        "步骤1：HTTP 200",
+        "步骤3：HTTP 200",
+        "步骤2 与步骤4：N1 等于 N2（top_k 从 1 改到 20 未改变召回条数）",
+        "步骤5：日志显示的 top_k 与 `request.top_k` 的默认值一致，`rag_config` 未被读取（与 src/services/rag_service.py:84-103 一致）",
+        "补充：若把 settings.ENABLE_RERANK 全局改为 False 再重跑步骤4，重排行为会变化 —— 证明开关在全局而非助手级"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["N1 与 N2 是否相等", "生效的是助手配置还是全局配置"],
+      "evidence": [
+        "两次 PUT 的状态码与回读的 rag_config",
+        "两次 /chat/ 响应的 source_documents 条数与内容",
+        "服务端日志中 LLM/prompt 的实际 top_k 值",
+        "本次消耗的模型调用次数（应为 2）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "PUT /api/v1/assistants/{assistant_id}",
+        "POST /api/v1/chat/",
+        "GET /api/v1/assistants/{assistant_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client", "llm_available", "server_log_access"],
+      "resource_requirements": ["真实 LLM 调用 2 次（两次问答）", "一个可命中的知识库（status=2 且 chunk_count>0）"],
+      "resource_refs": [
+        "src/api/routers/chat.py:133-150",
+        "src/services/rag_service.py:84-103",
+        "src/services/rag_service.py:241-253"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 240,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/assistants/{AS}；若 /chat/ 创建了新会话，DELETE /api/v1/chat/sessions/{session_id}"
+    },
+    {
+      "case_id": "CASE-AGENT-007",
+      "assertion_id": "ASRT-AGENT-012",
+      "feature_id": "FEAT-AGENT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-004"],
+      "rule_refs": ["RULE-AGENT-012"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "**会消耗模型费用**：至少 2 次问答（2 次 LLM 调用）。需要 Redis 可用。只验证短期记忆写入与窗口行为，不验证长期记忆（见 CASE-AGENT-008）。",
+      "preconditions": [
+        "Redis 在 redis://localhost:6379/0 可用（src/settings.py:89）",
+        "用户 A 已登录，有可用知识库",
+        "已创建助手 AS，memory_config={\"enable_short_term\":true,\"window_size\":10}"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/chat/，query='我的代号是鲸鱼'，记录返回的 session_id",
+        "2. 用同一 session_id 再发一次 POST /api/v1/chat/，query='我的代号是什么？'，记录 answer",
+        "3. 执行 redis-cli LLEN \"session:<session_id>:history\"，记录条数",
+        "4. 发 PUT /api/v1/assistants/{AS}，把 memory_config.window_size 改为 1",
+        "5. 新开会话重跑两轮，再查新 session 的 LLEN"
+      ],
+      "expected": [
+        "步骤1：HTTP 200 且返回 session_id",
+        "步骤2：HTTP 200，answer 能复述'鲸鱼'（短期记忆生效）",
+        "步骤3：LLEN 大于 0 且不超过 MEMORY_HISTORY_LIMIT",
+        "步骤5：新会话 LLEN 不大于 2（window_size=1 时历史窗口收缩，写入端仍受 history_limit 约束，需记录实测值）"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["window_size 改变前后第二轮回答是否引用第一轮", "LLEN 实测值"],
+      "evidence": [
+        "两轮问答的完整响应",
+        "两处 redis-cli LLEN 的实际输出",
+        "本次消耗的模型调用次数"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/chat/",
+        "PUT /api/v1/assistants/{assistant_id}",
+        "redis-cli LLEN"
+      ],
+      "required_capabilities": ["authenticated_http_client", "llm_available", "redis_cli"],
+      "resource_requirements": ["真实 LLM 调用 ≥4 次（两轮 × 2 次）", "可用的 Redis 实例", "一个可命中的知识库"],
+      "resource_refs": [
+        "src/services/rag_service.py:90-96",
+        "src/services/memory_service.py:30-64"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "redis-cli DEL \"session:<各 session_id>:history\"；DELETE /api/v1/assistants/{AS}；DELETE /api/v1/chat/sessions/{session_id}"
+    },
+    {
+      "case_id": "CASE-AGENT-008",
+      "assertion_id": "ASRT-AGENT-013",
+      "feature_id": "FEAT-AGENT-005",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-004"],
+      "rule_refs": ["RULE-AGENT-013"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "验证长期记忆为空实现。**会消耗模型费用**（2 次问答）。也可改用 static_review：直接确认 `add_long_term_memory` 函数体为 `pass`、`long_term_context` 恒空串，不产生费用——推荐后者。",
+      "preconditions": [
+        "用户 A 已登录，有可用知识库与助手 AS",
+        "model_calls 预算允许 2 次；若不允许，只做 static_review 分支"
+      ],
+      "steps": [
+        "1. A 发 PUT /api/v1/assistants/{AS}，memory_config 设 enable_long_term=true",
+        "2. A 发 POST /api/v1/chat/，query='记住：我的编号是 42'，记录 session_id 与 answer",
+        "3. A 换一个**全新** session_id 发 POST /api/v1/chat/，query='我的编号是多少？'，记录 answer",
+        "4. 检查服务端日志是否有 '长期记忆' 相关的 logger.info 且无任何向量检索调用",
+        "5. static_review 分支：读 src/services/memory_service.py:72-73 确认 add_long_term_memory 为 pass"
+      ],
+      "expected": [
+        "步骤2：HTTP 200",
+        "步骤3：新会话的 answer **无法**复述 '42'（长期记忆未生效）",
+        "步骤4：日志出现 enable_long_term 的 info，但无 Milvus 长期记忆检索",
+        "步骤5：函数体确认为 `pass`，`retrieve_long_term_memory` 虽实现但只被空接口路径引用"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["跨会话是否记住", "是否存在长期记忆写入/读取副作用"],
+      "evidence": [
+        "两次问答的 session_id 与 answer",
+        "服务端日志片段",
+        "src/services/memory_service.py:71-73 的静态截图或引用",
+        "本次消耗的模型调用次数"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "PUT /api/v1/assistants/{assistant_id}",
+        "POST /api/v1/chat/",
+        "读取 src/services/memory_service.py"
+      ],
+      "required_capabilities": ["authenticated_http_client", "llm_available", "filesystem_access"],
+      "resource_requirements": ["真实 LLM 调用 2 次（若走 live 分支）", "一个可命中的知识库"],
+      "resource_refs": [
+        "src/services/rag_service.py:100-103",
+        "src/services/memory_service.py:71-76"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 240,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/assistants/{AS}；DELETE /api/v1/chat/sessions/{各 session_id}"
+    },
+    {
+      "case_id": "CASE-AGENT-009",
+      "assertion_id": "ASRT-AGENT-016",
+      "feature_id": "FEAT-AGENT-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-005"],
+      "rule_refs": ["RULE-AGENT-015", "RULE-AGENT-016", "RULE-AGENT-017", "RULE-AGENT-018", "RULE-AGENT-019"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "只验证 Agent 配置的 schema 校验层，不触发任何 MCP 连接或模型调用（创建 Agent 不会连 MCP）。需要知道当前 APP_ENV 以判断 loopback 是否放行。",
+      "preconditions": [
+        "用户 A 已登录",
+        "记录当前 settings.APP_ENV 值（生产/开发影响 loopback 判定）"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/agents/，body {\"name\":\"a\",\"type\":\"whatever\"}，记录状态码与 id",
+        "2. GET /api/v1/agents/{步骤1 的 id}，读回 type",
+        "3. 发 POST /api/v1/agents/，body {\"name\":\"b\",\"tools_config\":{\"s1\":{\"transport\":\"ws\",\"url\":\"http://example.com\"}}}，记录状态码",
+        "4. 发 POST /api/v1/agents/，body {\"name\":\"c\",\"tools_config\":{\"s1\":{\"url\":\"http://169.254.169.254/latest\"}}}，记录状态码",
+        "5. 发 POST /api/v1/agents/，body {\"name\":\"d\",\"tools_config\":{\"s1\":{\"url\":\"http://example.com\",\"extra_key\":1}}}，记录状态码",
+        "6. 发 POST /api/v1/agents/，body {\"name\":\"e\",\"execution_config\":{\"max_iterations\":21}}，记录状态码；再传 20 记录状态码",
+        "7. 发 POST /api/v1/agents/，body {\"name\":\"f\",\"llm_config\":{\"temperature\":2.5}}，记录状态码；再传 {\"model\":\"deepseek-v4.1-flash-1017\"} 记录状态码与回读"
+      ],
+      "expected": [
+        "步骤1：HTTP 200（type 无枚举约束）",
+        "步骤2：type 回读为 'whatever'",
+        "步骤3：HTTP 422（transport 非 Literal 允许值）",
+        "步骤4：HTTP 422（169.254.169.254 被拦截）",
+        "步骤5：HTTP 422（extra=forbid 拒绝未知键）",
+        "步骤6：max_iterations=21 → 422；=20 → 200",
+        "步骤7：temperature=2.5 → 422；只传 model → 200 且回读 llm_config 仅含 model 一个键"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "7 组请求的状态码与响应体",
+        "步骤2 与步骤7 的回读 JSON",
+        "当前 APP_ENV 值（判断 loopback 用例是否适用）",
+        "结论：type 无约束是唯一的宽松点，其余子配置均为严格校验"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/agents/",
+        "GET /api/v1/agents/{agent_id}"
+      ],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/agent.py:16-118",
+        "src/api/routers/agent.py:135-139",
+        "src/api/routers/agent.py:176-203"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/agents/{步骤1、步骤6、步骤7 成功创建的 id}，预期 200"
+    },
+    {
+      "case_id": "CASE-AGENT-010",
+      "assertion_id": "ASRT-AGENT-021",
+      "feature_id": "FEAT-AGENT-006",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-AGENT-006"],
+      "rule_refs": ["RULE-AGENT-020", "RULE-AGENT-021", "RULE-AGENT-024", "RULE-AGENT-026"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "需要构造一个必然失败的 MCP 目标以触发 tools_unavailable 降级。**会消耗模型费用**：纯 LLM 降级分支仍会调 1 次模型（gpt 兜底回答）。若希望零费用，可把 llm_config.model 设为白名单外值以走 AGENT_MODEL（仍需 1 次调用）；真正零费用的替代是只验证 401/403 前的鉴权路径（见 CASE-AGENT-001）。readiness=draft 因依赖可控的失败注入。",
+      "preconditions": [
+        "用户 A 已登录，模型服务可用",
+        "准备一个必然连不上的 MCP 地址（如 http://127.0.0.1:1/mcp，注意开发环境放行 loopback；生产环境需用外部不可达域名）",
+        "已创建 Agent GX，tools_config={\"dead\":{\"transport\":\"streamable_http\",\"url\":\"<上述地址>\"}}"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/agents/{GX}/execute，body {\"query\":\"现在几点\"}，记录状态码与响应体",
+        "2. 检查响应体的 degradation 值、tool_calls 值、answer 是否非空",
+        "3. 查库 sqlite3 data/*.db \"select degradation, tool_count, trace_id, latency_ms from agent_execution_logs order by id desc limit 1\"",
+        "4. 记录执行耗时（客户端计时），与 MCP 加载超时 10s 对比"
+      ],
+      "expected": [
+        "步骤1：HTTP 200（不因工具失败而 5xx）",
+        "步骤2：degradation 等于 'tools_unavailable'，tool_calls 为空数组，answer 为一整段正常回答（不是错误提示）",
+        "步骤3：日志行 degradation 为 'tools_unavailable'、tool_count 为 0、trace_id 与 latency_ms 均为 NULL",
+        "步骤4：耗时大约在 10s（MCP 加载超时）加模型响应时间量级，不会无限挂起"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "执行响应体全文",
+        "agent_execution_logs 最新行的四个字段",
+        "客户端计时与服务端日志时间戳",
+        "本次消耗的模型调用次数（应为 1）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/agents/",
+        "POST /api/v1/agents/{agent_id}/execute"
+      ],
+      "required_capabilities": ["authenticated_http_client", "llm_available", "sqlite_read", "unreachable_mcp_endpoint"],
+      "resource_requirements": ["真实 LLM 调用 1 次（纯 LLM 降级分支）", "一个刻意不可达的 MCP 端点"],
+      "resource_refs": [
+        "src/services/agent_tool_service.py:42-52",
+        "src/services/agent_tool_service.py:157-181",
+        "src/services/execution_log_service.py:28-44"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/agents/{GX}，预期 200；删除本次产生的 agent_execution_logs 行（可选，不影响其它用例）"
+    },
+    {
+      "case_id": "CASE-AGENT-011",
+      "assertion_id": "ASRT-AGENT-029",
+      "feature_id": "FEAT-AGENT-007",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AGENT-006", "REQ-AGENT-007"],
+      "rule_refs": ["RULE-AGENT-027", "RULE-AGENT-028", "RULE-AGENT-029", "RULE-AGENT-030"],
+      "flow_refs": ["FLOW-ASSIST-EXEC"],
+      "applicability": "纯静态核对，不运行服务、不调模型、不联网。验证三件事：前端无 execute 调用方、前端不发 tools_config、助手只取 agents[0]。",
+      "preconditions": [
+        "工作目录为仓库根 D:\\\\ragPdfSystem++agent",
+        "已 checkout 基线提交 bf789d9e4fff51b7a2c0b661046f9e5c72b6e483"
+      ],
+      "steps": [
+        "1. grep -n \"execute\" frontend/src/views/Agent.vue，记录所有命中行",
+        "2. grep -rn \"/agents/\" frontend/src/，记录是否存在含 execute 的 URL 拼接",
+        "3. 读 frontend/src/views/Agent.vue:375-416，确认 saveAgent 的 payload 构造中是否含 tools_config",
+        "4. 读 src/services/rag_service.py:196-228，确认 agent 取自 agents[0]",
+        "5. 读 src/services/agent_tool_service.py:118-256，确认 degradation 的四种取值分支都存在"
+      ],
+      "expected": [
+        "步骤1：命中仅出现在 'plan_execute' 字符串、execute_code 权限复选框文案、formatAgentType 映射，**无 HTTP 调用**",
+        "步骤2：frontend/src 内不存在 `${...}/agents/${...}/execute` 形式的 URL",
+        "步骤3：payload 中不含 tools_config 键（注释说明为避免 422 有意省略）",
+        "步骤4：`agent = agents[0]` 明确存在，无遍历其它 Agent 的代码",
+        "步骤5：llm_fallback / tools_unavailable / tools_partial / None 四个赋值点全部存在"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两次 grep 的原始输出（含行号）",
+        "saveAgent 的 payload 构造代码片段",
+        "rag_service.py 的 agent 赋值行",
+        "agent_tool_service.py 中 4 处 degradation 赋值行"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": [
+        "grep frontend/src/views/Agent.vue",
+        "读取 frontend/src/views/Agent.vue:375-416",
+        "读取 src/services/rag_service.py:196-228",
+        "读取 src/services/agent_tool_service.py:118-256"
+      ],
+      "required_capabilities": ["filesystem_access"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "frontend/src/views/Agent.vue:383-399",
+        "src/services/rag_service.py:201",
+        "src/services/agent_tool_service.py:249"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none（只读）"
+    }
+  ]
+}

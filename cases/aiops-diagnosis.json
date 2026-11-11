@@ -1,0 +1,721 @@
+{
+  "module_id": "aiops-diagnosis",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:50:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-DIAG-001",
+      "assertion_id": "ASRT-DIAG-001",
+      "feature_id": "FEAT-DIAG-001",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-001"],
+      "rule_refs": ["RULE-DIAG-001"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "后端已启动、已登录一个普通用户账号、默认配置（TERMCP_ENABLED=false）、不调用模型的路径。",
+      "preconditions": [
+        "后端在 8200 端口可访问，API_PREFIX=/api/v1",
+        "已获取有效登录态（Cookie 或 Bearer）",
+        "记录执行前 aiops_runs 表行数"
+      ],
+      "steps": [
+        "POST /api/v1/aiops，body 为 {\"query\": \"\"}，接受 SSE 流",
+        "读取流内全部帧，取 data 反序列化后 type 为 error 的那一帧",
+        "再次查询 aiops_runs 表行数"
+      ],
+      "expected": [
+        "HTTP 状态码 200",
+        "流内存在一帧 data.type == \"error\" 且 stage == \"validation_error\"",
+        "该帧 message 恰为「诊断输入不能为空,请描述当前遇到的故障现象」",
+        "全程无 plan 帧，usage 帧的 llm_calls == 0",
+        "aiops_runs 行数不变"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "error.stage 取值", "error.message 文案", "llm_calls 计数", "aiops_runs 行数"],
+      "evidence": [
+        "src/api/routers/aiops.py:35",
+        "src/agent/aiops/graph.py:341-343",
+        "src/agent/aiops/graph.py:364-369"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/aiops 并消费 SSE"],
+      "required_capabilities": ["登录态", "HTTP 客户端可读流式响应", "只读查询 aiops_runs"],
+      "resource_requirements": ["无模型调用", "单个后端实例"],
+      "resource_refs": ["src/api/routers/aiops.py:40-120"],
+      "dependencies": ["后端已启动且 aiops 路由已挂载"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-002",
+      "assertion_id": "ASRT-DIAG-002",
+      "feature_id": "FEAT-DIAG-008",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-012"],
+      "rule_refs": ["RULE-DIAG-002"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "默认配置，TERMCP_ENABLED=false（src/settings.py:213）。",
+      "preconditions": [
+        "确认 settings.TERMCP_ENABLED 为 False",
+        "已登录普通用户",
+        "记录执行前 aiops_runs 表行数"
+      ],
+      "steps": [
+        "POST /api/v1/aiops，body 为 {\"query\": \"下游接口超时\", \"terminal_enabled\": true}",
+        "读取响应状态码、Content-Type 与响应体",
+        "再次查询 aiops_runs 表行数"
+      ],
+      "expected": [
+        "HTTP 状态码 503",
+        "响应体 detail 恰为「受控终端诊断尚未启用」",
+        "Content-Type 不是 text/event-stream，响应中没有 SSE 帧",
+        "aiops_runs 行数不变（前置拒绝，未建 run）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "detail 文案", "Content-Type", "aiops_runs 行数"],
+      "evidence": [
+        "src/api/routers/aiops.py:55-56",
+        "src/settings.py:213"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/aiops 并带 terminal_enabled=true"],
+      "required_capabilities": ["登录态", "HTTP 客户端", "只读查询 aiops_runs"],
+      "resource_requirements": ["无模型调用", "单个后端实例"],
+      "resource_refs": ["src/api/routers/aiops.py:40-56"],
+      "dependencies": ["后端以默认配置启动"],
+      "timeout_seconds": 30,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-003",
+      "assertion_id": "ASRT-DIAG-003",
+      "feature_id": "FEAT-DIAG-001",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-002"],
+      "rule_refs": ["RULE-DIAG-003"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "真实跑一次诊断，会产生模型费用；需模型服务可达且有配额。",
+      "preconditions": [
+        "模型服务可达且已配置凭据",
+        "已确认本轮允许消耗模型调用",
+        "后端运行在默认策略（不附加 HITL/Termcp/Probe）"
+      ],
+      "steps": [
+        "POST /api/v1/aiops，body 为 {\"query\": \"订单查询接口返回 502，请判断问题所在\"}",
+        "逐帧解析 SSE，记录每帧的 event 字段与 data.type",
+        "汇总 data.type 出现顺序"
+      ],
+      "expected": [
+        "每一帧的 event 字段都等于 \"message\"",
+        "data.type 序列以 \"plan\" 开始",
+        "存在 \"report\" 帧，且最后一帧是 \"complete\"",
+        "所有 data.type 都落在 11 种之内：plan/step_complete/status/draft/report/pending_review/complete/error/evidence/usage/pending_terminal_approval",
+        "不存在 event 字段非 message 的帧"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["SSE event 字段取值", "data.type 全集", "事件顺序", "首帧与末帧类型"],
+      "evidence": [
+        "src/api/routers/aiops.py:76-79",
+        "src/api/routers/aiops.py:113-116",
+        "src/agent/aiops/events.py:66-86",
+        "src/agent/aiops/graph.py:396-407"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/aiops 并完整消费 SSE 流"],
+      "required_capabilities": ["登录态", "可解析 SSE 的 HTTP 客户端", "模型服务可达"],
+      "resource_requirements": [
+        "会产生模型费用（历史单轮新增预留约 0.36-0.92 元，见 docs/aiops-goal-handover-20261108.md:48-66）",
+        "需要模型配额与付费授权",
+        "单次诊断可能耗时数十秒"
+      ],
+      "resource_refs": ["docs/aiops-goal-handover-20261108.md:48-66", "src/agent/aiops/graph.py:332-441"],
+      "dependencies": ["后端已启动", "模型服务可达", "允许产生模型费用"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "本次诊断在默认配置下不落库，无需清理；若后端为受管配置，需删除本次 thread 的 run 行与 checkpoint 文件"
+    },
+    {
+      "case_id": "CASE-DIAG-004",
+      "assertion_id": "ASRT-DIAG-004",
+      "feature_id": "FEAT-DIAG-009",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-013"],
+      "rule_refs": ["RULE-DIAG-004"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "任意一次完整诊断的收尾帧；可与 CASE-DIAG-003 复用同一次执行。",
+      "preconditions": [
+        "已成功发起一次诊断并读到流结束",
+        "允许产生模型费用"
+      ],
+      "steps": [
+        "运行一次诊断并收集全部帧",
+        "取最后一帧，确认 data.type",
+        "列出该帧的全部键名"
+      ],
+      "expected": [
+        "最后一帧的 data.type == \"usage\"",
+        "该帧同时包含 llm_calls、input_tokens、output_tokens、total_tokens、by_model、cost_cny_estimated、count_errors、elapsed_s 八个键",
+        "count_errors 是数组且长度不超过 3",
+        "elapsed_s 是数字且大于 0"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["末帧 type", "usage 键集合", "count_errors 长度", "elapsed_s 数值"],
+      "evidence": [
+        "src/api/routers/aiops.py:103-118",
+        "src/utils/token_meter.py:132-141"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/aiops 并读到流结束"],
+      "required_capabilities": ["登录态", "可解析 SSE 的 HTTP 客户端", "模型服务可达"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额与付费授权"],
+      "resource_refs": ["src/utils/token_meter.py:23-29", "src/api/routers/aiops.py:95-118"],
+      "dependencies": ["后端已启动", "模型服务可达"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-005",
+      "assertion_id": "ASRT-DIAG-005",
+      "feature_id": "FEAT-DIAG-001",
+      "role": "experience",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-004", "REQ-DIAG-013"],
+      "rule_refs": ["RULE-DIAG-005"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "浏览器端完整走一遍；会产生模型费用。",
+      "preconditions": [
+        "前端已构建并在 5273 端口可访问",
+        "已登录",
+        "模型服务可达"
+      ],
+      "steps": [
+        "打开 /aiops 页面，在输入框填写一段故障现象",
+        "点「开始诊断」（或按 Ctrl+Enter），等待流结束",
+        "观察步骤列表文案是否带 [并行] 前缀",
+        "在整页文本中查找费用相关措辞"
+      ],
+      "expected": [
+        "步骤列表逐条从待执行变为已完成",
+        "任何步骤文案都不包含字面量 \"[并行]\"",
+        "整页不出现「本次诊断消耗」字样，也不出现任何人民币金额",
+        "报告卡片最终可见"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["步骤列表状态迁移", "[并行] 前缀是否剥除", "费用措辞是否出现", "报告卡片是否出现"],
+      "evidence": [
+        "frontend/src/views/AIOps.vue:718-730",
+        "frontend/src/views/AIOps.vue:745-763",
+        "frontend/src/views/AIOps.vue:794-827"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["浏览器打开 /aiops 并提交一次诊断"],
+      "required_capabilities": ["浏览器", "已登录会话", "模型服务可达"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额与付费授权"],
+      "resource_refs": ["frontend/src/views/AIOps.vue:454-527", "docs/aiops-goal-handover-20261108.md:48-66"],
+      "dependencies": ["后端已启动", "前端已启动", "模型服务可达"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-006",
+      "assertion_id": "ASRT-DIAG-006",
+      "feature_id": "FEAT-DIAG-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-004"],
+      "rule_refs": ["RULE-DIAG-005"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "任何一次走到 planner 的诊断；会产生模型费用。",
+      "preconditions": [
+        "模型服务可达",
+        "允许产生模型费用"
+      ],
+      "steps": [
+        "提交一次诊断并抓到 plan 帧",
+        "统计该帧 plan 数组长度",
+        "在后端日志中检索截断告警"
+      ],
+      "expected": [
+        "plan 帧存在且 data.type == \"plan\"",
+        "该帧 plan 数组长度小于等于 6",
+        "若模型原始输出超过 6 条，日志出现包含「超过上限 6」的 warning"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["plan 数组长度", "截断告警是否存在"],
+      "evidence": [
+        "src/agent/aiops/planner.py:39",
+        "src/agent/aiops/planner.py:392-394"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/aiops 并抓取 plan 帧"],
+      "required_capabilities": ["登录态", "可解析 SSE 的 HTTP 客户端", "可读后端日志"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额"],
+      "resource_refs": ["src/agent/aiops/planner.py:303-418"],
+      "dependencies": ["后端已启动", "模型服务可达"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-007",
+      "assertion_id": "ASRT-DIAG-007",
+      "feature_id": "FEAT-DIAG-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-004"],
+      "rule_refs": ["RULE-DIAG-006"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "需要把 DIAGNOSTIC_TARGET_CATALOG 预置成无法唯一匹配的取值；不产生模型费用（这条路径不调模型）。",
+      "preconditions": [
+        "把 DIAGNOSTIC_TARGET_CATALOG 设为 \"{}\"（或用只含多个候选、无法与描述唯一匹配的目录）",
+        "重启后端使配置生效",
+        "确认 DIAGNOSTIC_ENABLED 的取值与目录解析路径一致"
+      ],
+      "steps": [
+        "提交一次诊断，query 描述中同时提到两个已登记服务",
+        "抓取 plan 帧与 complete 帧",
+        "读取 usage 帧的 llm_calls"
+      ],
+      "expected": [
+        "plan 帧的 plan 数组为空",
+        "complete 帧 response 含「业务目标尚未唯一核实」",
+        "complete 帧 diagnosis.kind == \"unlocated\"",
+        "usage 帧 llm_calls == 0（未调用模型）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["plan 是否为空", "response 文案", "diagnosis.kind", "llm_calls 计数"],
+      "evidence": [
+        "src/agent/aiops/planner.py:362-370",
+        "src/settings.py:211"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": [
+        "修改 DIAGNOSTIC_TARGET_CATALOG 并重启后端",
+        "提交一次诊断",
+        "执行后恢复原目录配置"
+      ],
+      "required_capabilities": ["可改配置并重启后端", "登录态", "可解析 SSE 的 HTTP 客户端"],
+      "resource_requirements": ["无模型调用", "需要能重启后端"],
+      "resource_refs": ["src/settings.py:208-211", "src/agent/aiops/planner.py:362-370"],
+      "dependencies": ["后端可重启", "目录配置可写"],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "把 DIAGNOSTIC_TARGET_CATALOG 恢复为执行前的值并重启后端"
+    },
+    {
+      "case_id": "CASE-DIAG-008",
+      "assertion_id": "ASRT-DIAG-008",
+      "feature_id": "FEAT-DIAG-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-006"],
+      "rule_refs": ["RULE-DIAG-008"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "必须向图里注入一条 quote 不在证据 payload 内的引用，正常诊断不会产生这种情况。",
+      "preconditions": [
+        "可在测试环境注入构造好的 diagnosis（含 localized_fault/confirmed_cause）与不匹配的 records",
+        "后端以受管配置启动（需落 run 才能读回落库 report）"
+      ],
+      "steps": [
+        "构造一条 findings/advice 引用，其 quote 不是对应 evidence payload 的子串",
+        "调用 finalize_report 使报告链路执行",
+        "读取 complete 帧的 response",
+        "读取该 thread 落库的 report 字段"
+      ],
+      "expected": [
+        "complete 帧 response 恰为「报告证据核验未通过，不能可靠整理处置建议。调查原结果和证据保留在详情，需核对引用后再处理。」",
+        "落库 report 中 status == \"failed\"",
+        "落库 report 中 fallback_reason == \"report_source_reference_invalid\"",
+        "流内不出现 error 帧（不崩溃）",
+        "HTTP 状态码仍为 200"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["response 文案", "report.status", "report.fallback_reason", "是否出现 error 帧"],
+      "evidence": [
+        "src/agent/aiops/reporting.py:138-145",
+        "src/agent/aiops/reporting.py:403-405"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["注入坏引用", "执行报告生成", "读取落库 report"],
+      "required_capabilities": ["可注入构造状态", "可读 aiops_runs 表", "登录态"],
+      "resource_requirements": ["可用 mock 模型或预置状态，无需真实模型费用", "需要受管运行配置"],
+      "resource_refs": ["src/agent/aiops/reporting.py:384-422"],
+      "dependencies": ["可注入构造状态", "ENABLE_HITL 或 TERMCP_ENABLED 或 PROBE_ENABLED 至少一项为真"],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本次注入产生的 run 行与 checkpoint 记录"
+    },
+    {
+      "case_id": "CASE-DIAG-009",
+      "assertion_id": "ASRT-DIAG-009",
+      "feature_id": "FEAT-DIAG-006",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-010"],
+      "rule_refs": ["RULE-DIAG-009"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "默认配置（ENABLE_HITL=false、TERMCP_ENABLED=false、PROBE_ENABLED=false）；需真实跑一次诊断以拿到 thread_id。",
+      "preconditions": [
+        "三开关均为 false",
+        "记录执行前 aiops_runs 表行数",
+        "允许产生模型费用"
+      ],
+      "steps": [
+        "提交一次诊断并读到 complete 帧，取出 thread_id",
+        "GET /api/v1/aiops/runs/{thread_id}",
+        "查询 aiops_runs 是否有该 thread 行"
+      ],
+      "expected": [
+        "GET 返回 HTTP 404",
+        "detail 恰为「诊断不存在」",
+        "aiops_runs 中不存在该 thread_id 行",
+        "数据目录下未生成该 thread 的 sqlite checkpoint"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "detail 文案", "aiops_runs 行数", "checkpoint 文件是否存在"],
+      "evidence": [
+        "src/agent/aiops/graph.py:106",
+        "src/agent/aiops/graph.py:348-359",
+        "src/api/routers/aiops.py:123-129"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["提交一次诊断", "GET /runs/{thread_id}", "只读查询 aiops_runs"],
+      "required_capabilities": ["登录态", "可解析 SSE 的 HTTP 客户端", "只读访问数据库与数据目录"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额"],
+      "resource_refs": ["src/agent/aiops/graph.py:332-441"],
+      "dependencies": ["后端以默认配置启动", "模型服务可达"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-010",
+      "assertion_id": "ASRT-DIAG-010",
+      "feature_id": "FEAT-DIAG-006",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-010"],
+      "rule_refs": ["RULE-DIAG-009", "RULE-DIAG-010"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "需把 ENABLE_HITL 置 true 并重启后端；会产生模型费用，且需要一次后端重启。",
+      "preconditions": [
+        "ENABLE_HITL=true 并重启后端（使 managed_run 成立、走 sqlite checkpoint）",
+        "允许产生模型费用",
+        "记录重启前的模型调用计量基线"
+      ],
+      "steps": [
+        "提交一次诊断并读到 complete 帧，取出 thread_id 与 report 文本",
+        "GET /api/v1/aiops/runs/{thread_id} 记录 status 与 report",
+        "重启后端（不改配置）",
+        "重启后再次 GET /api/v1/aiops/runs/{thread_id}"
+      ],
+      "expected": [
+        "重启前 GET 返回 200 且 status 非空",
+        "重启后 GET 仍返回 200",
+        "两次返回的 report 内容一致",
+        "重启后的读取过程不新增模型调用（计量计数不变）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "report 内容一致性", "重启前后模型调用计数"],
+      "evidence": [
+        "src/agent/aiops/graph.py:140-156",
+        "src/agent/aiops/graph.py:348-353",
+        "src/settings.py:217"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["开 HITL 跑一次诊断", "重启后端", "重启后读取同一 run"],
+      "required_capabilities": ["可改配置并重启后端", "登录态", "可读模型调用计量"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额", "需要一次后端重启"],
+      "resource_refs": ["src/agent/aiops/graph.py:148-156", "docs/aiops-run-store.md:55"],
+      "dependencies": ["后端可重启", "ENABLE_HITL 可写", "模型服务可达"],
+      "timeout_seconds": 900,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 ENABLE_HITL 为原值并重启；删除本次 run 行与 checkpoint 记录"
+    },
+    {
+      "case_id": "CASE-DIAG-011",
+      "assertion_id": "ASRT-DIAG-011",
+      "feature_id": "FEAT-DIAG-007",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-011", "REQ-DIAG-002"],
+      "rule_refs": ["RULE-DIAG-011", "RULE-DIAG-012", "RULE-DIAG-003"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "纯静态核对，不需要运行任何服务，也不产生模型费用。",
+      "preconditions": [
+        "已检出基线提交",
+        "可读源码与 docs"
+      ],
+      "steps": [
+        "枚举 src/api/routers/aiops.py 的全部路由方法，查找是否存在审批写入端点",
+        "在 src/ 目录检索 HITL_TTL_SECONDS 出现的全部位置",
+        "对比 src/api/routers/aiops.py 的 docstring 事件清单与 src/agent/aiops/events.py 的事件常量"
+      ],
+      "expected": [
+        "src/api/routers/aiops.py 共 7 个路由，无任何 approve/reject/审批写入端点",
+        "HITL_TTL_SECONDS 在 src/ 下只出现在 src/settings.py:189",
+        "路由 docstring 只列 5 种事件，而 events.py 定义 9 个常量，另有 usage 与 pending_terminal_approval 两类在图/路由层产生"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["路由数量与用途", "HITL_TTL_SECONDS 出现位置", "文档事件数与实现事件数"],
+      "evidence": [
+        "src/api/routers/aiops.py:45-53",
+        "src/api/routers/aiops.py:146-166",
+        "src/agent/aiops/events.py:66-86",
+        "src/settings.py:188-189"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["检索源码", "对比文档与实现"],
+      "required_capabilities": ["可读仓库文件"],
+      "resource_requirements": ["零成本，不需要服务与模型"],
+      "resource_refs": ["src/api/routers/aiops.py:1-218"],
+      "dependencies": ["仓库在基线提交"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 2,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-012",
+      "assertion_id": "ASRT-DIAG-012",
+      "feature_id": "FEAT-DIAG-007",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-011"],
+      "rule_refs": ["RULE-DIAG-011"],
+      "flow_refs": ["FLOW-DIAG", "FLOW-DIAG-RESUME"],
+      "applicability": "必须开 ENABLE_HITL=true；跑一次诊断会产生模型费用。",
+      "preconditions": [
+        "ENABLE_HITL=true 并重启后端",
+        "允许产生模型费用",
+        "记录执行前 aiops_approvals 表行数"
+      ],
+      "steps": [
+        "提交一次诊断，等待流内出现 draft 帧",
+        "继续读取直到出现 pending_review 帧，记录 thread_id",
+        "GET /api/v1/aiops/runs/{thread_id} 读 status",
+        "POST /api/v1/aiops/runs/{thread_id}/continue（body 为空）",
+        "再查 aiops_approvals 表行数"
+      ],
+      "expected": [
+        "HITL 开启时出稿事件是 data.type == \"draft\"（不是 report）",
+        "随后出现 data.type == \"pending_review\" 且含 thread_id",
+        "GET 返回的 status == \"pending_review\"",
+        "/continue 返回 HTTP 409，detail 恰为「此诊断等待的不是 Termcp 命令审批」",
+        "aiops_approvals 行数不变（无写入方）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["出稿事件类型", "pending_review 帧字段", "run.status", "/continue 状态码与 detail", "aiops_approvals 行数"],
+      "evidence": [
+        "src/agent/aiops/human_review.py:32",
+        "src/agent/aiops/graph.py:410-416",
+        "src/api/routers/aiops.py:157-158",
+        "src/agent/aiops/run_store.py:98-131"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["开 HITL 重启后端", "提交诊断", "调用 /continue", "只读查询 aiops_approvals"],
+      "required_capabilities": ["可改配置并重启后端", "登录态", "可解析 SSE 的 HTTP 客户端", "只读访问数据库"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额", "需要一次后端重启"],
+      "resource_refs": ["src/agent/aiops/human_review.py:23-52", "docs/aiops-events.md:10-14"],
+      "dependencies": ["后端可重启", "ENABLE_HITL 可写", "模型服务可达"],
+      "timeout_seconds": 900,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 ENABLE_HITL 为原值并重启；删除本次 run 行与 checkpoint 记录"
+    },
+    {
+      "case_id": "CASE-DIAG-013",
+      "assertion_id": "ASRT-DIAG-013",
+      "feature_id": "FEAT-DIAG-008",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-012"],
+      "rule_refs": ["RULE-DIAG-013", "RULE-DIAG-014"],
+      "flow_refs": ["FLOW-DIAG-RESUME"],
+      "applicability": "需要 TERMCP_ENABLED=true 且 Termcp 服务可达；还需能伪造一份已过期的审批记录。会产生模型费用。",
+      "preconditions": [
+        "TERMCP_ENABLED=true 并重启后端",
+        "Termcp 审批接口可达（TERMCP_APPROVAL_API_URL）",
+        "可构造过期审批（expires_at 已过）或使用 Termcp 侧已有的过期会话",
+        "允许产生模型费用"
+      ],
+      "steps": [
+        "提交一次带 terminal_enabled=true 的诊断，读到 pending_terminal_approval 帧",
+        "核对帧内 request_id/command/expires_at/termcp_ui_url 四个字段",
+        "在 Termcp 侧保持审批为 pending，调用 /continue",
+        "把审批置为过期或已拒绝后再次调用 /continue"
+      ],
+      "expected": [
+        "pending_terminal_approval 帧含 request_id、command、expires_at、termcp_ui_url 四个字段",
+        "审批仍 pending 时 /continue 返回 409，detail 恰为「命令仍待 Termcp UI 审批」，run 仍为 pending_terminal",
+        "审批过期后 /continue 返回 410，detail 恰为「审批未通过或已过期，诊断已停止」，run 变 failed",
+        "Termcp 审批接口不可达时 /continue 返回 503 且 run 仍为 pending_terminal（不置 failed）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["pending_terminal_approval 帧字段", "409/410/503 状态码", "detail 文案", "run.status 变化"],
+      "evidence": [
+        "src/agent/aiops/graph.py:396-407",
+        "src/agent/aiops/termcp_tools.py:43-83",
+        "src/api/routers/aiops.py:150-155"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["开 Termcp 提交诊断", "构造三种审批状态并分别调用 /continue"],
+      "required_capabilities": ["可改配置并重启后端", "可操作 Termcp 审批状态", "登录态", "只读访问数据库"],
+      "resource_requirements": ["会产生模型费用", "需要 Termcp 服务实例", "需要能伪造过期审批"],
+      "resource_refs": ["src/agent/aiops/termcp_tools.py:1-222", "src/settings.py:212-216"],
+      "dependencies": ["后端可重启", "TERMCP_ENABLED 可写", "Termcp 服务可达"],
+      "timeout_seconds": 900,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 TERMCP_ENABLED 为原值并重启；清理测试用 Termcp 会话；删除本次 run 行与 checkpoint 记录"
+    },
+    {
+      "case_id": "CASE-DIAG-014",
+      "assertion_id": "ASRT-DIAG-014",
+      "feature_id": "FEAT-DIAG-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-008", "REQ-DIAG-009"],
+      "rule_refs": ["RULE-DIAG-015"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "需要主动停掉全部 MCP 服务再跑一次诊断；会产生模型费用。",
+      "preconditions": [
+        "四个 MCP 服务（8104/8103/8105/8106）全部停止",
+        "允许产生模型费用",
+        "记录执行前的服务运行状态以便恢复"
+      ],
+      "steps": [
+        "停掉全部 MCP 服务进程",
+        "提交一次诊断并读到流结束",
+        "读取 complete 帧的 evidence_source_availability",
+        "检查报告正文是否含证据来源说明"
+      ],
+      "expected": [
+        "流内不出现 data.type == \"error\"，最终出现 complete 帧",
+        "evidence_source_availability 中至少一项 status != \"callable\"",
+        "报告正文含「## 证据来源」段落，或含「未取得真实数据」类表述",
+        "后端日志出现「全部 MCP 服务不可用」或「部分服务不可用」",
+        "进程未崩溃"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["是否出现 error 帧", "evidence_source_availability 状态分布", "报告是否含证据来源段", "日志降级措辞"],
+      "evidence": [
+        "src/agent/mcp_client.py:85-134",
+        "src/agent/aiops/executor.py:81-86",
+        "src/agent/aiops/evidence_sources.py:105-126"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["停止全部 MCP 服务", "提交诊断", "恢复 MCP 服务"],
+      "required_capabilities": ["可启停 MCP 服务进程", "登录态", "可读后端日志", "模型服务可达"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额", "需临时停掉四个 MCP 服务"],
+      "resource_refs": ["src/settings.py:203-206", "src/agent/aiops/evidence_sources.py:49-97"],
+      "dependencies": ["MCP 服务可启停", "模型服务可达"],
+      "timeout_seconds": 900,
+      "readonly_retry_max": 0,
+      "cleanup": "重新启动四个 MCP 服务并确认均恢复可用"
+    },
+    {
+      "case_id": "CASE-DIAG-015",
+      "assertion_id": "ASRT-DIAG-016",
+      "feature_id": "FEAT-DIAG-004",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-008"],
+      "rule_refs": ["RULE-DIAG-016"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "只需对比两种配置下的工具清单，不需要真实探测，也不产生模型费用。",
+      "preconditions": [
+        "可改 PROBE_ENABLED 并重启后端",
+        "可获取当前加载的工具名清单（日志或调查目录产物）"
+      ],
+      "steps": [
+        "PROBE_ENABLED=false 启动后端，记录加载到的工具名清单",
+        "PROBE_ENABLED=true 重启后端，再次记录工具名清单",
+        "对比两次清单中四个原生网络探测工具是否存在"
+      ],
+      "expected": [
+        "PROBE_ENABLED=false 时清单含 check_website、check_ports、check_service_health、check_api_endpoint",
+        "PROBE_ENABLED=true 时清单中这四个名字全部消失",
+        "其余工具名（如 query_cpu_metrics、search_log）在两种配置下都存在或按其依赖正常降级"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["四个工具在两配置下的存在性", "其余工具是否被误删"],
+      "evidence": [
+        "src/agent/aiops/tools.py:108-119",
+        "src/settings.py:220"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["两次改配置重启并采集工具清单"],
+      "required_capabilities": ["可改配置并重启后端", "可读日志或调查产物"],
+      "resource_requirements": ["无模型调用", "需要两次后端重启"],
+      "resource_refs": ["src/agent/aiops/tools.py:94-132"],
+      "dependencies": ["后端可重启", "PROBE_ENABLED 可写"],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 PROBE_ENABLED 为原值并重启"
+    },
+    {
+      "case_id": "CASE-DIAG-016",
+      "assertion_id": "ASRT-DIAG-017",
+      "feature_id": "FEAT-DIAG-003",
+      "role": "core-flow",
+      "basis": "confirmed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-007"],
+      "rule_refs": ["RULE-DIAG-018"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "改动 src/agent/aiops/strategies/investigation.py 判定逻辑前必须执行的零成本门禁。",
+      "preconditions": [
+        "仓库已检出，测试依赖已安装",
+        "tests/data/recorded-rounds.json.gz 存在",
+        "不需要模型凭据与服务"
+      ],
+      "steps": [
+        "在仓库根目录执行 python -m pytest -q tests/test_recorded_round_replay.py",
+        "记录退出码与输出中的 passed/failed 计数",
+        "检查 .github/workflows/tests.yml 是否保留 Decision-rule gate 步骤"
+      ],
+      "expected": [
+        "命令退出码为 0",
+        "输出中 failed 计数为 0，passed 计数为 4（四条不变量各一条）",
+        "全程无模型调用，运行耗时在秒级",
+        ".github/workflows/tests.yml 中存在名为「Decision-rule gate (recorded paid rounds must not regress)」的步骤，其 run 命令指向同一测试文件"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["退出码", "passed/failed 计数", "是否产生模型调用", "CI 步骤存在性"],
+      "evidence": [
+        "docs/aiops-goal-handover-20261108.md:184-200",
+        ".github/workflows/tests.yml:46-47",
+        "tests/test_recorded_round_replay.py:1"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["执行 pytest 门禁命令", "检查 CI 配置文件"],
+      "required_capabilities": ["可执行 pytest", "已安装测试依赖", "可读仓库文件"],
+      "resource_requirements": ["零模型调用", "约 2 秒 CPU 时间", "不需要任何外部服务"],
+      "resource_refs": ["tests/data/recorded-rounds.json.gz", ".github/workflows/tests.yml:46-47"],
+      "dependencies": ["仓库在基线提交", "测试依赖已安装"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    }
+  ]
+}

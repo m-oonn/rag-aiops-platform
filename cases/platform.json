@@ -1,0 +1,590 @@
+{
+  "module_id": "platform",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:50:00Z",
+  "cases": [
+    {
+      "case_id": "CASE-PLAT-001",
+      "assertion_id": "ASRT-PLAT-001",
+      "feature_id": "FEAT-PLAT-001",
+      "role": "functional",
+      "basis": "confirmed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-001"],
+      "rule_refs": ["RULE-PLAT-001"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "所有启动路径（直接跑模块、uvicorn、一键脚本、容器）。因为 app 在模块级创建，import src.main 同样触发。",
+      "preconditions": [
+        "工作区存在 .venv 且有 uvicorn、fastapi 等运行依赖",
+        "当前 SECRET_KEY 在进程环境中为空串或未设置",
+        "8200 端口空闲"
+      ],
+      "steps": [
+        "在子进程环境中把 SECRET_KEY 置为空串（只改子进程环境，不改 .env 文件）",
+        "在仓库根目录执行 .venv/Scripts/python.exe -m uvicorn src.main:app --host 127.0.0.1 --port 8200，最多等待 20 秒",
+        "捕获退出码、stdout 与 stderr",
+        "用 socket 连接 127.0.0.1:8200 判断端口是否被监听"
+      ],
+      "expected": [
+        "进程退出码非 0（不是正常服务运行的挂起态）",
+        "输出文本包含 SECRET_KEY 必须设置",
+        "8200 端口连接失败，即服务未起来"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["退出码是否非 0", "输出是否含指定中文错误", "端口是否未监听"],
+      "evidence": [
+        "src/main.py:47-50 空值分支先 logger.critical 再 raise RuntimeError",
+        "src/main.py:178 create_app 首行调用 _validate_secrets",
+        "src/main.py:281 app = create_app() 是模块级执行"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["启动后端进程", "设置子进程环境变量", "捕获退出码与输出", "探测端口"],
+      "required_capabilities": ["可执行 python 子进程", "可绑定/探测 127.0.0.1:8200", "可读进程输出"],
+      "resource_requirements": ["一个空闲的 8200 端口", "约 20 秒运行预算"],
+      "resource_refs": ["src/main.py:47-61", "src/main.py:281"],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 1,
+      "cleanup": "确认子进程已退出（未退出则结束该 pid）；不改动 .env；若启动过程顺带创建了 rag_system.db 且该库原本不存在，按 CASE-PLAT-004 的说明保留并记录，不要删除工作区既有数据。"
+    },
+    {
+      "case_id": "CASE-PLAT-002",
+      "assertion_id": "ASRT-PLAT-002",
+      "feature_id": "FEAT-PLAT-001",
+      "role": "functional",
+      "basis": "confirmed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-001"],
+      "rule_refs": ["RULE-PLAT-001"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "启动期密钥校验的黑名单分支；对六个示例值逐个适用。",
+      "preconditions": [
+        "工作区存在 .venv 且有运行依赖",
+        "8200 端口空闲"
+      ],
+      "steps": [
+        "对六个黑名单值逐个在子进程环境中设为 SECRET_KEY（值取自 src/main.py 的 _INSECURE_SECRET_KEYS，不在本文件复述具体字符串）",
+        "每个值各执行一次 .venv/Scripts/python.exe -m uvicorn src.main:app --host 127.0.0.1 --port 8200",
+        "记录每次的退出码与输出片段"
+      ],
+      "expected": [
+        "六次启动全部退出码非 0",
+        "每次输出都包含 为已知不安全的示例值",
+        "六次都不出现 8200 监听成功"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["六个取值是否全部被拒", "错误文案是否一致"],
+      "evidence": [
+        "src/main.py:36-43 黑名单 frozenset 共六项",
+        "src/main.py:51-56 命中黑名单后 raise RuntimeError"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["循环设置子进程环境变量", "启动后端进程", "捕获退出码与输出"],
+      "required_capabilities": ["可执行 python 子进程", "可读进程输出"],
+      "resource_requirements": ["一个空闲的 8200 端口", "约 6×20 秒运行预算"],
+      "resource_refs": ["src/main.py:36-56"],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 1,
+      "cleanup": "确认所有子进程已退出；不改动 .env；不写入任何黑名单值到工作区文件。"
+    },
+    {
+      "case_id": "CASE-PLAT-003",
+      "assertion_id": "ASRT-PLAT-003",
+      "feature_id": "FEAT-PLAT-001",
+      "role": "functional",
+      "basis": "confirmed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-001"],
+      "rule_refs": ["RULE-PLAT-001"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "启动期密钥长度边界，31 与 32 两侧都要覆盖。",
+      "preconditions": [
+        "工作区存在 .venv 且有运行依赖",
+        "8200 端口空闲",
+        "准备两个随机串：一个 31 字符、一个 32 字符，均不含黑名单值且由字母数字组成"
+      ],
+      "steps": [
+        "子进程环境中把 SECRET_KEY 设为 31 字符串，执行 .venv/Scripts/python.exe -m uvicorn src.main:app --host 127.0.0.1 --port 8200，等待并记录结果",
+        "子进程环境中把 SECRET_KEY 设为 32 字符串，同样启动，等待就绪",
+        "对 32 字符那一轮请求 GET http://127.0.0.1:8200/api/v1/health/health"
+      ],
+      "expected": [
+        "31 字符那一轮退出码非 0，输出包含 长度必须 >= 32 字符",
+        "32 字符那一轮进程保持运行，端口 8200 可连",
+        "健康检查返回 HTTP 200 且 body 含 status 为 ok"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["31 字符是否被拒", "32 字符是否放行", "放行后健康检查是否 200"],
+      "evidence": [
+        "src/main.py:44 _MIN_SECRET_KEY_LENGTH = 32",
+        "src/main.py:57-61 长度不足分支 raise RuntimeError",
+        "src/api/routers/health.py:14-16 健康检查无鉴权且返回 status/version"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["启动后端进程两次", "设置子进程环境变量", "发 HTTP 请求"],
+      "required_capabilities": ["可执行 python 子进程", "可发 HTTP 请求", "可绑定/探测 127.0.0.1:8200"],
+      "resource_requirements": ["一个空闲的 8200 端口", "约 60 秒运行预算"],
+      "resource_refs": ["src/main.py:44-61", "src/api/routers/health.py:14-16"],
+      "dependencies": ["测试前需确认 8200 未被其它演示进程占用"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "结束两轮启动的后端子进程，确认 8200 已释放；不改动 .env；不把任何密钥写进工作区文件或日志之外的落盘位置。"
+    },
+    {
+      "case_id": "CASE-PLAT-004",
+      "assertion_id": "ASRT-PLAT-004",
+      "feature_id": "FEAT-PLAT-001",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-002"],
+      "rule_refs": ["RULE-PLAT-002"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "验证建表时机早于密钥校验，属于启动副作用顺序问题。必须在临时库上做，不能动工作区正式库。",
+      "preconditions": [
+        "工作区存在 .venv 且有运行依赖",
+        "准备一个临时目录用于存放临时 SQLite 库"
+      ],
+      "steps": [
+        "在子进程环境中把 DATABASE_URL 指向临时目录下的新库文件，并把 SECRET_KEY 置为空串",
+        "执行 .venv/Scripts/python.exe -c \"import src.main\"，等待进程结束",
+        "确认进程以非零码或异常退出",
+        "检查临时目录下该 SQLite 文件是否已被创建，并列出其中表名"
+      ],
+      "expected": [
+        "导入过程抛错退出（输出含 SECRET_KEY 必须设置）",
+        "临时 SQLite 文件已被创建",
+        "库内已存在 users 等表（证明 create_all 先于 _validate_secrets 执行）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["失败是否发生", "数据库文件是否仍被创建", "表是否已建出"],
+      "evidence": [
+        "src/main.py:31 Base.metadata.create_all 在模块导入期执行",
+        "src/main.py:177-179 create_app 内先 _validate_secrets 再 _migrate_schema",
+        "src/settings.py:103 DATABASE_URL 默认指向 ./rag_system.db"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["设置子进程环境变量", "导入模块", "检查 SQLite 文件与表"],
+      "required_capabilities": ["可执行 python 子进程", "可读 SQLite 文件", "可写临时目录"],
+      "resource_requirements": ["一个临时目录", "约 30 秒运行预算"],
+      "resource_refs": ["src/main.py:31", "src/main.py:177-179", "src/settings.py:103"],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 1,
+      "cleanup": "删除本轮创建的临时目录及其中的临时 SQLite 文件；确认 DATABASE_URL 的覆盖只作用于子进程环境；工作区 rag_system.db 未被触碰（执行前后比对 mtime）。"
+    },
+    {
+      "case_id": "CASE-PLAT-005",
+      "assertion_id": "ASRT-PLAT-007",
+      "feature_id": "FEAT-PLAT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-005"],
+      "rule_refs": ["RULE-PLAT-005"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "开发态（APP_ENV 非 production）的跨域白名单效果；重点是 5273 放行而 5173 不放行。",
+      "preconditions": [
+        "服务以开发态启动（不设 APP_ENV 或设为 development）",
+        "服务已就绪，GET /api/v1/health/health 返回 200"
+      ],
+      "steps": [
+        "带请求头 Origin: http://localhost:5273 请求 GET /api/v1/health/health",
+        "带请求头 Origin: http://localhost:5173 请求同一路径",
+        "对比两份响应的 Access-Control-Allow-Origin"
+      ],
+      "expected": [
+        "5273 那次响应含 Access-Control-Allow-Origin: http://localhost:5273",
+        "5173 那次响应不含 Access-Control-Allow-Origin 头",
+        "两次请求的 HTTP 状态都是 200（CORS 只影响响应头，不拦请求）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["5273 是否被放行", "5173 是否未被放行"],
+      "evidence": [
+        "src/main.py:80-87 开发态硬编码 6 个 origin，含 5273 不含 5173",
+        "src/main.py:214-220 CORSMiddleware allow_origins 取该函数结果",
+        "README.md:147 声称前端为 5173，与本实现冲突"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发两次带不同 Origin 的 HTTP 请求", "比较响应头"],
+      "required_capabilities": ["可发自定义请求头的 HTTP 请求"],
+      "resource_requirements": ["一个运行中的开发态后端", "约 10 秒运行预算"],
+      "resource_refs": ["src/main.py:64-87", "src/main.py:214-220"],
+      "dependencies": ["需要一个已启动的开发态后端实例"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 2,
+      "cleanup": "只读请求，无副作用；若后端由本用例启动则结束后停止该进程。"
+    },
+    {
+      "case_id": "CASE-PLAT-006",
+      "assertion_id": "ASRT-PLAT-008",
+      "feature_id": "FEAT-PLAT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-005"],
+      "rule_refs": ["RULE-PLAT-006"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "生产态未配 ALLOWED_ORIGINS 的失败关闭行为。需要预置 APP_ENV 与空 ALLOWED_ORIGINS，故用受控预置。",
+      "preconditions": [
+        "以子进程环境预置 APP_ENV 为 production、ALLOWED_ORIGINS 为空串、SECRET_KEY 为 32 位以上随机串",
+        "8200 端口空闲"
+      ],
+      "steps": [
+        "用上述环境启动后端并等待就绪",
+        "带请求头 Origin: http://localhost:5273 请求 GET /api/v1/health/health",
+        "在服务端标准输出中检索 CORS 相关告警行"
+      ],
+      "expected": [
+        "启动日志含 生产环境未配置 ALLOWED_ORIGINS",
+        "该跨域响应不含 Access-Control-Allow-Origin",
+        "不出现把白名单放宽成通配符的行为"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["是否有明确告警", "是否拒绝全部跨域", "是否误放宽为通配"],
+      "evidence": [
+        "src/main.py:70-78 生产分支读 ALLOWED_ORIGINS，空则 warning 并 return []",
+        "src/settings.py:25 ALLOWED_ORIGINS 默认为空串"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["预置生产态环境变量启动服务", "发带 Origin 的请求", "检索启动日志"],
+      "required_capabilities": ["可设置子进程环境变量", "可发 HTTP 请求", "可读进程输出"],
+      "resource_requirements": ["一个空闲的 8200 端口", "约 45 秒运行预算"],
+      "resource_refs": ["src/main.py:64-78", "src/settings.py:25"],
+      "dependencies": ["预置值只作用于子进程环境，不得写入 .env"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "结束本用例启动的后端进程并释放 8200；确认 .env 未被修改（比对 mtime 与哈希）；环境预置不落盘到任何配置文件。"
+    },
+    {
+      "case_id": "CASE-PLAT-007",
+      "assertion_id": "ASRT-PLAT-010",
+      "feature_id": "FEAT-PLAT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-005"],
+      "rule_refs": ["RULE-PLAT-008"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "所有响应（含错误响应）都应带同一组安全头，故要覆盖 200 与 404 两种。",
+      "preconditions": ["后端已就绪"],
+      "steps": [
+        "请求 GET /api/v1/health/health 并记录响应头",
+        "请求一个确定不存在的路径（例如 /api/v1/__not_exist__）并记录响应头",
+        "逐项比对四个安全头"
+      ],
+      "expected": [
+        "200 响应含 X-Content-Type-Options: nosniff",
+        "200 响应含 X-Frame-Options: SAMEORIGIN",
+        "200 响应含 Referrer-Policy: strict-origin-when-cross-origin",
+        "200 响应含 X-XSS-Protection: 1; mode=block",
+        "404 响应同样含上述四项且取值逐字相同"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["200 是否四项齐全", "404 是否四项齐全", "取值是否逐字一致"],
+      "evidence": [
+        "src/main.py:223-230 security_headers_middleware 设置四项",
+        "中间件对每个 response 生效，不区分状态码"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发两次 HTTP 请求", "读取并比对各响应头"],
+      "required_capabilities": ["可发 HTTP 请求并读取完整响应头"],
+      "resource_requirements": ["一个运行中的后端", "约 10 秒运行预算"],
+      "resource_refs": ["src/main.py:223-230"],
+      "dependencies": ["需要一个已启动的后端实例"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 2,
+      "cleanup": "只读请求，无副作用。"
+    },
+    {
+      "case_id": "CASE-PLAT-008",
+      "assertion_id": "ASRT-PLAT-011",
+      "feature_id": "FEAT-PLAT-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-005"],
+      "rule_refs": ["RULE-PLAT-009"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "链路可追溯性的最小可判定点：每次请求一个新 trace，且能被响应头观测。",
+      "preconditions": ["后端已就绪"],
+      "steps": [
+        "连续两次请求 GET /api/v1/health/health",
+        "分别记录两次响应的 X-Trace-ID"
+      ],
+      "expected": [
+        "两次响应都带 X-Trace-ID",
+        "两个值不相等",
+        "每个值均为 12 位十六进制字符串"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["是否都有该头", "两次是否不同", "长度是否为 12"],
+      "evidence": [
+        "src/main.py:233-243 trace_id_middleware 写响应头并在 finally 复位",
+        "src/utils/tracing.py:27-30 set_trace_id 默认 uuid4().hex[:12]"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发两次 HTTP 请求", "比较 X-Trace-ID"],
+      "required_capabilities": ["可发 HTTP 请求并读取响应头"],
+      "resource_requirements": ["一个运行中的后端", "约 10 秒运行预算"],
+      "resource_refs": ["src/main.py:233-243", "src/utils/tracing.py:27-34"],
+      "dependencies": ["需要一个已启动的后端实例"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 2,
+      "cleanup": "只读请求，无副作用。"
+    },
+    {
+      "case_id": "CASE-PLAT-009",
+      "assertion_id": "ASRT-PLAT-012",
+      "feature_id": "FEAT-PLAT-006",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-006"],
+      "rule_refs": ["RULE-PLAT-010"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "生产态文档端点关闭；需要预置 APP_ENV 为 production，故用受控预置。",
+      "preconditions": [
+        "以子进程环境预置 APP_ENV 为 production、SECRET_KEY 为 32 位以上随机串",
+        "后端已就绪"
+      ],
+      "steps": [
+        "请求 GET /docs",
+        "请求 GET /redoc",
+        "请求 GET /openapi.json"
+      ],
+      "expected": [
+        "三个路径全部返回 404",
+        "响应 body 是标准的 FastAPI 404 结构，而不是文档页面"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["三个路径是否都为 404"],
+      "evidence": [
+        "src/main.py:181 is_prod 判定",
+        "src/main.py:189-197 三个 url 参数在生产态置 None"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["预置生产态环境变量启动服务", "发三个 HTTP 请求"],
+      "required_capabilities": ["可设置子进程环境变量", "可发 HTTP 请求"],
+      "resource_requirements": ["一个空闲的 8200 端口", "约 45 秒运行预算"],
+      "resource_refs": ["src/main.py:181-197"],
+      "dependencies": ["预置值只作用于子进程环境"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "结束本用例启动的后端进程并释放 8200；确认 .env 未被修改。"
+    },
+    {
+      "case_id": "CASE-PLAT-010",
+      "assertion_id": "ASRT-PLAT-013",
+      "feature_id": "FEAT-PLAT-006",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-006"],
+      "rule_refs": ["RULE-PLAT-011"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "错误外泄边界的核心：未捕获异常必须变成固定中文文案，不能把异常内容回给调用方。需要故障注入。",
+      "preconditions": [
+        "可对应用注入一个未被捕获的异常（例如在测试进程内给某个依赖挂上抛非 HTTPException 的替身）",
+        "可读服务端标准输出或 logs/processing.log"
+      ],
+      "steps": [
+        "在受控测试进程内构造一次会抛出非 HTTPException 异常的请求",
+        "记录响应状态码与完整 body",
+        "在服务端输出中检索该异常的堆栈"
+      ],
+      "expected": [
+        "响应状态码为 500",
+        "响应 body 恰为 {\"detail\":\"服务处理异常，请稍后重试\"}",
+        "body 中不含 Traceback 字样，也不含异常类名或内网路径",
+        "服务端输出中出现该异常的堆栈（说明内部仍被记录）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["状态码", "body 是否逐字匹配", "是否泄漏堆栈", "服务端是否留有堆栈"],
+      "evidence": [
+        "src/main.py:246-252 全局 Exception 处理器先 logger.error(exc_info=True) 再返回固定 detail",
+        "src/utils/logger.py:60-65 文件 sink 写 logs/processing.log"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["注入异常", "发请求", "比对响应体", "检索服务端日志"],
+      "required_capabilities": ["可注入故障", "可发 HTTP 请求", "可读服务端日志"],
+      "resource_requirements": ["一个受控测试进程", "约 30 秒运行预算"],
+      "resource_refs": ["src/main.py:246-252", "src/utils/logger.py:60-65"],
+      "dependencies": ["故障注入不得修改仓库源码，只在测试进程内替换依赖"],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 1,
+      "cleanup": "撤销测试进程内的依赖替换；清除注入过程产生的临时文件；确认仓库源码与 .env 未被修改。"
+    },
+    {
+      "case_id": "CASE-PLAT-011",
+      "assertion_id": "ASRT-PLAT-014",
+      "feature_id": "FEAT-PLAT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-005"],
+      "rule_refs": ["RULE-PLAT-012"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "全仓唯一限流配额的作用面：登录端点会被限，其它端点不会被限。",
+      "preconditions": [
+        "后端已就绪",
+        "存在一个确定的非存在用户名，用于制造登录失败",
+        "所有请求来自同一客户端 IP（限流键是远程地址）"
+      ],
+      "steps": [
+        "对 POST /api/v1/auth/login/access-token 连续发起 6 次表单请求，用户名不存在、密码任意",
+        "记录每次状态码",
+        "对 GET /api/v1/health/health 连续发起 10 次请求并记录状态码"
+      ],
+      "expected": [
+        "登录前 5 次返回 401",
+        "登录第 6 次返回 429",
+        "健康检查 10 次全部 200，无一次 429"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["第几次开始 429", "其它端点是否被误限"],
+      "evidence": [
+        "src/api/routers/auth.py:61-62 登录端点唯一 @limiter.limit(\"5/minute\")",
+        "src/utils/rate_limit.py:8-9 按 get_remote_address 计数",
+        "src/main.py:200-202 注册 SlowAPIMiddleware 与 RateLimitExceeded 处理器"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发连续登录失败请求", "发连续健康检查请求", "记录状态码序列"],
+      "required_capabilities": ["可发 HTTP 请求", "可控制请求节奏"],
+      "resource_requirements": ["一个运行中的后端", "约 30 秒运行预算", "注意同一分钟内不要与其它限流用例并发"],
+      "resource_refs": ["src/api/routers/auth.py:61-62", "src/utils/rate_limit.py:8-9"],
+      "dependencies": ["同 IP 同分钟窗口内的既有请求会占用配额，需在独立时段执行"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "只读请求，无数据库写入；等待限流窗口自然过期即可，不要重启服务以外的清理动作。"
+    },
+    {
+      "case_id": "CASE-PLAT-012",
+      "assertion_id": "ASRT-PLAT-015",
+      "feature_id": "FEAT-PLAT-004",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-004"],
+      "rule_refs": ["RULE-PLAT-013"],
+      "flow_refs": ["FLOW-PLAT"],
+      "applicability": "挂载清单的可判定面：已挂的组可达，query 与 tasks 两支不可达。",
+      "preconditions": ["后端已就绪"],
+      "steps": [
+        "请求 GET /api/v1/health/health",
+        "请求 GET /api/v1/tasks/1",
+        "请求 GET /api/v1/query/1"
+      ],
+      "expected": [
+        "健康检查返回 200",
+        "tasks 路径返回 404",
+        "query 路径返回 404"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["已挂组是否可达", "两条死路由是否 404"],
+      "evidence": [
+        "src/main.py:255-265 共 11 次 include_router，无 tasks、无 query",
+        "src/main.py:16 query 被 import 但未挂载；tasks 未 import",
+        "src/api/routers/ 下确实存在 query.py 与 tasks.py 两个文件"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发三次 HTTP 请求", "记录状态码"],
+      "required_capabilities": ["可发 HTTP 请求"],
+      "resource_requirements": ["一个运行中的后端", "约 10 秒运行预算"],
+      "resource_refs": ["src/main.py:16", "src/main.py:255-265"],
+      "dependencies": ["需要一个已启动的后端实例"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 2,
+      "cleanup": "只读请求，无副作用。"
+    },
+    {
+      "case_id": "CASE-PLAT-013",
+      "assertion_id": "ASRT-PLAT-016",
+      "feature_id": "FEAT-PLAT-003",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-003"],
+      "rule_refs": ["RULE-PLAT-014"],
+      "flow_refs": [],
+      "applicability": "配置字段集与示例文件的一致性，用只读审计脚本判定，不需要启动服务。",
+      "preconditions": [
+        "仓库根目录存在 .env.example",
+        "存在可执行 .venv 且 pyyaml 之外的标准依赖齐全"
+      ],
+      "steps": [
+        "执行 .venv/Scripts/python.exe scripts/audit_configuration.py --output 临时文件",
+        "读取输出中的 settings_field_count 与三个差异字段列表",
+        "统计 .env.example 顶层键数量"
+      ],
+      "expected": [
+        "settings_field_count 与 .env.example 顶层键数量相等（本轮实测 136 对 136）",
+        "输出中不存在缺失字段名列表的非空内容",
+        "输出中不存在未知字段名列表的非空内容",
+        "输出中不存在重复字段名列表的非空内容",
+        "输出文件不包含任何敏感字段的明文取值"
+      ],
+      "evaluation_mode": "measurement",
+      "comparison_dimensions": ["字段计数是否相等", "三类差异是否为空", "是否泄漏敏感值"],
+      "evidence": [
+        "src/settings.py:360-367 model_config 与 settings 单例",
+        "scripts/audit_configuration.py:17-40 敏感项只输出 configured 布尔",
+        "tests/test_configuration_audit.py:92-99 对该等式有显式断言"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["执行只读审计脚本", "解析其 JSON 输出", "统计示例文件键数"],
+      "required_capabilities": ["可执行 python 子进程", "可读写临时文件"],
+      "resource_requirements": ["一个临时输出目录", "约 30 秒运行预算"],
+      "resource_refs": ["scripts/audit_configuration.py:1-40", "tests/test_configuration_audit.py:92-99"],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 1,
+      "cleanup": "删除审计输出临时文件；不得把输出文件留在工作区，因为它含有配置项清单；不修改 .env 与 .env.example。"
+    },
+    {
+      "case_id": "CASE-PLAT-014",
+      "assertion_id": "ASRT-PLAT-022",
+      "feature_id": "FEAT-PLAT-008",
+      "role": "product-details",
+      "basis": "confirmed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-PLAT-008"],
+      "rule_refs": ["RULE-PLAT-020"],
+      "flow_refs": [],
+      "applicability": "CI 两步门禁的静态核验：先跑回放门禁，再跑离线单测；且仓库内不出现真实密钥。",
+      "preconditions": ["工作区存在 .github/workflows/tests.yml"],
+      "steps": [
+        "读取 .github/workflows/tests.yml 的步骤列表",
+        "定位第一条包含 pytest 的步骤，记录其 name 与 run",
+        "定位其后包含 pytest 的步骤，记录其 name 与 run",
+        "检查 env 段是否只含占位假密钥",
+        "在仓库中用 read/grep 检查是否出现真实密钥形态的字符串（只判断模式命中，不回显命中内容）"
+      ],
+      "expected": [
+        "第一条 pytest 步骤的 name 恰为 Decision-rule gate (recorded paid rounds must not regress)",
+        "该步骤命令针对 tests/test_recorded_round_replay.py",
+        "第二条 pytest 步骤命令带 -m \"not integration\"",
+        "两条步骤的先后顺序与上文一致",
+        "env 中只有占位假密钥，未出现真实密钥"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["步骤顺序", "步骤名是否逐字匹配", "是否注入真实密钥"],
+      "evidence": [
+        ".github/workflows/tests.yml:46-47 回放门禁步骤",
+        ".github/workflows/tests.yml:49-50 离线单测步骤",
+        ".github/workflows/tests.yml:19-20 注释与占位环境变量",
+        "requirements/project-card.md 的已确认决定 D10"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["读 workflow 文件", "解析步骤顺序", "扫描密钥形态"],
+      "required_capabilities": ["可读仓库文件", "可做正则匹配"],
+      "resource_requirements": ["无运行资源", "约 5 分钟阅读预算"],
+      "resource_refs": [".github/workflows/tests.yml:1-50"],
+      "dependencies": [],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 1,
+      "cleanup": "只读核验，无副作用；若扫描命中疑似密钥，只报告位置与行号，不复制其内容到任何交付文件。"
+    }
+  ]
+}

@@ -1,0 +1,691 @@
+{
+  "module_id": "kb-ingest",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:40:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-KB-001",
+      "assertion_id": "ASRT-KB-001",
+      "feature_id": "FEAT-KB-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-001"],
+      "rule_refs": ["RULE-KB-001"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用所有登录用户建库/改库；不适用于不传 chunking_config 的请求（此时不触发校验）。",
+      "preconditions": [
+        "后端已启动在 http://127.0.0.1:8200（src/main.py:288），API 前缀 /api/v1（src/settings.py:12）",
+        "已用 POST /api/v1/auth/login/access-token（form 字段 username/password） 拿到 JWT（Authorization: Bearer <token>）"
+      ],
+      "steps": [
+        "1. 发 POST /api/v1/knowledge-bases/，body {\"name\":\"case-kb-001-invalid\",\"description\":\"\",\"is_public\":false,\"chunking_config\":{\"retrieval_mode\":\"vector\"}}",
+        "2. 记录状态码与响应体 detail",
+        "3. 发 POST /api/v1/knowledge-bases/，body 同上但 chunking_config 改为 {\"retrieval_mode\":\"hybrid\"}",
+        "4. 记录状态码与响应体的 kb_uid / id",
+        "5. 发 PUT /api/v1/knowledge-bases/{第4步 id}，body {\"chunking_config\":{\"retrieval_mode\":\"bm25x\"}}，记录状态码",
+        "6. 用第4步的库做一次 GET /api/v1/knowledge-bases/{id}，确认 chunking_config 未被污染"
+      ],
+      "expected": [
+        "步骤2：HTTP 422，detail 字符串中包含 'retrieval_mode must be hybrid or bm25'",
+        "步骤4：HTTP 200，响应体含非空 kb_uid 与整数 id，chunking_config.retrieval_mode 回显 'hybrid'",
+        "步骤5：HTTP 422（KBUpdate 复用同一 validator）",
+        "步骤6：HTTP 200，chunking_config.retrieval_mode 仍为 'hybrid'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1/3/5 的完整请求 URL 与 body、响应状态码、响应体 JSON",
+        "步骤4 返回的 kb_id（后续清理用）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/knowledge-bases/", "PUT /api/v1/knowledge-bases/{kb_id}", "GET /api/v1/knowledge-bases/{kb_id}", "DELETE /api/v1/knowledge-bases/{kb_id}"],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:45-56",
+        "src/api/routers/knowledge_base.py:64",
+        "src/api/routers/knowledge_base.py:219-237",
+        "src/api/routers/knowledge_base.py:285-309"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/knowledge-bases/{步骤4 的 id}，预期 200"
+    },
+    {
+      "case_id": "CASE-KB-002",
+      "assertion_id": "ASRT-KB-002",
+      "feature_id": "FEAT-KB-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-002"],
+      "rule_refs": ["RULE-KB-002"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于 multipart 上传的 filename 字段；不适用于正常 basename。",
+      "preconditions": [
+        "已登录",
+        "已建一个 hybrid 知识库，记下 kb_id",
+        "记录上传前 data/raw 目录下的文件数（Windows 路径 <repo>/data/raw，见 src/settings.py:15）"
+      ],
+      "steps": [
+        "1. 用 curl 发 POST /api/v1/knowledge-bases/{kb_id}/upload，-F 'file=@<任意合法 .pdf>;filename=../../evil.pdf'，带 Authorization 头",
+        "2. 记录状态码与 detail",
+        "3. 再发一次，filename=..\\\\evil2.pdf（反斜杠形式）",
+        "4. 记录状态码与 detail",
+        "5. 比对 data/raw 目录文件数"
+      ],
+      "expected": [
+        "步骤2：HTTP 400，detail 字符串等于 'Invalid filename: path traversal detected'",
+        "步骤4：HTTP 400，detail 同样为路径穿越提示（反斜杠同样被拦）",
+        "步骤5：data/raw 文件数与上传前一致（无新增文件）",
+        "两次请求都未在 knowledge_documents 表留下新行"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两次请求的完整 curl 命令与响应，含状态码与 detail 原文",
+        "data/raw 上传前后的文件列表",
+        "GET /api/v1/knowledge-bases/{kb_id}/documents 返回的文档数组（应为空）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/knowledge-bases/{kb_id}/upload"],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload_with_custom_filename", "filesystem_read"],
+      "resource_requirements": ["任取一个 ≤1MB 的合法 PDF 文件作为上传体"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:197-215",
+        "src/api/routers/knowledge_base.py:328"
+      ],
+      "dependencies": ["CASE-KB-001 建库步骤可复用"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none（请求被拒，无落盘、无库行）"
+    },
+    {
+      "case_id": "CASE-KB-003",
+      "assertion_id": "ASRT-KB-003",
+      "feature_id": "FEAT-KB-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-002"],
+      "rule_refs": ["RULE-KB-003"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于扩展名判定；不适用于同名但大小写不同的扩展名之外的形式（扩展名取值方式见实现，未逐一验证大小写行为）。",
+      "preconditions": ["已登录", "已有 hybrid 知识库 kb_id"],
+      "steps": [
+        "1. 准备一个文本文件，重命名为 payload.exe",
+        "2. POST /api/v1/knowledge-bases/{kb_id}/upload，-F 'file=@payload.exe'",
+        "3. 记录状态码与 detail 前缀",
+        "4. 把同一内容改名为 note.md 再上传",
+        "5. 记录状态码"
+      ],
+      "expected": [
+        "步骤3：HTTP 400，detail 以 'Unsupported file type: ' 开头并列出白名单",
+        "步骤5：HTTP 200（.md 属 13 项白名单），响应含 doc_id"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["两次请求的响应状态码与 detail 原文", "步骤5 返回的 doc_id"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/knowledge-bases/{kb_id}/upload"],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload"],
+      "resource_requirements": ["两个小文本文件（一个 .exe 后缀、一个 .md 后缀）"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:145-148",
+        "src/api/routers/knowledge_base.py:331-336"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/knowledge-bases/documents/batch-delete，body [步骤5 的 doc_id]"
+    },
+    {
+      "case_id": "CASE-KB-004",
+      "assertion_id": "ASRT-KB-004",
+      "feature_id": "FEAT-KB-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-002"],
+      "rule_refs": ["RULE-KB-004"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于请求体已通过扩展名检查后的大小判定；不适用于反向代理提前拦截的情形（若网关改写了状态码，需记录并转 questions）。",
+      "preconditions": [
+        "已登录",
+        "已有 hybrid 知识库 kb_id",
+        "磁盘可写，能生成 52428801 字节的临时文件"
+      ],
+      "steps": [
+        "1. 用 pwsh 生成边界文件：一个恰好 52428800 字节的 .txt（用固定字节重复写入），一个 52428801 字节的 .txt",
+        "2. POST /api/v1/knowledge-bases/{kb_id}/upload 上传 52428800 字节的文件，记录状态码",
+        "3. POST 同上路径上传 52428801 字节的文件，记录状态码与 detail",
+        "4. 记录两次请求的耗时（该判定先全量读入内存，耗时随体积增长）"
+      ],
+      "expected": [
+        "步骤2：HTTP 200（等于上限允许通过）",
+        "步骤3：HTTP 413（不是 400、不是 422），detail 含 'File too large'",
+        "步骤3 未在 data/raw 留下文件，也未创建 knowledge_documents 行"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "两个文件的字节数（Get-Item 的 Length）",
+        "两次响应状态码与 detail 原文",
+        "两次请求耗时数值",
+        "步骤3 之后 data/raw 的文件列表"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/knowledge-bases/{kb_id}/upload"],
+      "required_capabilities": ["authenticated_http_client", "large_file_generation"],
+      "resource_requirements": ["约 100MB 临时磁盘空间", "上传耗时按带宽估算，需放宽超时"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:143",
+        "src/api/routers/knowledge_base.py:339-345"
+      ],
+      "dependencies": ["CASE-KB-001 提供库"],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "删除两个临时文件；若步骤2 成功则 DELETE /api/v1/knowledge-bases/documents/batch-delete 清理该文档"
+    },
+    {
+      "case_id": "CASE-KB-005",
+      "assertion_id": "ASRT-KB-005",
+      "feature_id": "FEAT-KB-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-002"],
+      "rule_refs": ["RULE-KB-005"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于二进制 7 类（pdf/docx/xlsx/pptx 及 doc/xls/ppt）与文本 5 类；文本类不校验是设计如此，本用例后半段是对该现状的断言。",
+      "preconditions": ["已登录", "已有 hybrid 知识库 kb_id"],
+      "steps": [
+        "1. 生成 fake.pdf，内容为纯文本 'hello'（5 字节，非 %PDF 开头）",
+        "2. POST /api/v1/knowledge-bases/{kb_id}/upload 上传 fake.pdf，记录状态码与 detail",
+        "3. 生成 fake.txt，内容为 8 字节二进制 \\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07",
+        "4. POST 上传 fake.txt，记录状态码",
+        "5. 生成 tiny.pdf，内容为 2 字节 'PK'",
+        "6. POST 上传 tiny.pdf，记录状态码与 detail"
+      ],
+      "expected": [
+        "步骤2：HTTP 400，detail 含 'magic number 校验失败'",
+        "步骤4：HTTP 200（.txt 属文本类，跳过魔数校验）",
+        "步骤6：HTTP 400，detail 为 '文件内容过短，无法验证类型'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["三个文件的字节内容（hex dump 前 8 字节）", "三次响应的状态码与 detail 原文", "步骤4 返回的 doc_id"],
+      "execution_kind": "live_api",
+      "required_actions": ["POST /api/v1/knowledge-bases/{kb_id}/upload"],
+      "required_capabilities": ["authenticated_http_client", "binary_file_generation"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:151-194",
+        "src/api/routers/knowledge_base.py:349"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "删除 fake.txt 对应的文档与临时文件"
+    },
+    {
+      "case_id": "CASE-KB-006",
+      "assertion_id": "ASRT-KB-006",
+      "feature_id": "FEAT-KB-010",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-002", "REQ-KB-010"],
+      "rule_refs": ["RULE-KB-006", "RULE-KB-027"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于两个已注册用户之间的跨用户访问；不适用于管理员角色（本项目无管理员特权旁路，见 src/api/routers/knowledge_base.py 各端点的 owner 校验）。",
+      "preconditions": [
+        "用户 A 已登录，username=A",
+        "用户 B 已登录，username=B",
+        "A 建一个 is_public=true 的库 kb_public，再建一个 is_public=false 的库 kb_private"
+      ],
+      "steps": [
+        "1. 用 B 的 token 发 POST /api/v1/knowledge-bases/{kb_public}/upload，上传任意合法 .pdf",
+        "2. 记录状态码与 detail",
+        "3. 用 B 的 token 发 GET /api/v1/knowledge-bases/{kb_public}，记录状态码",
+        "4. 用 B 的 token 发 GET /api/v1/knowledge-bases/，在其返回数组中查找 kb_public 的 id",
+        "5. 用 B 的 token 发 GET /api/v1/knowledge-bases/{kb_private}，记录状态码",
+        "6. 用 B 的 token 发 POST /api/v1/knowledge-bases/{kb_private}/upload，记录状态码"
+      ],
+      "expected": [
+        "步骤2：HTTP 403（is_public 不放开上传）",
+        "步骤3：HTTP 200（读权限允许 is_public）",
+        "步骤4：返回数组中不含 kb_public 的 id（列表只返回自己的库）",
+        "步骤5：HTTP 403 或 404（无权读私有库）",
+        "步骤6：HTTP 403"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["每次请求的状态码与 detail", "A 建库返回的两个 kb_id", "步骤4 的完整响应数组"],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "GET /api/v1/knowledge-bases/{kb_id}",
+        "GET /api/v1/knowledge-bases/"
+      ],
+      "required_capabilities": ["two_authenticated_users", "multipart_upload"],
+      "resource_requirements": ["两个可用账号"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:320-324",
+        "src/api/routers/knowledge_base.py:272-283",
+        "src/api/routers/knowledge_base.py:239-246"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "A 删除 kb_public 与 kb_private"
+    },
+    {
+      "case_id": "CASE-KB-007",
+      "assertion_id": "ASRT-KB-007",
+      "feature_id": "FEAT-KB-003",
+      "role": "performance",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-003"],
+      "rule_refs": ["RULE-KB-007"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于 bm25 库（走进程内派发）与正常在线的 hybrid 库（走 Celery）；broker 断开的回落分支见 CASE-KB-008。",
+      "preconditions": [
+        "已登录",
+        "已建一个 retrieval_mode=bm25 的库 kb_local",
+        "已建一个 retrieval_mode=hybrid 的库 kb_vec",
+        "后端与（若在线的）Celery worker 都在运行"
+      ],
+      "steps": [
+        "1. POST /api/v1/knowledge-bases/{kb_local}/upload 上传一个 2 页 PDF，记录响应 message 与 task_id 字段",
+        "2. 立即 GET /api/v1/knowledge-bases/{kb_local}/documents，记录该文档 status",
+        "3. POST /api/v1/knowledge-bases/{kb_vec}/upload 上传同一 PDF，记录响应 message 与 task_id",
+        "4. 立即 GET /api/v1/knowledge-bases/{kb_vec}/documents，记录该文档 status",
+        "5. 等 60 秒后再各查一次，记录两条 status 与 chunk_count"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，响应含 message（'File uploaded successfully' 或 'File uploaded (sync mode)'）与 task_id 键",
+        "bm25 库的文档 task_id 必为 null（进程内派发不产生 Celery 任务 id，src/api/routers/knowledge_base.py:132-137）",
+        "hybrid 库若 broker 在线，task_id 为非空字符串",
+        "步骤2/4：两次查询中至少能看到 status 为 0 或 1 的一次快照（说明请求已返回而处理未结束）",
+        "步骤5：两个文档最终 status=2 且 chunk_count>0"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["bm25 库与 hybrid 库的 task_id 形态", "请求返回时刻与 status 从 0/1 到 2 的时间差"],
+      "evidence": [
+        "两次 upload 的完整响应 JSON（含 message 与 task_id）",
+        "四次 documents 查询的响应（status、chunk_count、celery_task_id 不可见但可记录 status）",
+        "步骤5 的时间戳与最终 chunk_count"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "GET /api/v1/knowledge-bases/{kb_id}/documents"
+      ],
+      "required_capabilities": ["authenticated_http_client", "multipart_upload", "sleep_between_calls"],
+      "resource_requirements": ["一个多页 PDF", "需要 embedding 服务可用（hybrid 路径）"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:29-41",
+        "src/api/routers/knowledge_base.py:131-141",
+        "src/api/routers/knowledge_base.py:402-411",
+        "src/worker/celery_app.py:15-24"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE 两个库（连带文档与向量）"
+    },
+    {
+      "case_id": "CASE-KB-008",
+      "assertion_id": "ASRT-KB-007",
+      "feature_id": "FEAT-KB-003",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-KB-003"],
+      "rule_refs": ["RULE-KB-007"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "仅适用于故障注入场景（broker 不可达）；正常环境请用 CASE-KB-007。",
+      "preconditions": [
+        "已登录，有一个 hybrid 知识库 kb_vec",
+        "RabbitMQ（Celery broker，src/worker/celery_app.py:6）处于停止或端口不可达状态",
+        "API 进程已启动，且其 _try_celery_delay 会在 5 秒内超时"
+      ],
+      "steps": [
+        "1. 确认 broker 不可达（例如本机 5672 端口无监听）",
+        "2. 记录上传开始时间",
+        "3. POST /api/v1/knowledge-bases/{kb_vec}/upload 上传一个合法 PDF",
+        "4. 记录状态码、响应 message、task_id、以及请求耗时",
+        "5. 立即 GET .../documents 观察 status"
+      ],
+      "expected": [
+        "步骤4：HTTP 200（降级不报错）",
+        "响应 message 等于 'File uploaded (sync mode)'，task_id 为 null",
+        "请求耗时 ≥ 5 秒（5 秒硬超时下限）",
+        "步骤5：文档最终仍能到 status=2 或有明确 status=3 + error_msg（取决于 embedding 是否可用）"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["请求耗时相对 5 秒超时", "同步回落与正常异步的响应文案差异"],
+      "evidence": [
+        "broker 不可达的证明（端口探测输出）",
+        "上传响应的完整 JSON 与耗时",
+        "后续 documents 里该 doc 的 status 与 error_msg"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["stop_message_broker", "POST /api/v1/knowledge-bases/{kb_id}/upload", "GET /api/v1/knowledge-bases/{kb_id}/documents"],
+      "required_capabilities": ["service_control", "authenticated_http_client"],
+      "resource_requirements": ["可停止/启动的 RabbitMQ", "一个合法 PDF"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:29-41",
+        "src/api/routers/knowledge_base.py:405-411",
+        "src/worker/celery_app.py:6",
+        "src/worker/celery_app.py:23-24"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 broker；删除测试库"
+    },
+    {
+      "case_id": "CASE-KB-009",
+      "assertion_id": "ASRT-KB-009",
+      "feature_id": "FEAT-KB-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-004"],
+      "rule_refs": ["RULE-KB-009"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于前端建库路径与 chunk_size 生效性；'method 不生效' 部分适用于所有通过界面选择切分方式的库。",
+      "preconditions": [
+        "已登录",
+        "一个 ≥3 页、正文 ≥3000 字的 PDF 作为样本",
+        "准备两份相同的库配置，只改 chunk_size"
+      ],
+      "steps": [
+        "1. 打开 /knowledge-bases 页，点『创建知识库』",
+        "2. 名称填 kb-a，检索方式选『向量与关键词（使用模型服务）』，切分方式选『递归切分(推荐)』，块大小填 300，重叠填 0，提交",
+        "3. 再点『创建知识库』，名称填 kb-b，其余同上但块大小填 1000，提交",
+        "4. 进入 kb-a 详情，点『批量上传』选该 PDF；进入 kb-b 详情，同样上传",
+        "5. 等两侧『状态』列都显示『已完成』（页面每 3 秒轮询刷新）",
+        "6. 记录两侧『分片数』列",
+        "7. 打开 kb-b 详情，点该文档『重新切分』，把切分策略从『递归切分(推荐)』改成『固定长度』，块大小保持 1000，确认",
+        "8. 等状态再次变『已完成』，记录『分片数』"
+      ],
+      "expected": [
+        "步骤6：kb-a 的分片数明显大于 kb-b（chunk_size 300 与 1000 的差异，比例约 3:1 量级）",
+        "步骤8：分片数与步骤6 的 kb-b 值相同（method 不参与切分，src/worker/tasks.py:106-107 未读 method）",
+        "两次处理最终 status 均为 2（页面显示『已完成』）"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["chunk_size 300 vs 1000 的分片数", "method 改变前后的分片数"],
+      "evidence": [
+        "两个库详情页的截图（分片数、状态列）",
+        "GET /api/v1/knowledge-bases/{kb_id}/documents 的两次响应 JSON（chunk_count 字段）",
+        "GET /api/v1/knowledge-bases/documents/{doc_id}/chunks 前 3 条的 content 长度"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": [
+        "打开 /knowledge-bases",
+        "点『创建知识库』填表提交",
+        "进入详情点『批量上传』",
+        "点『重新切分』改表单提交"
+      ],
+      "required_capabilities": ["browser", "authenticated_session", "multipart_upload"],
+      "resource_requirements": ["一个 ≥3 页、≥3000 字的 PDF", "embedding 服务可用（hybrid 路径）"],
+      "resource_refs": [
+        "frontend/src/views/KnowledgeBase.vue:61-101",
+        "frontend/src/views/KnowledgeBase.vue:77-93",
+        "src/worker/tasks.py:95-107",
+        "src/processors/text_chunker.py:9-16"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "删除 kb-a 与 kb-b"
+    },
+    {
+      "case_id": "CASE-KB-010",
+      "assertion_id": "ASRT-KB-011",
+      "feature_id": "FEAT-KB-004",
+      "role": "experience",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-004", "REQ-KB-006"],
+      "rule_refs": ["RULE-KB-011"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于空文件、扫描件 PDF（use_ocr=False 时提取不到文字）等切出 0 chunk 的情形。",
+      "preconditions": ["已登录", "已有一个 bm25 知识库 kb_local（避免依赖 embedding 服务）"],
+      "steps": [
+        "1. 生成一个 0 字节的 empty.txt",
+        "2. POST /api/v1/knowledge-bases/{kb_local}/upload 上传 empty.txt，记录 doc_id",
+        "3. 轮询 GET /api/v1/knowledge-bases/{kb_local}/documents，直到该 doc 的 status 变为 2 或 3（间隔 3 秒，最多 60 秒）",
+        "4. 记录最终 status 与 chunk_count",
+        "5. GET /api/v1/knowledge-bases/documents/{doc_id}/chunks"
+      ],
+      "expected": [
+        "步骤4：status=2（不是 3），chunk_count=0",
+        "步骤5：HTTP 200，返回空数组",
+        "前端文档表格中该行『状态』显示『已完成』、『分片数』显示 0（用户无法从界面判断这是空内容而非成功）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["empty.txt 的字节数", "最终 documents 响应中该 doc 的 status 与 chunk_count", "chunks 接口的完整响应体", "前端该行的截图"],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "GET /api/v1/knowledge-bases/{kb_id}/documents",
+        "GET /api/v1/knowledge-bases/documents/{doc_id}/chunks"
+      ],
+      "required_capabilities": ["authenticated_http_client", "polling"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/worker/tasks.py:122-128",
+        "frontend/src/utils/status.js:30"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/knowledge-bases/documents/batch-delete，body 含该 doc_id"
+    },
+    {
+      "case_id": "CASE-KB-011",
+      "assertion_id": "ASRT-KB-012",
+      "feature_id": "FEAT-KB-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-005"],
+      "rule_refs": ["RULE-KB-012"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于 retrieval_mode=bm25 的库；hybrid 库的对应断言见 CASE-KB-013 相关规则与 RULE-KB-013。",
+      "preconditions": [
+        "已登录",
+        "已建 retrieval_mode=bm25 的库 kb_local",
+        "记录上传前 data/vectors/vectors_meta.json 的条目数（若文件不存在则记 0）"
+      ],
+      "steps": [
+        "1. 向 kb_local 上传一个含明确关键词的多行 .txt（例如 30 行，每行含『连接拒绝』）",
+        "2. 轮询 documents 直到 status=2",
+        "3. GET /api/v1/knowledge-bases/documents/{doc_id}/chunks?limit=200，记录条数与内容",
+        "4. 复查 data/vectors/vectors_meta.json 的条目数",
+        "5. 观察服务端 stdout 是否出现 embedding 相关错误或 DashScope 调用日志"
+      ],
+      "expected": [
+        "步骤2：status=2",
+        "步骤3：HTTP 200，条数 > 0（chunk 已写 SQL）",
+        "步骤4：条目数与上传前一致（bm25 路径不写本地向量库）",
+        "步骤5：无 embedding 调用、无 DashScope 报错；处理返回值语义为 'Success (BM25 only)'（可从 worker 日志确认）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "chunks 接口响应（条数 + 至少 2 条 content）",
+        "上传前后 vectors_meta.json 的条目数",
+        "worker/服务端 stdout 中该 doc 的完成日志"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "GET /api/v1/knowledge-bases/documents/{doc_id}/chunks"
+      ],
+      "required_capabilities": ["authenticated_http_client", "polling", "filesystem_read", "log_capture"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/worker/tasks.py:130-140",
+        "src/api/routers/knowledge_base.py:125-128",
+        "src/database/local_vector_store.py:64-87"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE 该文档"
+    },
+    {
+      "case_id": "CASE-KB-012",
+      "assertion_id": "ASRT-KB-020",
+      "feature_id": "FEAT-KB-007",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-007"],
+      "rule_refs": ["RULE-KB-019"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "仅适用于 bm25 库的关键词检索入口；hybrid 库调用同一端点应被 400 拒绝（另见 RULE-KB-019 前半段）。",
+      "preconditions": ["已登录", "已建 retrieval_mode=bm25 的库 kb_local", "API 进程已启动但尚未执行过任何检索"],
+      "steps": [
+        "1. 向 kb_local 上传含关键词『连接拒绝』的 .txt，轮询至 status=2",
+        "2. 立即（不重启服务）发 POST /api/v1/knowledge-bases/{kb_local}/search，body {\"query\":\"连接拒绝\",\"top_k\":5}",
+        "3. 记录 results 条数与每条 chunk_id/filename/page/score",
+        "4. 用一个 hybrid 库的 kb_id 发同样请求，记录状态码与 detail",
+        "5. 发 body {\"query\":\"x\",\"top_k\":21} 到 kb_local，记录状态码"
+      ],
+      "expected": [
+        "步骤3：HTTP 200，results 非空，每条含 chunk_id、content、score，且 metadata 展开带 filename 与 page",
+        "响应体含 data_source='knowledge_base' 与 retrieval_mode='bm25'",
+        "步骤4：HTTP 400，detail 为 '此入口仅用于本地关键词知识库'",
+        "步骤5：HTTP 422（top_k 上限 20）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["search 接口完整响应 JSON", "步骤4/5 的状态码与 detail", "上传与查询的时间戳（证明未重启服务）"],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "POST /api/v1/knowledge-bases/{kb_id}/search"
+      ],
+      "required_capabilities": ["authenticated_http_client", "polling"],
+      "resource_requirements": ["含中文关键词的文本文件"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:120-122",
+        "src/api/routers/knowledge_base.py:507-519",
+        "src/retrieval/knowledge_bm25.py:7-19"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE 该文档与库"
+    },
+    {
+      "case_id": "CASE-KB-013",
+      "assertion_id": "ASRT-KB-023",
+      "feature_id": "FEAT-KB-008",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-008"],
+      "rule_refs": ["RULE-KB-021", "RULE-KB-022"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于文档至少有 1 条 QA 对（手建即可，不依赖生成模型）的情形。",
+      "preconditions": ["已登录", "已有一个 status=2 的文档 doc_id"],
+      "steps": [
+        "1. POST /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs，body {\"question\":\"连接拒绝怎么处理\",\"answer\":\"检查端口与防火墙\",\"qa_type\":\"multi_hop\"}",
+        "2. 记录返回的 qa id 与 status",
+        "3. GET /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs，在该数组中找到步骤2 的 qa id，记录其 status 与 created_by",
+        "4. 发 GET /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs/download，记录响应头 Content-Type 与 Content-Disposition，保存响应体",
+        "5. 检查保存下来的 Markdown 首行与第一对 QA 的段标题格式"
+      ],
+      "expected": [
+        "步骤2：HTTP 200，status=1（手建即已确认）",
+        "步骤3：created_by 等于当前用户名，qa_type 为 'multi_hop'（手建可指定，不被硬编码覆盖）",
+        "步骤4：Content-Type 含 'text/markdown'；Content-Disposition 含 'attachment' 与 'qa_pairs_{doc.filename}.md'",
+        "步骤5：首行以 '# QA Pairs for ' 开头，含 '## Question 1 (' 与 '**Q:**'、'**A:**'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤2/3 的响应 JSON（id、status、created_by、qa_type）",
+        "步骤4 的响应头原文",
+        "下载得到的 .md 文件",
+        "注意：前端另存名是 qa_pairs_{docId}.md，与服务端 filename 不同（frontend/src/views/KnowledgeBaseDetail.vue:499-516），需一并记录"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs",
+        "GET /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs",
+        "GET /api/v1/knowledge-bases/documents/{doc_id}/qa-pairs/download"
+      ],
+      "required_capabilities": ["authenticated_http_client", "low_level_header_inspection"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:575-602",
+        "src/api/routers/knowledge_base.py:650-679",
+        "frontend/src/views/KnowledgeBaseDetail.vue:499-516"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "DELETE /api/v1/knowledge-bases/qa-pairs/{qa_id}"
+    },
+    {
+      "case_id": "CASE-KB-014",
+      "assertion_id": "ASRT-KB-026",
+      "feature_id": "FEAT-KB-010",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-KB-010"],
+      "rule_refs": ["RULE-KB-025"],
+      "flow_refs": ["FLOW-KB-INGEST"],
+      "applicability": "适用于删除整个知识库；单个文档的删除行为不同（见 RULE-KB-026），不适用本用例。",
+      "preconditions": ["已登录", "有一个含至少 1 份已就绪文档的 bm25 知识库 kb_id", "记录该文档在 data/raw 下的文件路径"],
+      "steps": [
+        "1. GET /api/v1/knowledge-bases/{kb_id}/documents，取 doc_id 与（从 data/raw 目录确认的）对应物理文件名",
+        "2. DELETE /api/v1/knowledge-bases/{kb_id}，记录状态码",
+        "3. GET /api/v1/knowledge-bases/{kb_id}",
+        "4. GET /api/v1/knowledge-bases/{kb_id}/documents",
+        "5. 检查 data/raw 下步骤1 的物理文件是否仍存在"
+      ],
+      "expected": [
+        "步骤2：HTTP 200，响应 message 为 'Knowledge Base deleted'",
+        "步骤3：HTTP 404",
+        "步骤4：HTTP 404",
+        "步骤5：物理文件**仍然存在**（实现只删库行与向量，不删 data/raw）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": ["删除前后的 documents 列表", "步骤3/4 的状态码", "data/raw 文件列表（删除前后各一次）", "该 kb 的向量是否已被清（可选：检查 vectors_meta.json 中 kb_id 条目数）"],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/knowledge-bases/{kb_id}/documents",
+        "DELETE /api/v1/knowledge-bases/{kb_id}",
+        "filesystem_check"
+      ],
+      "required_capabilities": ["authenticated_http_client", "filesystem_read"],
+      "resource_requirements": [],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:248-270",
+        "src/database/vector_db.py:206-218",
+        "src/database/models.py:39-40",
+        "src/settings.py:15"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "手工删除 data/raw 下遗留的物理文件（这是本次观察到的真实残留）"
+    }
+  ]
+}

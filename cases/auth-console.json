@@ -1,0 +1,612 @@
+{
+  "module_id": "auth-console",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T09:50:00Z",
+  "cases": [
+    {
+      "case_id": "CASE-AUTH-001",
+      "assertion_id": "ASRT-AUTH-001",
+      "feature_id": "FEAT-AUTH-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-001"],
+      "rule_refs": ["RULE-AUTH-001"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "注册端点对未登录调用方的开放性与响应体字段收敛。",
+      "preconditions": [
+        "后端已就绪",
+        "准备一组全新 username 与全新 email，且数据库中不存在"
+      ],
+      "steps": [
+        "以不携带任何 Authorization 头的 POST 请求调用 /api/v1/auth/register，body 为 JSON，含 username、email、password",
+        "记录状态码",
+        "解析响应 JSON 并列出其顶层键",
+        "在响应原始文本中检索 password 与 password_hash 两个词"
+      ],
+      "expected": [
+        "状态码为 201",
+        "响应顶层键集合恰为 id、username、email、is_active 四项",
+        "原始响应文本中不出现 password 字样",
+        "原始响应文本中不出现 password_hash 字样"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["状态码", "响应键集合是否恰为四项", "是否泄漏密码相关字段"],
+      "evidence": [
+        "src/api/routers/auth.py:34-41 UserOut 四字段与 status_code=201",
+        "src/api/routers/auth.py:51-59 写入 password_hash 但不回传",
+        "tests/test_auth_functional.py:14-29 断言响应不含密码字段"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发注册请求", "解析响应体", "检索敏感字段名"],
+      "required_capabilities": ["可发 HTTP 请求", "可解析 JSON"],
+      "resource_requirements": ["运行中的后端", "一个可写的测试数据库", "约 15 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:34-59", "tests/conftest.py:104-128"],
+      "dependencies": ["需要一个已启动的后端或测试客户端 fixture"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本用例注册产生的用户记录（按 username 精确定位），或在专用测试库中执行；不得删除既有真实用户。"
+    },
+    {
+      "case_id": "CASE-AUTH-002",
+      "assertion_id": "ASRT-AUTH-002",
+      "feature_id": "FEAT-AUTH-001",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-001"],
+      "rule_refs": ["RULE-AUTH-002"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "用户枚举防护：用户名冲突与邮箱冲突的响应必须不可区分。",
+      "preconditions": [
+        "后端已就绪",
+        "数据库中已存在一个用户，记其 username 与 email"
+      ],
+      "steps": [
+        "用该已存在的 username 搭配一个全新 email 调用注册，记录状态码与响应体原文",
+        "用一个全新 username 搭配该已存在的 email 调用注册，记录状态码与响应体原文",
+        "逐字比较两次响应体"
+      ],
+      "expected": [
+        "两次状态码都是 409",
+        "两次响应体逐字相同",
+        "detail 文案为 用户名或邮箱已被注册",
+        "无法从响应判断是 username 冲突还是 email 冲突"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["两次状态码是否一致", "两次响应体是否逐字相同"],
+      "evidence": [
+        "src/api/routers/auth.py:42-44 or_ 单次查重",
+        "src/api/routers/auth.py:46-50 统一 detail 且注释说明防枚举",
+        "tests/test_auth_functional.py:31-43 与 :45-56 分别覆盖两条冲突路径"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发两次注册请求", "逐字比较响应体"],
+      "required_capabilities": ["可发 HTTP 请求", "可读取响应原文"],
+      "resource_requirements": ["运行中的后端", "一个可写的测试数据库", "约 15 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:42-50", "tests/test_auth_functional.py:31-56"],
+      "dependencies": ["需要一个预先存在的用户记录"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本用例为测试冲突而尝试创建的用户（正常情况下注册失败不会新建）；确认既有用户未被修改。"
+    },
+    {
+      "case_id": "CASE-AUTH-003",
+      "assertion_id": "ASRT-AUTH-003",
+      "feature_id": "FEAT-AUTH-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-001"],
+      "rule_refs": ["RULE-AUTH-003"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "密码三项校验的四个边界：太短、纯数字、纯字母、合规。",
+      "preconditions": [
+        "后端已就绪",
+        "准备四组互不相同的 username 与 email"
+      ],
+      "steps": [
+        "提交 5 位密码注册，记录状态码",
+        "提交 6 位纯数字密码注册，记录状态码与 detail 文本",
+        "提交 6 位纯字母密码注册，记录状态码与 detail 文本",
+        "提交同时含字母与数字的 6 位密码注册，记录状态码"
+      ],
+      "expected": [
+        "5 位密码返回 422",
+        "纯数字 6 位返回 422，detail 文本含 至少一个字母",
+        "纯字母 6 位返回 422，detail 文本含 至少一个数字",
+        "合规 6 位返回 201"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["四个分支的状态码", "两条错误消息是否分别对应字母与数字"],
+      "evidence": [
+        "src/api/routers/auth.py:18 min_length=6",
+        "src/api/routers/auth.py:20-28 validate_password_complexity 两条 ValueError",
+        "tests/test_security.py:102-140 覆盖密码策略"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发四次注册请求", "读取状态码与 detail"],
+      "required_capabilities": ["可发 HTTP 请求", "可解析校验错误数组"],
+      "resource_requirements": ["运行中的后端", "一个可写的测试数据库", "约 20 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:15-28", "tests/test_security.py:102-140"],
+      "dependencies": ["需要一个已启动的后端或测试客户端"],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "删除第四步成功注册产生的用户；前三步失败不应留下记录，需确认。"
+    },
+    {
+      "case_id": "CASE-AUTH-004",
+      "assertion_id": "ASRT-AUTH-004",
+      "feature_id": "FEAT-AUTH-001",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-001"],
+      "rule_refs": ["RULE-AUTH-004"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "密码存储形态：必须是 bcrypt 哈希，不得明文，也不得走 passlib。",
+      "preconditions": [
+        "后端已就绪",
+        "可直读测试数据库的 users 表",
+        "已安装 bcrypt"
+      ],
+      "steps": [
+        "用一个已知明文密码注册新用户",
+        "从 users 表按 username 查出该行的 password_hash",
+        "比较 password_hash 与明文是否相等",
+        "执行 bcrypt.checkpw(明文, password_hash)，记录结果"
+      ],
+      "expected": [
+        "password_hash 不等于明文",
+        "password_hash 以 bcrypt 哈希形态呈现（非空、可被 checkpw 解析）",
+        "bcrypt.checkpw 返回 True"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["是否明文", "是否能被 bcrypt 校验通过"],
+      "evidence": [
+        "src/utils/security.py:4 只 import bcrypt",
+        "src/utils/security.py:14-18 gensalt + hashpw",
+        "tests/test_auth_functional.py:100-103 断言 password_hash 不等于明文且 verify_password 通过"
+      ],
+      "execution_kind": "live_cli",
+      "required_actions": ["注册用户", "查库", "执行 bcrypt 校验"],
+      "required_capabilities": ["可执行 python 子进程", "可读 SQLite", "已安装 bcrypt"],
+      "resource_requirements": ["一个可写的测试数据库", "约 20 秒运行预算"],
+      "resource_refs": ["src/utils/security.py:4-18", "tests/test_auth_functional.py:100-103"],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "删除本用例注册的用户；比对测试库文件是否被本用例以外的写入影响（不应有）；不得把查出的哈希写入任何交付文件。"
+    },
+    {
+      "case_id": "CASE-AUTH-005",
+      "assertion_id": "ASRT-AUTH-005",
+      "feature_id": "FEAT-AUTH-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-002"],
+      "rule_refs": ["RULE-AUTH-005"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "登录端点的请求编码与字段名口径：只接受表单、只认 username。",
+      "preconditions": [
+        "后端已就绪",
+        "存在一个可用账号（username 与密码已知）"
+      ],
+      "steps": [
+        "以 application/json 提交 username 与 password 到 /api/v1/auth/login/access-token",
+        "以 application/x-www-form-urlencoded 提交同样的两项",
+        "记录两次状态码"
+      ],
+      "expected": [
+        "JSON 提交返回 422",
+        "表单提交返回 200",
+        "表单提交响应含 access_token 与 token_type"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["JSON 是否被拒", "表单是否成功"],
+      "evidence": [
+        "src/api/routers/auth.py:63 OAuth2PasswordRequestForm 表单解析",
+        "frontend/src/views/Login.vue:49-52 前端确实用 FormData"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["以两种编码发登录请求", "记录状态码"],
+      "required_capabilities": ["可发 JSON 与表单两种请求体的 HTTP 请求"],
+      "resource_requirements": ["运行中的后端", "约 15 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:61-69", "frontend/src/views/Login.vue:49-52"],
+      "dependencies": ["需要一个已知密码的账号；本用例会消耗一次登录配额，避免与限流用例同时段执行"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 1,
+      "cleanup": "只读登录，不写库；成功登录产生的 token 不落盘。"
+    },
+    {
+      "case_id": "CASE-AUTH-006",
+      "assertion_id": "ASRT-AUTH-006",
+      "feature_id": "FEAT-AUTH-002",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-002"],
+      "rule_refs": ["RULE-AUTH-006"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "token 的形态契约：算法、payload 三键、sub 语义、有效期长度。",
+      "preconditions": [
+        "后端已就绪",
+        "存在一个可用账号，且已知其用户 id"
+      ],
+      "steps": [
+        "用表单登录取得 access_token",
+        "用项目配置的密钥与 HS256 解码该 token",
+        "列出 payload 顶层键",
+        "比较 payload 的 sub 与 str(用户 id)",
+        "计算 exp 减 iat 的秒数"
+      ],
+      "expected": [
+        "响应 token_type 为 bearer",
+        "payload 顶层键集合恰为 exp、sub、iat",
+        "sub 等于 str(用户 id)",
+        "exp 减 iat 等于 480×60 秒",
+        "HS256 解码成功，换用其它密钥解码失败"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["payload 键集合", "sub 语义", "有效期长度", "算法"],
+      "evidence": [
+        "src/utils/security.py:7 ALGORITHM 为 HS256",
+        "src/utils/security.py:29 payload 三键",
+        "src/utils/security.py:26 默认有效期取 ACCESS_TOKEN_EXPIRE_MINUTES",
+        "src/settings.py:20 默认 480",
+        "tests/test_auth_functional.py:58-70 断言 token_type 与 sub"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["登录取 token", "本地解码 JWT", "比较字段"],
+      "required_capabilities": ["可发 HTTP 请求", "可用 python-jose 解码 JWT"],
+      "resource_requirements": ["运行中的后端", "约 15 秒运行预算"],
+      "resource_refs": ["src/utils/security.py:20-31", "src/settings.py:20", "tests/test_auth_functional.py:58-70"],
+      "dependencies": ["需要能读 SECRET_KEY 以完成解码；取值只在内存中使用，不得写入任何文件"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 1,
+      "cleanup": "只读登录；token 与密钥都只在内存中处理，不落盘、不回显到输出文件。"
+    },
+    {
+      "case_id": "CASE-AUTH-007",
+      "assertion_id": "ASRT-AUTH-007",
+      "feature_id": "FEAT-AUTH-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-002"],
+      "rule_refs": ["RULE-AUTH-007"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "登录失败的两种 401 文案：密码错与账号停用可区分。",
+      "preconditions": [
+        "后端已就绪",
+        "存在一个可用账号，且可修改其 is_active 字段"
+      ],
+      "steps": [
+        "用正确 username 与错误密码登录，记录状态码与 detail",
+        "把该用户 is_active 置为假",
+        "用正确 username 与正确密码登录，记录状态码与 detail",
+        "把 is_active 复位为真"
+      ],
+      "expected": [
+        "第一步为 401，detail 为 Incorrect email or password",
+        "第三步为 401，detail 为 Inactive user",
+        "两条 detail 文本不相同"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["两条 detail 是否分别对应密码错与停用"],
+      "evidence": [
+        "src/api/routers/auth.py:69 密码错文案",
+        "src/api/routers/auth.py:71 停用文案",
+        "tests/test_auth_functional.py:72-78 与 :80-98 分别覆盖"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["发两次登录请求", "改测试库 is_active", "读 detail"],
+      "required_capabilities": ["可发 HTTP 请求", "可改测试数据库"],
+      "resource_requirements": ["运行中的后端", "一个可写的测试数据库", "约 20 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:69-71", "tests/test_auth_functional.py:72-98"],
+      "dependencies": ["需要一个可切换 is_active 的测试账号"],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "必须把该用户的 is_active 复位为真（第四步）；确认没有其它测试账号被改；本用例涉及 2 次登录，注意与限流用例的时段隔离。"
+    },
+    {
+      "case_id": "CASE-AUTH-008",
+      "assertion_id": "ASRT-AUTH-008",
+      "feature_id": "FEAT-AUTH-002",
+      "role": "performance",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-002"],
+      "rule_refs": ["RULE-AUTH-008"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "全仓唯一限流配额的实际生效点与作用面。",
+      "preconditions": [
+        "后端已就绪",
+        "所有请求来自同一客户端 IP",
+        "本用例独占当前分钟窗口，避免其它用例消耗配额"
+      ],
+      "steps": [
+        "对登录端点连续发起 6 次失败登录，逐次记录状态码",
+        "立即对 GET /api/v1/health/health 连续发起 10 次请求，逐次记录状态码"
+      ],
+      "expected": [
+        "前 5 次登录均为 401",
+        "第 6 次登录为 429",
+        "10 次健康检查全部为 200，出现 0 次 429"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["第几次开始被限", "其它端点是否被误限"],
+      "evidence": [
+        "src/api/routers/auth.py:62 唯一限流装饰器",
+        "src/utils/rate_limit.py:8-9 按远程地址计数",
+        "src/main.py:200-202 注册限流中间件与超限处理器"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["发连续失败登录", "发连续健康检查", "记录状态码序列"],
+      "required_capabilities": ["可发 HTTP 请求", "可控制请求节奏"],
+      "resource_requirements": ["运行中的后端", "约 30 秒运行预算"],
+      "resource_refs": ["src/api/routers/auth.py:61-62", "src/utils/rate_limit.py:8-9", "src/main.py:200-202"],
+      "dependencies": ["同一分钟窗口内不应与其它的登录相关用例并发"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "只读请求；等待限流窗口自然过期，不重启服务、不清库。若因此导致后续用例被限，需等满一分钟再继续。"
+    },
+    {
+      "case_id": "CASE-AUTH-009",
+      "assertion_id": "ASRT-AUTH-009",
+      "feature_id": "FEAT-AUTH-003",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-003"],
+      "rule_refs": ["RULE-AUTH-009"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "凭据落点：只进 localStorage 的两键，后端不下发 cookie。",
+      "preconditions": [
+        "前端 dev server 或构建产物可访问",
+        "后端已就绪",
+        "存在一个可用账号"
+      ],
+      "steps": [
+        "在登录页提交正确凭据",
+        "登录成功后读取 localStorage 的全部键",
+        "比较 localStorage.token 与登录响应的 access_token",
+        "检查登录响应头是否含 Set-Cookie"
+      ],
+      "expected": [
+        "localStorage 恰有 token 与 username 两个键（忽略前端框架自身写入的键，如有需单独列出）",
+        "token 值等于响应 access_token",
+        "登录响应头不含 Set-Cookie"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["localStorage 键集合", "token 是否与响应一致", "是否下发 cookie"],
+      "evidence": [
+        "frontend/src/views/Login.vue:53-54 写两个键",
+        "src/api/routers/auth.py:61-76 响应只有 access_token/token_type",
+        "frontend/src/views/Login.test.js:31-52 断言 storage 两键与路由跳转"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["在浏览器中登录", "读 localStorage", "读响应头"],
+      "required_capabilities": ["可驱动浏览器", "可读 localStorage 与网络响应头"],
+      "resource_requirements": ["一个浏览器会话", "运行中的前端与后端", "约 30 秒运行预算"],
+      "resource_refs": ["frontend/src/views/Login.vue:49-55", "frontend/src/views/Login.test.js:31-52"],
+      "dependencies": ["需要可登录的测试账号；一次登录消耗一个限流配额"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "清空该浏览器会话的 localStorage 与 cookie；关闭浏览器上下文；token 值不得写入任何交付文件。"
+    },
+    {
+      "case_id": "CASE-AUTH-010",
+      "assertion_id": "ASRT-AUTH-010",
+      "feature_id": "FEAT-AUTH-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-003"],
+      "rule_refs": ["RULE-AUTH-010"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "axios 拦截器的加头行为，两态（有 token / 无 token）。",
+      "preconditions": ["前端依赖已安装，可运行前端单测或在浏览器控制台操作"],
+      "steps": [
+        "令 localStorage.token 为某个非空字符串，调用 axios 实例发一个会被拦截器处理的请求，捕获最终请求 config",
+        "删除 localStorage.token，再发一次同样的请求，捕获 config",
+        "比较两次 config.headers 中是否存在 Authorization"
+      ],
+      "expected": [
+        "有 token 时 headers 含 Authorization，值以 Bearer 加一个空格开头",
+        "无 token 时 headers 不含 Authorization",
+        "两次请求的 baseURL 都是 /api/v1"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["有 token 是否加头", "无 token 是否不加头", "baseURL 是否正确"],
+      "evidence": [
+        "frontend/src/api/index.js:3-5 baseURL",
+        "frontend/src/api/index.js:7-13 请求拦截器加头"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["设置 localStorage", "发请求", "捕获请求 config"],
+      "required_capabilities": ["可在浏览器或 jsdom 中运行前端代码", "可拦截 axios 请求"],
+      "resource_requirements": ["一个可运行前端代码的环境", "约 20 秒运行预算"],
+      "resource_refs": ["frontend/src/api/index.js:3-13"],
+      "dependencies": ["需要前端依赖已安装"],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 1,
+      "cleanup": "恢复 localStorage 到执行前状态（本用例只动了 token 键）；关闭创建的环境。"
+    },
+    {
+      "case_id": "CASE-AUTH-011",
+      "assertion_id": "ASRT-AUTH-011",
+      "feature_id": "FEAT-AUTH-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-003"],
+      "rule_refs": ["RULE-AUTH-011", "RULE-AUTH-012"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "native fetch 链路的 401 与非 401 两态行为差异。",
+      "preconditions": ["可运行前端单测环境（jsdom）或浏览器"],
+      "steps": [
+        "置 localStorage.token 为非空值，调用 handleAuthError(401) 并记录返回值、token 是否被删除、location.href",
+        "重新置 token，调用 handleAuthError(500) 并记录返回值、token 是否仍在、location.href 是否变化"
+      ],
+      "expected": [
+        "401 时返回 true",
+        "401 时 token 被删除",
+        "401 时 location.href 变为 /login",
+        "500 时返回 false",
+        "500 时 token 未被删除且 location.href 未变化"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["401 与 500 的返回值", "token 是否被删", "是否跳转"],
+      "evidence": [
+        "frontend/src/utils/auth.js:13-24 handleAuthError 分支",
+        "frontend/src/utils/auth.test.js:39-67 对两态有断言"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["调用前端函数", "读返回值与 localStorage", "读 location"],
+      "required_capabilities": ["可在 jsdom 或浏览器执行 JS", "可读 localStorage"],
+      "resource_requirements": ["一个前端运行环境", "约 20 秒运行预算"],
+      "resource_refs": ["frontend/src/utils/auth.js:13-24", "frontend/src/utils/auth.test.js:39-67"],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 1,
+      "cleanup": "清除本用例写入的 localStorage 键；关闭创建的环境。"
+    },
+    {
+      "case_id": "CASE-AUTH-012",
+      "assertion_id": "ASRT-AUTH-015",
+      "feature_id": "FEAT-AUTH-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-005"],
+      "rule_refs": ["RULE-AUTH-015"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "前端守卫只判存在性的最直接证据：伪造任意非空 token 也能进页面。",
+      "preconditions": [
+        "前端可访问",
+        "后端已就绪（用于观察随后的 401）"
+      ],
+      "steps": [
+        "在 localStorage 写入 token 值为单个字符 x（非 JWT 结构）",
+        "直接访问 /dashboard",
+        "记录最终地址与被重定向的时机",
+        "再删除 token 后访问 /dashboard，记录最终地址"
+      ],
+      "expected": [
+        "第一步之后访问 /dashboard 不被守卫重定向到 /login",
+        "随后因接口 401 被响应拦截器带到 /login，且 token 被删除",
+        "删除 token 后访问 /dashboard 立即被守卫重定向到 /login"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["守卫是否放行伪造 token", "放行后是否被 401 链路兜底", "无 token 时是否立即重定向"],
+      "evidence": [
+        "frontend/src/router/index.js:24-31 只做存在性判断",
+        "frontend/src/api/index.js:15-24 401 拦截清理与跳转",
+        "frontend/src/router/index.js:4-17 dashboard 带 requiresAuth"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": ["写 localStorage", "访问路由", "观察地址变化"],
+      "required_capabilities": ["可驱动浏览器", "可读 localStorage 与当前 URL"],
+      "resource_requirements": ["一个浏览器会话", "运行中的前端与后端", "约 45 秒运行预算"],
+      "resource_refs": ["frontend/src/router/index.js:24-31", "frontend/src/api/index.js:15-24"],
+      "dependencies": ["需要后端在线，否则观察不到 401 兜底那一步"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 2,
+      "cleanup": "清除该浏览器上下文写入的 token 键；关闭会话。注意：本用例故意写入伪造 token，不得在真实用户会话中执行。"
+    },
+    {
+      "case_id": "CASE-AUTH-013",
+      "assertion_id": "ASRT-AUTH-013",
+      "feature_id": "FEAT-AUTH-004",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-004"],
+      "rule_refs": ["RULE-AUTH-013"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "后端重验的四条失败路径与两条文案的对应关系。",
+      "preconditions": [
+        "后端已就绪",
+        "存在一个可用账号与其有效 token",
+        "可在内存中构造过期 token 与错密钥 token"
+      ],
+      "steps": [
+        "把有效 token 的任一位字符改掉，请求 GET /api/v1/health/queues，记录状态码与 detail",
+        "用另一个随机密钥签发结构相同的 token，请求同一端点，记录状态码与 detail",
+        "构造一个 exp 已过去的 token，请求同一端点，记录状态码与 detail",
+        "把该用户 is_active 置假，用原有效 token 请求同一端点，记录状态码与 detail",
+        "把 is_active 复位"
+      ],
+      "expected": [
+        "篡改 token 返回 401 且 detail 为 Could not validate credentials",
+        "错密钥 token 返回 401 且 detail 为 Could not validate credentials",
+        "过期 token 返回 401 且 detail 为 Token expired",
+        "停用账号返回 401 且 detail 为 Could not validate credentials",
+        "两次 Could not validate credentials 的响应体逐字相同"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["四条路径的状态码", "过期与其它失败是否文案不同", "停用与伪造是否不可区分"],
+      "evidence": [
+        "src/api/dependencies.py:19 jwt.decode 用 HS256 与配置密钥",
+        "src/api/dependencies.py:24-28 过期分支 detail 为 Token expired",
+        "src/api/dependencies.py:33-36 不存在或停用复用同一 detail",
+        "tests/test_security.py:13-58 六条 JWT 用例"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["构造三种异常 token", "发请求", "读 detail", "切 is_active"],
+      "required_capabilities": ["可发 HTTP 请求", "可在内存中签发/篡改 JWT", "可改测试数据库"],
+      "resource_requirements": ["运行中的后端", "一个可写的测试数据库", "约 30 秒运行预算"],
+      "resource_refs": ["src/api/dependencies.py:10-36", "tests/test_security.py:13-58"],
+      "dependencies": ["需要能读到 SECRET_KEY 以校验 HS256 签名；只在内存使用，不落盘"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "把 is_active 复位为真；所有构造出的 token 只在内存中存在，不写入文件、不写日志；确认密钥未出现在任何输出中。"
+    },
+    {
+      "case_id": "CASE-AUTH-014",
+      "assertion_id": "ASRT-AUTH-022",
+      "feature_id": "FEAT-AUTH-006",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUTH-006"],
+      "rule_refs": ["RULE-AUTH-022"],
+      "flow_refs": ["FLOW-AUTH"],
+      "applicability": "AIOps 诊断的跨用户隔离，重点是 404 与 400 两种拒绝口径。",
+      "preconditions": [
+        "后端已就绪",
+        "存在两个账号 A 与 B，A 名下有至少一条诊断 run（thread_id 已知）",
+        "可用 B 的 token 发请求"
+      ],
+      "steps": [
+        "用 B 的 token 请求 GET /api/v1/aiops/runs/{A 的 thread_id}，记录状态码与 detail",
+        "用 B 的 token 请求一个从不存在的 thread_id，记录状态码与 detail",
+        "用 B 的 token 请求一个含非法字符（例如空格或斜杠转义）的 thread_id，记录状态码与 detail"
+      ],
+      "expected": [
+        "第一步返回 404 且 detail 为 诊断不存在",
+        "第二步返回 404 且 detail 为 诊断不存在，与第一步逐字相同",
+        "第三步返回 400 且 detail 为 thread_id 非法",
+        "无法通过响应差异判断 A 的 thread_id 是否存在"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["越权与不存在的响应是否一致", "非法字符是否 400"],
+      "evidence": [
+        "src/api/routers/aiops.py:123-129 正则校验与统一 404",
+        "src/api/routers/aiops.py:132 GET runs/{thread_id}",
+        "tests/test_aiops_auth.py:12 无 token 401 基线"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["用两个账号发请求", "比较响应体", "记录状态码"],
+      "required_capabilities": ["可发带不同 token 的 HTTP 请求", "可读响应体"],
+      "resource_requirements": ["运行中的后端", "两个测试账号", "约 30 秒运行预算"],
+      "resource_refs": ["src/api/routers/aiops.py:123-143"],
+      "dependencies": ["需要 A 名下真实存在一条 run，否则第一步与第二步无法区分"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "只读请求，无写入；不得删除 A 的 run 记录；token 不落盘。"
+    }
+  ]
+}

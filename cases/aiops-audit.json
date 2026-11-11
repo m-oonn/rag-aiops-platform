@@ -1,0 +1,534 @@
+{
+  "module_id": "aiops-audit",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T10:05:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-AUDIT-001",
+      "assertion_id": "ASRT-AUDIT-001",
+      "feature_id": "FEAT-AUDIT-001",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-001"],
+      "rule_refs": ["RULE-AUDIT-001"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "默认配置（ENABLE_HITL=false、TERMCP_ENABLED=false、PROBE_ENABLED=false）；需真实跑一次诊断以拿到 thread_id。",
+      "preconditions": [
+        "三个开关均为 false",
+        "后端已启动，模型服务可达",
+        "记录执行前 aiops_runs 表行数",
+        "确认允许产生模型费用"
+      ],
+      "steps": [
+        "POST /api/v1/aiops 提交一次诊断并读到 complete 帧，取出 thread_id",
+        "GET /api/v1/aiops/runs/{thread_id}",
+        "只读查询 aiops_runs 表中该 thread_id 是否存在"
+      ],
+      "expected": [
+        "GET 返回 HTTP 404",
+        "响应 detail 恰为「诊断不存在」",
+        "aiops_runs 中不存在该 thread_id 行",
+        "aiops_runs 总行数与执行前一致"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "detail 文案", "aiops_runs 行数"],
+      "evidence": [
+        "src/agent/aiops/graph.py:348-359",
+        "src/agent/aiops/graph.py:106",
+        "src/api/routers/aiops.py:123-129"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["提交一次诊断", "GET /runs/{thread_id}", "只读查询 aiops_runs"],
+      "required_capabilities": ["登录态", "可解析 SSE 的 HTTP 客户端", "只读访问 SQLite 数据库"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额与付费授权"],
+      "resource_refs": ["src/agent/aiops/graph.py:332-441", "src/settings.py:187"],
+      "dependencies": ["后端以默认配置启动", "模型服务可达"],
+      "timeout_seconds": 600,
+      "readonly_retry_max": 0,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-002",
+      "assertion_id": "ASRT-AUDIT-002",
+      "feature_id": "FEAT-AUDIT-006",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-001", "REQ-AUDIT-002"],
+      "rule_refs": ["RULE-AUDIT-001"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需把 ENABLE_HITL 置 true 使 managed_run 成立；会产生模型费用，且需要一次后端重启。",
+      "preconditions": [
+        "ENABLE_HITL=true 并重启后端",
+        "模型服务可达，允许产生模型费用",
+        "记录重启前的模型调用计量"
+      ],
+      "steps": [
+        "提交一次诊断并读到 complete 帧，取出 thread_id 与 report 文本",
+        "GET /api/v1/aiops/runs/{thread_id} 读取 status 与 report",
+        "重启后端（配置不变）",
+        "重启后再次 GET /api/v1/aiops/runs/{thread_id}"
+      ],
+      "expected": [
+        "重启前 GET 返回 HTTP 200",
+        "重启前 status 落在 7 个常量之内，实际为 completed 或 pending_review",
+        "重启后 GET 仍返回 HTTP 200",
+        "两次返回的 report 内容一致（逐字节相同）",
+        "重启后读取过程不新增模型调用"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["HTTP 状态码", "status 取值", "report 内容一致性", "模型调用计数"],
+      "evidence": [
+        "src/agent/aiops/graph.py:140-156",
+        "src/agent/aiops/graph.py:348-353",
+        "src/settings.py:217"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["开 HITL 重启后端", "提交一次诊断", "再次重启后端", "读取同一 run"],
+      "required_capabilities": ["可改配置并重启后端", "登录态", "可读模型调用计量", "可读 SQLite 数据库"],
+      "resource_requirements": ["会产生模型费用", "需要模型配额", "需要两次后端重启"],
+      "resource_refs": ["src/agent/aiops/graph.py:148-156", "docs/aiops-run-store.md:55"],
+      "dependencies": ["后端可重启", "ENABLE_HITL 可写", "模型服务可达"],
+      "timeout_seconds": 900,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 ENABLE_HITL 为原值并重启；删除本次 run 行与对应 checkpoint 记录"
+    },
+    {
+      "case_id": "CASE-AUDIT-003",
+      "assertion_id": "ASRT-AUDIT-003",
+      "feature_id": "FEAT-AUDIT-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-003"],
+      "rule_refs": ["RULE-AUDIT-002"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "任意登录用户；不需要 run 存在，也不产生模型费用。",
+      "preconditions": [
+        "后端已启动",
+        "已登录一个普通用户",
+        "确认 \"deadbeef\" 不是一个真实 thread_id"
+      ],
+      "steps": [
+        "GET /api/v1/aiops/runs/中文非法id",
+        "GET /api/v1/aiops/runs/deadbeef",
+        "对比两次响应的状态码与 detail"
+      ],
+      "expected": [
+        "第一次返回 HTTP 400，detail 恰为「thread_id 非法」",
+        "第二次返回 HTTP 404，detail 恰为「诊断不存在」",
+        "两次状态码不同，证明格式校验发生在查库之前"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["两次的状态码", "两次的 detail 文案"],
+      "evidence": [
+        "src/api/routers/aiops.py:123-129"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["两次 GET /runs/{thread_id}"],
+      "required_capabilities": ["登录态", "HTTP 客户端"],
+      "resource_requirements": ["无模型调用", "单个后端实例"],
+      "resource_refs": ["src/api/routers/aiops.py:123-143"],
+      "dependencies": ["后端已启动"],
+      "timeout_seconds": 30,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-004",
+      "assertion_id": "ASRT-AUDIT-004",
+      "feature_id": "FEAT-AUDIT-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-003"],
+      "rule_refs": ["RULE-AUDIT-003"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需要两个账号，其中一个有至少一条 run 记录（即受管运行已开启并跑过一次诊断）。",
+      "preconditions": [
+        "已开启受管运行并跑过一次诊断，用户 A 名下有一个 thread_id",
+        "存在另一个有效账号用户 B",
+        "记录用户 A 的 thread_id"
+      ],
+      "steps": [
+        "以用户 B 的身份 GET /api/v1/aiops/runs/{A 的 thread_id}",
+        "以用户 B 的身份 GET /api/v1/aiops/runs/nonexistent-thread-000",
+        "逐字节对比两次响应的 body"
+      ],
+      "expected": [
+        "两次请求都返回 HTTP 404",
+        "两次的 detail 都是「诊断不存在」",
+        "两次响应 body 逐字节一致，无法据响应区分「别人的 run」与「不存在的 run」"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["状态码", "detail 文案", "响应 body 是否逐字节一致"],
+      "evidence": [
+        "src/api/routers/aiops.py:126-128"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["以用户 B 身份请求用户 A 的 thread_id", "请求一个不存在的 thread_id"],
+      "required_capabilities": ["两个有效账号的登录态", "HTTP 客户端"],
+      "resource_requirements": ["无新增模型调用（复用已有 run）", "需要一个受管运行配置"],
+      "resource_refs": ["src/api/routers/aiops.py:123-143"],
+      "dependencies": ["两个账号", "已有至少一条 run 记录"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-005",
+      "assertion_id": "ASRT-AUDIT-005",
+      "feature_id": "FEAT-AUDIT-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-004"],
+      "rule_refs": ["RULE-AUDIT-005"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需在同一受管配置下做开/关 ENABLE_STEP_SNAPSHOTS 的对比；两次各跑一次诊断，会产生模型费用。",
+      "preconditions": [
+        "ENABLE_HITL=true（保证 managed_run 成立）",
+        "第一轮：ENABLE_STEP_SNAPSHOTS=false；第二轮：ENABLE_STEP_SNAPSHOTS=true",
+        "允许产生模型费用（两次）"
+      ],
+      "steps": [
+        "在 ENABLE_STEP_SNAPSHOTS=false 下跑一次诊断，得到 thread_id_1，GET /runs/{thread_id_1}/steps",
+        "改为 ENABLE_STEP_SNAPSHOTS=true 并重启后端，再跑一次诊断得到 thread_id_2，GET /runs/{thread_id_2}/steps",
+        "对比两次响应的 total 与 steps 内容"
+      ],
+      "expected": [
+        "第一轮返回 HTTP 200，total == 0，steps 为空数组",
+        "第二轮返回 HTTP 200，total > 0",
+        "第二轮的每条 step 含 step_index、node、payload 三个键",
+        "第二轮的 node 取值落在 planner/executor/replanner/terminal_review/human_review 之内"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["两轮的 total", "steps 空与非空", "step 字段集合", "node 取值集合"],
+      "evidence": [
+        "src/api/routers/aiops.py:169-181",
+        "src/agent/aiops/graph.py:292-296",
+        "src/settings.py:154"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": [
+        "改 ENABLE_STEP_SNAPSHOTS 并重启两次",
+        "两轮各提交一次诊断",
+        "两轮各读一次 /steps"
+      ],
+      "required_capabilities": ["可改配置并重启后端", "登录态", "可读 SQLite 数据库"],
+      "resource_requirements": ["两轮各产生一次模型费用", "需要模型配额", "需要两次后端重启"],
+      "resource_refs": ["docs/aiops-run-store.md:41-49", "src/agent/aiops/run_store.py:151-200"],
+      "dependencies": ["后端可重启", "ENABLE_STEP_SNAPSHOTS 可写", "模型服务可达"],
+      "timeout_seconds": 1200,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 ENABLE_STEP_SNAPSHOTS 为原值并重启；删除两轮的 run 行、step_snapshots 行与 checkpoint"
+    },
+    {
+      "case_id": "CASE-AUDIT-006",
+      "assertion_id": "ASRT-AUDIT-006",
+      "feature_id": "FEAT-AUDIT-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-005", "REQ-AUDIT-006"],
+      "rule_refs": ["RULE-AUDIT-006", "RULE-AUDIT-008"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需要一条已有证据的 run（即 PROBE_ENABLED=true 且跑过带现场采集的诊断）；本条只读不产生新模型费用。",
+      "preconditions": [
+        "已有一条包含证据的受管 run",
+        "分别准备 role=user 与 role=auditor 两个账号，且都能访问同一 thread_id（同一 user_id 归属）"
+      ],
+      "steps": [
+        "以 role=user 身份 GET /api/v1/aiops/runs/{thread_id}/evidence",
+        "检查响应顶层 can_read_raw 与每条 evidence 的键集合",
+        "以 role=auditor 身份请求同一端点，再检查 can_read_raw"
+      ],
+      "expected": [
+        "两次都返回 HTTP 200",
+        "响应含 thread_id、total、evidence、can_read_raw 四个键",
+        "每条 evidence 的键集合不含 raw_ref",
+        "每条 evidence 含 evidence_id、thread_id、target_id、source、kind、collected_at、summary、raw_hash、fresh、raw_available",
+        "role=user 时 can_read_raw == false；role=auditor 时 can_read_raw == true"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["响应键集合", "evidence 每条键集合是否含 raw_ref", "can_read_raw 取值"],
+      "evidence": [
+        "src/api/routers/aiops.py:184-190",
+        "src/agent/aiops/run_store.py:245-257"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["两个角色各请求一次证据列表端点"],
+      "required_capabilities": ["user 与 auditor 两种角色的登录态", "HTTP 客户端"],
+      "resource_requirements": ["无新增模型调用", "需要一条已产生证据的 run"],
+      "resource_refs": ["src/agent/aiops/run_store.py:223-257"],
+      "dependencies": ["已有带证据的 run", "存在 auditor 角色账号"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-007",
+      "assertion_id": "ASRT-AUDIT-007",
+      "feature_id": "FEAT-AUDIT-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-006"],
+      "rule_refs": ["RULE-AUDIT-008"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需要一条 `raw_available=true` 的证据；本条只读。",
+      "preconditions": [
+        "已有 run 且其中一条证据的 raw_available 为 true（原始文件存在）",
+        "准备 role=user 与 role=auditor 两个角色"
+      ],
+      "steps": [
+        "以 role=user 身份 GET /api/v1/aiops/runs/{thread_id}/evidence/{evidence_id}",
+        "检查响应键集合是否含 raw_ref 与 raw",
+        "以 role=auditor 身份请求同一条，再次检查 raw_ref 与 raw"
+      ],
+      "expected": [
+        "两次都返回 HTTP 200",
+        "role=user 的响应无 raw_ref 键、无 raw 键",
+        "role=auditor 的响应有 raw_ref 键",
+        "两种角色的 summary 与 raw_hash 字段值一致"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["raw_ref 键是否存在", "raw 键是否存在", "summary/raw_hash 是否一致"],
+      "evidence": [
+        "src/api/routers/aiops.py:193-206",
+        "src/agent/aiops/run_store.py:260-281"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["两个角色各请求一次单条证据端点"],
+      "required_capabilities": ["user 与 auditor 两种角色的登录态", "HTTP 客户端"],
+      "resource_requirements": ["无新增模型调用", "需要一条原始文件存在的证据"],
+      "resource_refs": ["src/agent/aiops/run_store.py:260-281"],
+      "dependencies": ["已有带 raw_available 证据的 run", "存在 auditor 角色账号"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-008",
+      "assertion_id": "ASRT-AUDIT-008",
+      "feature_id": "FEAT-AUDIT-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-006"],
+      "rule_refs": ["RULE-AUDIT-009"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需要一个已存在的 run；不产生模型费用。",
+      "preconditions": [
+        "已有一条受管 run 的 thread_id",
+        "确认 ev-123 与 ev-0123456789abcdef 都不是该 run 下的真实 evidence_id"
+      ],
+      "steps": [
+        "GET /api/v1/aiops/runs/{thread_id}/evidence/ev-123",
+        "GET /api/v1/aiops/runs/{thread_id}/evidence/ev-0123456789abcdef",
+        "对比两次的状态码与 detail"
+      ],
+      "expected": [
+        "第一次返回 HTTP 400，detail 恰为「evidence_id 非法」（长度 6，不满足 16-80 位）",
+        "第二次返回 HTTP 404，detail 恰为「证据不存在」（格式合法但无该行）",
+        "两次状态码不同，证明格式校验发生在查库之前"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["两次状态码", "两次 detail 文案"],
+      "evidence": [
+        "src/api/routers/aiops.py:196-201"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": ["两次 GET 单条证据端点"],
+      "required_capabilities": ["登录态", "HTTP 客户端"],
+      "resource_requirements": ["无模型调用"],
+      "resource_refs": ["src/api/routers/aiops.py:193-206"],
+      "dependencies": ["已有至少一条 run"],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 1,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-009",
+      "assertion_id": "ASRT-AUDIT-010",
+      "feature_id": "FEAT-AUDIT-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-008"],
+      "rule_refs": ["RULE-AUDIT-012"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "需要能启停 Windows 探针采集端；本条不产生模型费用（只查状态端点）。",
+      "preconditions": [
+        "探针网关已启动（mcp_servers/probe_gateway.py 无 __main__，需外部启动）",
+        "Windows 采集端可启停",
+        "确认 PROBE_TARGET_ID 为 windows-local-01",
+        "若 probe_targets 已有该 target 行，先记录以便判断「尚未注册」分支"
+      ],
+      "steps": [
+        "GET /api/v1/aiops/targets/{含空格的坏格式}",
+        "GET /api/v1/aiops/targets/other-machine",
+        "在探针从未注册过的前提下 GET /api/v1/aiops/targets/windows-local-01",
+        "启动采集端使其上送 hello，再次 GET 同一端点"
+      ],
+      "expected": [
+        "坏格式返回 HTTP 400，detail 恰为「target_id 非法」",
+        "other-machine 返回 HTTP 404，detail 恰为「目标不存在」",
+        "未注册时返回 HTTP 404，detail 恰为「目标尚未注册」",
+        "注册后返回 HTTP 200，响应含 status 与 stale 两个键",
+        "三个错误分支的 detail 文案互不相同"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["四个分支的状态码", "四个分支的 detail 文案", "成功分支的键集合"],
+      "evidence": [
+        "src/api/routers/aiops.py:209-218",
+        "src/agent/aiops/run_store.py:284-297",
+        "mcp_servers/probe_gateway.py:78"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["启停 Windows 采集端", "四次 GET target 状态端点"],
+      "required_capabilities": ["可启停探针采集端", "探针网关已运行", "登录态"],
+      "resource_requirements": ["无模型调用", "需要一个探针网关进程与一个 Windows 采集端"],
+      "resource_refs": ["src/settings.py:220-225", "mcp_servers/probe_gateway.py:25-118"],
+      "dependencies": ["探针网关可启动", "采集端可控", "PROBE_TARGET_ID 可读"],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "停止采集端与探针网关；若注册是本次新增的，删除 probe_targets 中该 target 行"
+    },
+    {
+      "case_id": "CASE-AUDIT-010",
+      "assertion_id": "ASRT-AUDIT-012",
+      "feature_id": "FEAT-AUDIT-008",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-009"],
+      "rule_refs": ["RULE-AUDIT-015", "RULE-AUDIT-017", "RULE-AUDIT-018"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "纯静态核对，不启动服务、不产生模型费用。",
+      "preconditions": [
+        "仓库在基线提交",
+        "可读 src/ 与 docs/"
+      ],
+      "steps": [
+        "在 src/ 检索 mark_approved(、mark_rejected(、add_approval( 三类调用",
+        "在 src/ 检索 HITL_TTL_SECONDS",
+        "在 src/ 检索 degraded",
+        "在 src/ 检索 Last-Event-ID"
+      ],
+      "expected": [
+        "三个审批相关函数只命中 src/agent/aiops/run_store.py 的定义行，无外部调用点",
+        "HITL_TTL_SECONDS 只命中 src/settings.py:189（外加可能的注释行 :188）",
+        "degraded 只命中 src/database/models.py:280 的列定义",
+        "Last-Event-ID 在 src/ 下零命中"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["三类检索的命中位置", "命中数量", "是否有外部调用点"],
+      "evidence": [
+        "src/agent/aiops/run_store.py:98-131",
+        "src/settings.py:188-189",
+        "src/database/models.py:280",
+        "docs/aiops-run-store.md:55"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["四次源码检索"],
+      "required_capabilities": ["可读仓库文件"],
+      "resource_requirements": ["零成本，不需要服务与模型"],
+      "resource_refs": ["src/agent/aiops/run_store.py:1-339"],
+      "dependencies": ["仓库在基线提交"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 2,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-011",
+      "assertion_id": "ASRT-AUDIT-013",
+      "feature_id": "FEAT-AUDIT-001",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-002"],
+      "rule_refs": ["RULE-AUDIT-016"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "纯静态核对，不启动服务、不产生模型费用。",
+      "preconditions": [
+        "仓库在基线提交",
+        "可读 src/ 与 docs/"
+      ],
+      "steps": [
+        "统计 src/agent/aiops/run_store.py 中 STATUS_ 前缀常量的个数与取值",
+        "读 src/database/models.py 中 aiops_runs.status 上方注释列出的状态值",
+        "读 src/agent/aiops/run_store.py 模块 docstring 的状态机描述",
+        "读 docs/aiops-run-store.md 中的状态说明"
+      ],
+      "expected": [
+        "run_store.py 有 7 个 STATUS_ 常量",
+        "models.py:276 的注释只列 6 个值且缺 pending_terminal",
+        "run_store.py:3 的 docstring 只列 6 个值且缺 pending_terminal",
+        "docs/aiops-run-store.md:23 同样只列 6 个值且缺 pending_terminal",
+        "三处文档表述与代码常量之间的差异可被明确指出"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["常量个数", "三处文档各自列出的状态值", "缺失项是否一致"],
+      "evidence": [
+        "src/agent/aiops/run_store.py:25-31",
+        "src/database/models.py:276",
+        "docs/aiops-run-store.md:23"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["读四处状态定义并比对"],
+      "required_capabilities": ["可读仓库文件"],
+      "resource_requirements": ["零成本，不需要服务与模型"],
+      "resource_refs": ["src/agent/aiops/run_store.py:1-339", "src/database/models.py:267-282"],
+      "dependencies": ["仓库在基线提交"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 2,
+      "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-AUDIT-012",
+      "assertion_id": "ASRT-AUDIT-014",
+      "feature_id": "FEAT-AUDIT-004",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-AUDIT-007"],
+      "rule_refs": ["RULE-AUDIT-010", "RULE-AUDIT-011"],
+      "flow_refs": ["FLOW-AUDIT"],
+      "applicability": "纯静态核对证据读取护栏；不读取真实证据文件，不产生模型费用。",
+      "preconditions": [
+        "仓库在基线提交",
+        "可读 src/agent/aiops/evidence_reader.py"
+      ],
+      "steps": [
+        "逐个检索 evidence_reader.py 中的八个固定异常文本",
+        "检查 read_run_evidence 的返回字典是否含 new_observation 键",
+        "检查路径护栏的判定条件（符号链接、reparse point、父目录、文件名、大小）"
+      ],
+      "expected": [
+        "八个异常文本全部存在：invalid evidence identity / invalid evidence page / invalid literal query / evidence unavailable for this run / unsafe evidence reference / opened evidence escaped storage / evidence exceeds stored size limit / evidence integrity check failed",
+        "返回字典含 new_observation: False 与 data_source: evidence_excerpt",
+        "路径护栏同时检查符号链接与 reparse point、父目录等于 PROBE_EVIDENCE_DIR、文件名等于 {evidence_id}.json、大小不超过 1 MB",
+        "Windows 分支存在基于句柄的真实路径复核，不一致时抛 opened evidence escaped storage"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["八个异常文本是否全部存在", "new_observation 键", "护栏条件条数", "Windows 句柄复核是否存在"],
+      "evidence": [
+        "src/agent/aiops/evidence_reader.py:13-19",
+        "src/agent/aiops/evidence_reader.py:50-64",
+        "src/agent/aiops/evidence_reader.py:67",
+        "src/agent/aiops/evidence_reader.py:69-79"
+      ],
+      "execution_kind": "static_review",
+      "required_actions": ["检索异常文本", "核对返回字典键", "核对护栏条件"],
+      "required_capabilities": ["可读仓库文件"],
+      "resource_requirements": ["零成本，不需要服务与模型"],
+      "resource_refs": ["src/agent/aiops/evidence_reader.py:1-87"],
+      "dependencies": ["仓库在基线提交"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 2,
+      "cleanup": "none"
+    }
+  ]
+}

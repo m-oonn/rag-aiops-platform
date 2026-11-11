@@ -1,0 +1,740 @@
+{
+  "module_id": "storage-queue",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T10:20:00+08:00",
+  "cases": [
+    {
+      "case_id": "CASE-STORE-001",
+      "assertion_id": "ASRT-STORE-001",
+      "feature_id": "FEAT-STORE-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-001"],
+      "rule_refs": ["RULE-STORE-001"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "适用于存储模块 6 个端点的鉴权层。不触发模型调用。",
+      "preconditions": [
+        "后端已在 http://127.0.0.1:8200 启动（src/main.py:288）",
+        "已通过 POST /api/v1/auth/login 拿到有效 JWT"
+      ],
+      "steps": [
+        "1. 不带 Authorization 头发 GET /api/v1/storage/files，记录状态码",
+        "2. 不带 Authorization 头发 GET /api/v1/storage/download/x.txt，记录状态码",
+        "3. 不带 Authorization 头发 GET /api/v1/storage/preview/x.txt，记录状态码",
+        "4. 不带 Authorization 头发 POST /api/v1/storage/upload，记录状态码",
+        "5. 不带 Authorization 头发 POST /api/v1/storage/batch-delete，记录状态码",
+        "6. 不带 Authorization 头发 GET /api/v1/storage/url/x.txt，记录状态码",
+        "7. 带合法 Bearer token 重复步骤 1，记录状态码"
+      ],
+      "expected": [
+        "步骤1-6：全部返回 HTTP 401",
+        "步骤7：HTTP 200（MinIO 可用时返回 files 数组，不可用时返回空数组）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "7 步的状态码与响应体",
+        "结论：鉴权先于 MinIO 访问，故 401 与 MinIO 是否在线无关"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/storage/files",
+        "GET /api/v1/storage/download/{object_name}",
+        "GET /api/v1/storage/preview/{object_name}",
+        "POST /api/v1/storage/upload",
+        "POST /api/v1/storage/batch-delete",
+        "GET /api/v1/storage/url/{object_name}"
+      ],
+      "required_capabilities": ["http_client"],
+      "resource_requirements": [],
+      "resource_refs": ["src/api/routers/storage.py:43-197"],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "none（未创建资源）"
+    },
+    {
+      "case_id": "CASE-STORE-002",
+      "assertion_id": "ASRT-STORE-002",
+      "feature_id": "FEAT-STORE-001",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-001"],
+      "rule_refs": ["RULE-STORE-002", "RULE-STORE-003"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要 MinIO 可用且用户 A 名下至少有 2 个对象（可先用 /storage/upload 各传 1 个小文件）；另需用户 B 的 token 与其名下 1 个对象以验证隔离。不触发模型调用。",
+      "preconditions": [
+        "MinIO 在 localhost:9000 可用（src/settings.py:96）",
+        "用户 A 与用户 B 均已登录",
+        "A 已上传 a1.txt（内容 'aaa'）与 a2.txt（内容 'bbbb'）到自己的存储区",
+        "B 已上传 b1.txt"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/storage/files，记录每个对象的 object_name",
+        "2. 检查所有 object_name 是否以 `user_<A 的 id>/` 开头",
+        "3. A 发 GET /api/v1/storage/files?search_query=a1，记录返回的 object_name 集合",
+        "4. A 发 GET /api/v1/storage/files?sort_by=size&order=asc，记录返回顺序与 size",
+        "5. A 发 GET /api/v1/storage/files?sort_by=last_modified&order=desc，记录顺序",
+        "6. A 发 GET /api/v1/storage/download/../b1.txt，记录状态码"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，`files` 为数组",
+        "步骤2：所有 object_name 都以 `user_<A 的 id>/` 开头，不含 B 的对象",
+        "步骤3：返回项只含 object_name 里出现 'a1' 的对象",
+        "步骤4：结果按 size 升序（a1.txt 排在 a2.txt 前）",
+        "步骤5：结果按 last_modified 降序",
+        "步骤6：不返回 B 的 b1.txt 内容（404 或落到 A 自己目录下的同名对象），状态码不为 200 且响应体不含 'b1' 的实际内容"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1 的完整 files 数组",
+        "步骤3/4/5 的返回顺序快照",
+        "步骤6 的状态码与响应体",
+        "A 与 B 的实际 user id（用于核对前缀）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/storage/files",
+        "GET /api/v1/storage/download/{object_name}",
+        "POST /api/v1/storage/upload"
+      ],
+      "required_capabilities": ["authenticated_http_client", "two_user_accounts", "minio_available"],
+      "resource_requirements": ["可用的 MinIO 实例（localhost:9000，bucket rag-documents）", "两个用户账号各至少 1 个对象"],
+      "resource_refs": [
+        "src/api/routers/storage.py:18-60",
+        "src/services/storage.py:56-88"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "A 发 POST /api/v1/storage/batch-delete，body {\"object_names\":[步骤1 中 A 创建的全部对象]}，预期 200；B 用自己的 token 删除 b1.txt"
+    },
+    {
+      "case_id": "CASE-STORE-003",
+      "assertion_id": "ASRT-STORE-005",
+      "feature_id": "FEAT-STORE-002",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-002"],
+      "rule_refs": ["RULE-STORE-004"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "只验证后端下载端点的响应形态（带 token 的直连）。前端 401 缺口由 CASE-STORE-005 单独覆盖。不触发模型调用。",
+      "preconditions": [
+        "MinIO 可用，用户 A 已登录",
+        "A 已上传一个含中文名的文件「测试 文档.txt」（内容 'hello'）"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/storage/files 找到该对象的完整 object_name",
+        "2. A 发 GET /api/v1/storage/download/{urlencode 后的 object_name}，记录状态码与全部响应头",
+        "3. 检查 Content-Disposition 头的内容",
+        "4. 检查响应体字节是否与上传内容 'hello' 一致",
+        "5. A 发 GET /api/v1/storage/download/user_<A>/不存在的文件.txt，记录状态码与 detail"
+      ],
+      "expected": [
+        "步骤2：HTTP 200，`Content-Type` 为 `application/octet-stream`",
+        "步骤3：`Content-Disposition` 含 `attachment` 且含 `filename*=UTF-8''`（中文名被 URL 编码）",
+        "步骤4：响应体字节等于 'hello'",
+        "步骤5：HTTP 404，detail 等于 'File not found'"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤2 的完整响应头",
+        "步骤4 的字节比对结果",
+        "步骤5 的状态码与 detail"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/storage/files",
+        "GET /api/v1/storage/download/{object_name}",
+        "POST /api/v1/storage/upload"
+      ],
+      "required_capabilities": ["authenticated_http_client", "minio_available"],
+      "resource_requirements": ["可用的 MinIO 实例"],
+      "resource_refs": [
+        "src/api/routers/storage.py:62-96"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 60,
+      "readonly_retry_max": 0,
+      "cleanup": "POST /api/v1/storage/batch-delete 删除该测试对象，预期 200"
+    },
+    {
+      "case_id": "CASE-STORE-004",
+      "assertion_id": "ASRT-STORE-008",
+      "feature_id": "FEAT-STORE-003",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-003"],
+      "rule_refs": ["RULE-STORE-006", "RULE-STORE-007"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "只验证后端预览端点的内容安全与类型分派（带 token 直连）。前端 iframe 401 缺口由 CASE-STORE-005 覆盖。需准备 4 个测试文件。不触发模型调用。",
+      "preconditions": [
+        "MinIO 可用，用户 A 已登录",
+        "本地准备并上传 4 个文件到 A 的存储区：xss.md（内容含 `<script>alert(1)</script>` 与 `<img src=x onerror=alert(2)>`）、plain.txt（内容含 `<b>未转义</b>`）、doc.pdf（任意小 PDF）、blob.bin（任意二进制）"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/storage/preview/{xss.md 的 object_name}，记录状态码、Content-Type 与响应体",
+        "2. 在响应体中检索 '<script' 与 'onerror=' 两个子串",
+        "3. A 发 GET /api/v1/storage/preview/{plain.txt}，记录 Content-Type 与响应体",
+        "4. A 发 GET /api/v1/storage/preview/{doc.pdf}，记录状态码与 Content-Type",
+        "5. A 发 GET /api/v1/storage/preview/{blob.bin}，记录状态码与 Content-Disposition",
+        "6. 连续预览 xss.md 3 次，然后在系统临时目录统计同名临时文件数量（Windows 为 %TEMP%，Linux 为 /tmp）"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，Content-Type 以 `text/html` 开头",
+        "步骤2：响应体中**不含** '<script' 与 'onerror=' 子串（bleach 净化或正则剥离生效）",
+        "步骤3：HTTP 200，Content-Type 以 `text/html` 开头，响应体含 `<pre`，且原文的 `<b>` 变为 `&lt;b&gt;`",
+        "步骤4：HTTP 200，Content-Type 为 `application/pdf`（FileResponse inline）",
+        "步骤5：HTTP 200，Content-Disposition 含 `attachment`（未知类型走下载）",
+        "步骤6：临时目录中该文件副本数量随预览次数增加（无清理逻辑）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "4 次预览的状态码、Content-Type 与关键响应片段",
+        "步骤2 的 grep 检索结果",
+        "步骤6 的临时目录文件清单（预览前后各一次）",
+        "bleach 是否安装的记录（`python -c \"import bleach; print(bleach.__version__)\"`），因为它决定走白名单还是正则分支"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "POST /api/v1/storage/upload",
+        "GET /api/v1/storage/preview/{object_name}",
+        "列目录 %TEMP% 或 /tmp"
+      ],
+      "required_capabilities": ["authenticated_http_client", "minio_available", "filesystem_access"],
+      "resource_requirements": ["可用的 MinIO 实例", "4 个测试文件（md/txt/pdf/bin）"],
+      "resource_refs": [
+        "src/api/routers/storage.py:98-135",
+        "src/utils/preview_utils.py:12-183"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "POST /api/v1/storage/batch-delete 删除 4 个测试对象；手工删除步骤6 产生的临时文件副本"
+    },
+    {
+      "case_id": "CASE-STORE-005",
+      "assertion_id": "ASRT-STORE-006",
+      "feature_id": "FEAT-STORE-002",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-002", "REQ-STORE-003"],
+      "rule_refs": ["RULE-STORE-005"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要在浏览器里操作，验证前端 window.open / iframe 不带 Authorization 导致 401。这是本模块最关键的用户可见缺口。不触发模型调用。若环境无浏览器，可退化为 static_review：核对 frontend/src/api/index.js 只在 axios 层注入 token，而 Monitor.vue 用 window.open/iframe。",
+      "preconditions": [
+        "MinIO 可用，用户 A 已登录前端（浏览器 localStorage 有 token）",
+        "A 的存储区至少有 1 个文件（.pdf 或 .md 便于预览）",
+        "浏览器开发者工具可打开（Network 面板）",
+        "已记录该对象的完整 object_name"
+      ],
+      "steps": [
+        "1. 浏览器访问 http://127.0.0.1:8200 对应前端页面，进入 /monitor，切到「MinIO 存储」页签",
+        "2. 打开 Network 面板，点某行的「下载」按钮",
+        "3. 记录新标签页的 HTTP 状态码，以及该请求是否带 Authorization 头",
+        "4. 回到列表，点某行的「预览」按钮",
+        "5. 记录 iframe 内请求的状态码与请求头中是否有 Authorization",
+        "6. 用 curl 带上 A 的 token 请求同一 preview URL，记录状态码作为对照"
+      ],
+      "expected": [
+        "步骤3：新标签页显示 401（Unauthorized），请求头**无** Authorization",
+        "步骤5：iframe 内为 401 响应，请求头**无** Authorization",
+        "步骤6：带 token 的同一 URL 返回 HTTP 200（证明后端本身没问题，问题在前端调用方式）",
+        "补充观察：前端 axios 请求（如 GET /storage/files）正常带 Authorization 并返回 200，形成对照"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["带 token 直连 vs 界面入口的状态码差异"],
+      "evidence": [
+        "两次界面操作的 Network 请求记录（含请求头）",
+        "新标签页与 iframe 的实际显示内容截图",
+        "步骤6 的 curl 输出",
+        "对照：同页 /storage/files 请求的请求头含 Authorization"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": [
+        "浏览器打开 /monitor 页",
+        "点击下载与预览",
+        "GET /api/v1/storage/preview/{object_name}",
+        "GET /api/v1/storage/download/{object_name}"
+      ],
+      "required_capabilities": ["browser", "authenticated_http_client", "minio_available"],
+      "resource_requirements": ["可用的 MinIO 实例", "一个有浏览器环境的前端（端口 8200）"],
+      "resource_refs": [
+        "frontend/src/views/Monitor.vue:306-335",
+        "frontend/src/views/Monitor.vue:137",
+        "frontend/src/api/index.js:7-13",
+        "src/api/routers/storage.py:62",
+        "src/api/routers/storage.py:98"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "none（只读操作，不修改任何数据）"
+    },
+    {
+      "case_id": "CASE-STORE-006",
+      "assertion_id": "ASRT-STORE-013",
+      "feature_id": "FEAT-STORE-004",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-STORE-006"],
+      "rule_refs": ["RULE-STORE-011", "RULE-STORE-012", "RULE-STORE-013"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要故障注入——停掉 MinIO 容器或改 MINIO_ENDPOINT 指向不可达端口。验证降级矩阵（读静默空 / 写明确失败）。readiness=draft 因需要控制外部依赖生命周期。不触发模型调用。",
+      "preconditions": [
+        "MinIO 当前可用（先按 CASE-STORE-002 确认）",
+        "已登录用户 A，记录当前 /storage/files 的非空返回作为基线",
+        "能停止 MinIO（docker stop 或改环境变量后重启后端）"
+      ],
+      "steps": [
+        "1. 基线：GET /api/v1/storage/files，记录 files 长度 L0（>0）",
+        "2. 停止 MinIO（或把 MINIO_ENDPOINT 改为 127.0.0.1:1 后重启后端），记录后端启动日志中是否出现「文件存储降级」warning，以及启动耗时",
+        "3. GET /api/v1/health，记录状态码（应为 200，证明服务起来了）",
+        "4. GET /api/v1/storage/files，记录状态码与 files 长度",
+        "5. POST /api/v1/storage/upload 上传任意小文件，记录状态码与响应体",
+        "6. GET /api/v1/storage/download/{某个已存在对象}，记录状态码与 detail",
+        "7. POST /api/v1/storage/batch-delete body {\"object_names\":[\"x.txt\"]}，记录状态码",
+        "8. 恢复 MinIO 并重启后端，再 GET /api/v1/storage/files 确认回到 L0"
+      ],
+      "expected": [
+        "步骤2：启动日志含「文件存储降级」warning；启动在 MinIO 连接上耗时约 3 秒量级而非 30 秒",
+        "步骤3：HTTP 200",
+        "步骤4：HTTP 200 且 files 为空数组（长度 0，不是 500）",
+        "步骤5：HTTP 500（RuntimeError 未被捕获）",
+        "步骤6：HTTP 404，detail 等于 'File not found'",
+        "步骤7：HTTP 500",
+        "步骤8：files 长度恢复为 L0"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["读操作静默降级 vs 写操作显式 500", "降级后服务仍可启动"],
+      "evidence": [
+        "步骤1/8 的 files 长度对照",
+        "步骤2 的启动日志片段与启动耗时",
+        "步骤3-7 的状态码与响应体",
+        "恢复后的服务状态确认"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": [
+        "停止/恢复 MinIO",
+        "GET /api/v1/storage/files",
+        "GET /api/v1/storage/download/{object_name}",
+        "POST /api/v1/storage/upload",
+        "POST /api/v1/storage/batch-delete",
+        "GET /api/v1/health"
+      ],
+      "required_capabilities": ["authenticated_http_client", "container_or_env_control", "server_log_access"],
+      "resource_requirements": ["可控启停的 MinIO 实例（或其不可达替代配置）", "可重启的被测服务实例"],
+      "resource_refs": [
+        "src/services/storage.py:7-41",
+        "src/services/storage.py:56-137",
+        "src/api/routers/storage.py:137-197"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 1,
+      "cleanup": "恢复 MinIO 与 MINIO_ENDPOINT 原值并重启后端；确认 /storage/files 返回恢复到基线"
+    },
+    {
+      "case_id": "CASE-STORE-007",
+      "assertion_id": "ASRT-STORE-016",
+      "feature_id": "FEAT-STORE-004",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-STORE-007"],
+      "rule_refs": ["RULE-STORE-015"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要 MinIO 缺席（同 CASE-STORE-006 的注入方式）。验证知识库上传的 MinIO 备份是尽力而为。**本用例会消耗模型费用**：上传后文档进入处理链路，解析+切块+embedding 会调用 embedding 与 LLM；若只想验证备份失败分支，可在上传后立刻删除文档，避免处理完成。readiness=draft 因依赖故障注入。",
+      "preconditions": [
+        "MinIO 已停止（或 endpoint 指向不可达）",
+        "用户 A 已登录，名下有一个知识库 KB_A",
+        "准备一个 100KB 的 .txt 文件"
+      ],
+      "steps": [
+        "1. A 发 POST /api/v1/knowledge-bases/{KB_A}/upload（multipart file=该 txt），记录状态码与响应体",
+        "2. 记录服务端 stdout 中是否出现 `Failed to upload to MinIO`",
+        "3. 检查本地磁盘 data/raw/ 下是否有落盘文件",
+        "4. 立刻 A 发 DELETE /api/v1/knowledge-bases/documents/{doc_id}（或等价的文档删除端点）以阻止后续处理消耗",
+        "5. 恢复 MinIO 后 GET /api/v1/storage/files，确认该文件不在存储列表里（证明备份确实没成功）"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，响应含 doc_id 与 message 'File uploaded successfully'（备份失败不阻断上传）",
+        "步骤2：stdout 出现 `Failed to upload to MinIO`",
+        "步骤3：data/raw/ 下存在对应文件（本地是权威副本）",
+        "步骤5：/storage/files 中不含该对象（备份未成功，与本地状态不一致）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["本地落盘成功 vs MinIO 备份缺失"],
+      "evidence": [
+        "上传响应全文",
+        "stdout 日志片段",
+        "data/raw/ 的目录清单（含文件名与大小）",
+        "步骤5 的存储列表",
+        "本次触发的 embedding/LLM 调用次数（用于记录费用）"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": [
+        "POST /api/v1/knowledge-bases/{kb_id}/upload",
+        "GET /api/v1/storage/files",
+        "停止/恢复 MinIO",
+        "读取 data/raw 目录"
+      ],
+      "required_capabilities": ["authenticated_http_client", "container_or_env_control", "server_log_access", "filesystem_access"],
+      "resource_requirements": ["可控启停的 MinIO", "一个知识库", "真实 embedding/LLM 调用（文档处理链路，若未及时中断则产生费用）"],
+      "resource_refs": [
+        "src/api/routers/knowledge_base.py:356-383"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 240,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复 MinIO；删除本次上传的文档行与 data/raw/ 下的落盘文件；确认 /storage/files 基线不变"
+    },
+    {
+      "case_id": "CASE-STORE-008",
+      "assertion_id": "ASRT-STORE-017",
+      "feature_id": "FEAT-STORE-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-008"],
+      "rule_refs": ["RULE-STORE-016", "RULE-STORE-017", "RULE-STORE-018"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要至少两个用户各有知识库与文档。不触发模型调用（只读列表）。RabbitMQ 状态会影响进度字段，需分别记录。",
+      "preconditions": [
+        "用户 A 与用户 B 均已登录",
+        "A 名下知识库 KB_A 有 ≥1 个文档，B 名下 KB_B 有 ≥1 个文档",
+        "记录当前 RabbitMQ 是否在线（决定步骤4 的预期）"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/monitor/，记录条数与每行的 kb_name / task_id / status / progress",
+        "2. 检查返回行的 kb_name 是否只包含 KB_A（不含 KB_B）",
+        "3. 检查每行 task_id 的类型（字符串）与形态（UUID 或纯数字）",
+        "4. A 发 GET /api/v1/monitor/?status_filter=processing，记录条数与各行的 status",
+        "5. A 发 GET /api/v1/monitor/?status_filter=failed，记录条数与各行的 status",
+        "6. A 发 GET /api/v1/monitor/stats，记录四个计数值",
+        "7. 全量列表条数与 stats 四项之和比较"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，条数 ≤ 50",
+        "步骤2：kb_name 集合只含 KB_A",
+        "步骤3：task_id 为字符串；有 celery_task_id 的呈 UUID 形态，走同步回落的为纯数字字符串",
+        "步骤4：每行 status 为 'PROCESSING'（status_filter 映射到 status==1）",
+        "步骤5：每行 status 为 'FAILURE'（映射到 status==3）",
+        "步骤6：HTTP 200，四个整数字段齐全",
+        "步骤7：说明两者口径不同（列表 limit 50，stats 是全量 count），若文档数 >50 则列表条数小于 stats 和"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["列表条数与 stats 总数的口径差", "RabbitMQ 在线/离线时 progress 的差异"],
+      "evidence": [
+        "步骤1 的完整列表 JSON",
+        "步骤4/5 的过滤结果",
+        "步骤6 的 stats JSON",
+        "当前 RabbitMQ 在线状态",
+        "步骤7 的差值计算"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/monitor/",
+        "GET /api/v1/monitor/stats"
+      ],
+      "required_capabilities": ["authenticated_http_client", "two_user_accounts"],
+      "resource_requirements": ["两个用户账号各有一个含文档的知识库"],
+      "resource_refs": [
+        "src/api/routers/monitor.py:32-103"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "none（只读）"
+    },
+    {
+      "case_id": "CASE-STORE-009",
+      "assertion_id": "ASRT-STORE-019",
+      "feature_id": "FEAT-STORE-005",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-009"],
+      "rule_refs": ["RULE-STORE-019", "RULE-STORE-020"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "验证删除端点的参数类型契约。步骤1-3 用不存在的 id 做安全探测（不删任何真实数据）；步骤4-5 需一个可删除的测试文档，会改动数据但不触发模型调用。",
+      "preconditions": [
+        "用户 A 已登录",
+        "A 名下有一个自建测试知识库 KB_T，其中有一个专供删除的测试文档 D1（记下其 doc id 与 task_id）"
+      ],
+      "steps": [
+        "1. A 发 DELETE /api/v1/monitor/tasks/abc-uuid-string，记录状态码与 detail",
+        "2. A 发 DELETE /api/v1/monitor/tasks/999999999，记录状态码与 detail",
+        "3. A 发 POST /api/v1/monitor/tasks/batch-delete，body {\"task_ids\":[\"abc\",\"def\"]}，记录状态码与 message",
+        "4. A 发 DELETE /api/v1/monitor/tasks/{D1 的数字 doc id}，记录状态码与 message",
+        "5. A 发 GET /api/v1/monitor/，确认 D1 已不在列表"
+      ],
+      "expected": [
+        "步骤1：HTTP 400，detail 等于 'Invalid ID format'（非数字 → int() 失败）",
+        "步骤2：HTTP 404，detail 等于 'Task/Document not found'",
+        "步骤3：HTTP 200，message 等于 'No valid IDs provided'（全部非法被跳过）",
+        "步骤4：HTTP 200，message 等于 'Deleted'",
+        "步骤5：列表不含 D1 的 filename"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤1-4 的状态码与响应体",
+        "步骤5 的列表快照",
+        "D1 删除前后的 /monitor/stats 计数变化",
+        "结论：端点只接受数字 doc id，不接受 Celery UUID"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "DELETE /api/v1/monitor/tasks/{task_id}",
+        "POST /api/v1/monitor/tasks/batch-delete",
+        "GET /api/v1/monitor/"
+      ],
+      "required_capabilities": ["authenticated_http_client"],
+      "resource_requirements": ["一个含测试文档的知识库"],
+      "resource_refs": [
+        "src/api/routers/monitor.py:105-163"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 90,
+      "readonly_retry_max": 0,
+      "cleanup": "步骤4 已删除 D1；若后续需要该文档，重新上传（本用例自身不留残留）"
+    },
+    {
+      "case_id": "CASE-STORE-010",
+      "assertion_id": "ASRT-STORE-020",
+      "feature_id": "FEAT-STORE-005",
+      "role": "core-flow",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-STORE-009"],
+      "rule_refs": ["RULE-STORE-021"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要在浏览器中操作界面删除，验证前端传 task_id（UUID）与后端 int 契约冲突。需要 RabbitMQ 在线以让文档拥有 celery_task_id（否则 task_id 是数字串，反而能删成功）。readiness=draft 因两条前置条件不易同时满足。不触发模型调用。",
+      "preconditions": [
+        "RabbitMQ 与 Celery worker 在线（保证文档有 celery_task_id）",
+        "用户 A 已登录前端",
+        "A 的知识库里有一个由 Celery 处理的文档 D2（其 /monitor/ 行的 task_id 为 UUID 形态）",
+        "另有一个走同步回落的文档 D3（task_id 为数字字符串）用于对照组"
+      ],
+      "steps": [
+        "1. 浏览器进入 /monitor 队列页签，确认 D2 行的 task_id 是 UUID（可通过先调 GET /api/v1/monitor/ 核对）",
+        "2. 点 D2 行的删除按钮，观察提示与 Network 面板中 DELETE 请求的 URL 与状态码",
+        "3. 记录后端返回的 detail",
+        "4. 点 D3 行的删除按钮，记录结果",
+        "5. 用 curl 直接 DELETE /api/v1/monitor/tasks/{D2 的 doc id 数字}，作为对照"
+      ],
+      "expected": [
+        "步骤2：前端弹出「删除失败」；Network 中 `DELETE /api/v1/monitor/tasks/<uuid>` 返回 400",
+        "步骤3：detail 等于 'Invalid ID format'",
+        "步骤4：D3 删除成功（task_id 是数字字符串，int() 可解析）",
+        "步骤5：HTTP 200，message 为 'Deleted'（证明后端能删，只是前端传错值）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": ["UUID 形态 task_id 的删除失败 vs 数字形态的成功"],
+      "evidence": [
+        "步骤2 的 Network 请求 URL、状态码与响应体",
+        "步骤4 的结果",
+        "步骤5 的 curl 输出",
+        "步骤1 的 task_id 形态核对记录"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": [
+        "浏览器打开 /monitor 队列页签",
+        "点击行内删除",
+        "DELETE /api/v1/monitor/tasks/{task_id}",
+        "GET /api/v1/monitor/"
+      ],
+      "required_capabilities": ["browser", "authenticated_http_client", "celery_worker_running"],
+      "resource_requirements": ["RabbitMQ + Celery worker 在线", "一个由 Celery 处理过的文档与一个同步回落的文档"],
+      "resource_refs": [
+        "frontend/src/views/Monitor.vue:210-233",
+        "src/api/routers/monitor.py:108-132"
+      ],
+      "dependencies": ["CASE-STORE-009"],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 0,
+      "cleanup": "步骤5 已用 curl 删除 D2；确认 /monitor/ 列表回到预期基线"
+    },
+    {
+      "case_id": "CASE-STORE-011",
+      "assertion_id": "ASRT-STORE-024",
+      "feature_id": "FEAT-STORE-006",
+      "role": "functional",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-STORE-010"],
+      "rule_refs": ["RULE-STORE-023", "RULE-STORE-024"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要停掉 RabbitMQ 以触发检查器不可用分支。验证两种失败返回结构不一致（前端只识别其中一种）。readiness=draft 因依赖故障注入。不触发模型调用。",
+      "preconditions": [
+        "用户 A 已登录",
+        "能停止 RabbitMQ（docker stop 或改 RABBITMQ_HOST 后重启后端）",
+        "先记录 RabbitMQ 在线时的 /health/queues 基线返回"
+      ],
+      "steps": [
+        "1. 基线：无 token 请求 GET /api/v1/health/queues，记录状态码（预期 401）",
+        "2. 基线：带 token 请求 GET /api/v1/health/queues，记录完整响应体结构",
+        "3. 停止 RabbitMQ，重启后端（或等待连接超时）",
+        "4. 带 token 请求 GET /api/v1/health/queues，记录状态码与响应体",
+        "5. 判断响应体是否含 status 键",
+        "6. 在浏览器打开 /queue-monitor 页面，观察界面表现",
+        "7. 恢复 RabbitMQ"
+      ],
+      "expected": [
+        "步骤1：HTTP 401（该端点需鉴权）",
+        "步骤2：HTTP 200，响应体含 status='ok' 与 summary/details",
+        "步骤4：HTTP **200**（不是 5xx），响应体为 {\"error\": \"Could not connect to Celery inspector\"} 或 {\"status\":\"error\",\"message\":...} 之一",
+        "步骤5：若走到 inspect() 返回假的分支，响应体**没有 status 键**——前端因此判断不到错误，会渲染空统计",
+        "步骤6：界面显示空统计（active/reserved/scheduled 全空）而非明确的错误提示；Network 中该请求状态码为 200",
+        "步骤7：恢复后 /health/queues 重新返回 status='ok'"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["两种失败返回结构（有/无 status 键）", "前端能否识别该失败"],
+      "evidence": [
+        "步骤2/4 的完整响应体 JSON",
+        "步骤6 的界面截图与 Network 记录",
+        "后端日志中 inspect 相关输出",
+        "步骤7 的恢复确认"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": [
+        "GET /api/v1/health/queues",
+        "停止/恢复 RabbitMQ",
+        "浏览器打开 /queue-monitor"
+      ],
+      "required_capabilities": ["authenticated_http_client", "container_or_env_control", "server_log_access", "browser"],
+      "resource_requirements": ["可控启停的 RabbitMQ", "可重启的被测服务实例"],
+      "resource_refs": [
+        "src/api/routers/health.py:19-52",
+        "frontend/src/views/QueueMonitor.vue:90-113"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 1,
+      "cleanup": "恢复 RabbitMQ 与配置并重启后端；确认 /health/queues 回到 status='ok'"
+    },
+    {
+      "case_id": "CASE-STORE-012",
+      "assertion_id": "ASRT-STORE-025",
+      "feature_id": "FEAT-STORE-006",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "draft",
+      "requirement_refs": ["REQ-STORE-011"],
+      "rule_refs": ["RULE-STORE-025", "RULE-STORE-026"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "需要外部依赖处于不同在线状态以观察 overall 变化。**会触发对外网络探测**（MinIO/Milvus/Redis/RabbitMQ/LLM 与两个 MCP 服务），但只发健康探测请求不发模型推理（LLM 探测若走 chat 接口可能计费，需确认探测实现）。readiness=draft 因依赖外部状态与网络。",
+      "preconditions": [
+        "用户 A 已登录",
+        "已记录当前各依赖的在线状态（MinIO/RabbitMQ/Redis/Milvus/LLM）",
+        "网络可达各依赖端点（或明确知道哪些不可达）"
+      ],
+      "steps": [
+        "1. A 发 GET /api/v1/health/dependencies（带 token），记录状态码、overall 与 services 数组",
+        "2. 检查 services 数组长度是否为 7，并记录各项 name 的顺序",
+        "3. 检查每项的 status 与 error 字段（error 截断长度）",
+        "4. 停掉 MinIO 后再请求一次，记录 overall 与 minio 项的 status",
+        "5. 恢复 MinIO",
+        "6. 记录本次请求的总耗时（7 项并发，预期接近最慢一项的超时而非各项之和）",
+        "7. 不带 token 请求该端点，记录状态码"
+      ],
+      "expected": [
+        "步骤1：HTTP 200，含 `services`（数组）与 `overall`（'ok' 或 'degraded'）",
+        "步骤2：长度恰为 7，name 顺序为 mcp_monitor、mcp_cls、rabbitmq、redis、milvus、minio、llm",
+        "步骤3：每项含 name/status/error；status ∈ {'ok','unavailable'}；error 为 null 或 ≤80 字字符串",
+        "步骤4：minio.status 变为 'unavailable'，overall 变为 'degraded'",
+        "步骤6：总耗时在 5-6 秒量级（最长超时为 LLM 的 5s），而非 7 项超时之和",
+        "步骤7：HTTP 401（该端点需鉴权）"
+      ],
+      "evaluation_mode": "graded",
+      "comparison_dimensions": ["overall 与各项 status 的一致性", "并发探测的总耗时"],
+      "evidence": [
+        "两次 /health/dependencies 的完整 JSON",
+        "响应耗时（客户端计时）",
+        "步骤7 的状态码",
+        "当前各依赖的真实在线状态记录（用于判断 status 是否如实反映）"
+      ],
+      "execution_kind": "live_api",
+      "required_actions": [
+        "GET /api/v1/health/dependencies",
+        "停止/恢复 MinIO"
+      ],
+      "required_capabilities": ["authenticated_http_client", "container_or_env_control", "outbound_network"],
+      "resource_requirements": ["可访问的外部依赖（MinIO/RabbitMQ/Redis/Milvus/LLM/两个 MCP 服务）", "可控启停的 MinIO"],
+      "resource_refs": [
+        "src/api/routers/health.py:59-173"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 180,
+      "readonly_retry_max": 1,
+      "cleanup": "恢复 MinIO；确认 /health/dependencies 的 overall 回到基线值"
+    },
+    {
+      "case_id": "CASE-STORE-013",
+      "assertion_id": "ASRT-STORE-027",
+      "feature_id": "FEAT-STORE-001",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-STORE-001", "REQ-STORE-005"],
+      "rule_refs": ["RULE-STORE-029", "RULE-STORE-030"],
+      "flow_refs": ["FLOW-STORE"],
+      "applicability": "纯前端交互与静态核对，验证 MinIO「登录」是假功能、且不存在版本管理端点。不触发模型调用、不需要 MinIO 在线（甚至不需要后端可用，因为登录不发请求）。",
+      "preconditions": [
+        "前端页面可访问（http://127.0.0.1:8200 对应前端）",
+        "浏览器可打开开发者工具 Network 面板",
+        "已登录前端（localStorage 有 token）"
+      ],
+      "steps": [
+        "1. 打开 /monitor 页，切到「MinIO 存储」页签，清空 localStorage 的 minio_auth_status",
+        "2. 打开 Network 面板并清空记录，在登录弹窗填入任意 accessKey/secretKey，点确定",
+        "3. 记录 Network 面板是否有任何新请求",
+        "4. 在控制台读 localStorage.getItem('minio_auth_status')，记录其值",
+        "5. 关闭浏览器标签页再重新打开 /monitor，观察是否还认为已连接",
+        "6. 静态核对：grep -rn \"version\" src/api/routers/storage.py src/services/storage.py，确认无版本管理端点"
+      ],
+      "expected": [
+        "步骤3：Network 面板**无任何新请求**（纯前端模拟）",
+        "步骤4：值为 'connected'",
+        "步骤5：重新打开后仍显示已连接（本地存储持久），但实际权限仍只来自 JWT",
+        "步骤6：grep 输出中无任何 @router 版本管理路由、无 MinIO 版本 API 调用（证明 README 声称的版本管理不存在）"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "步骤3 的 Network 面板截图（空请求列表）",
+        "步骤4 的 localStorage 读取结果",
+        "步骤5 的界面状态",
+        "步骤6 的 grep 原始输出"
+      ],
+      "execution_kind": "live_ui",
+      "required_actions": [
+        "浏览器打开 /monitor",
+        "点击 MinIO 登录",
+        "读 localStorage",
+        "grep storage 相关源码"
+      ],
+      "required_capabilities": ["browser", "filesystem_access"],
+      "resource_requirements": ["可访问的前端页面"],
+      "resource_refs": [
+        "frontend/src/views/Monitor.vue:264-283",
+        "src/api/routers/storage.py:43-197",
+        "src/services/storage.py:1-139"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 0,
+      "cleanup": "localStorage.removeItem('minio_auth_status')，恢复浏览器状态"
+    }
+  ]
+}
