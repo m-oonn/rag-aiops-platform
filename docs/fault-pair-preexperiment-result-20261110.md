@@ -83,9 +83,24 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 
 回放八场存档（`runtime/zz_replay_report.py`）：四个配置场仍输出配置解释，三个 `confirmed_cause` 场不受影响，下游 G10 现在输出 `downstream 自身日志按同一 PID 19352 记录：先以监听端口 2487 启动（…），随后收到 controlled_stop 停止请求（…，渠道 file_presence），并完成 shutdown_completed 退出…`。新增一条回归测试（含「通用句不得出现」与「。；不得出现」断言），两文件 91 passed，全量 2108 passed / 0 failed。
 
-## 仍然存在的缺陷（未修）
+## 配置场只到 `localized_fault`：原因码缺口（已修，`940d1e4`）
 
-1. **配置错误场只到 `localized_fault`：不是证据缺环，是原因码只有两个。** 用四场存档证据回放（`runtime/e2_config_chain.py`）：每场都能在**同一 request_id** 上凑齐「配置快照 `source_sha256` → 应用日志同哈希、同字段、同值、`error_type=ValueError`、`/api/availability`、`status>=500` → edge 同 request_id、同 status 的 503」这条链，四场各有一条（`22f42ad3cecd…`、`84513f082f0c…`、`3bc3859f0a68…`、`52bcb463c8a2…`），`statuses_match=true`。也就是说证据形态与 `configured_downstream_endpoint_mismatch` 完全同构，缺的只是一个原因码：`InvestigationDecision.root_cause_code` 的 `Literal` 只有 `configured_downstream_endpoint_mismatch` 与 `downstream_stopped_after_request`，`_direct_cause_evidence()` 也只登记这两把钥匙，因此 `decide_from_evidence` 的「根因缺少受支持的原因码或完整同请求证据链」分支必然把 `confirmed_cause` 打回 `unlocated`。G00 那场模型在 `root_cause` 里原话写了「该解释不属于两类可确认直接原因码，故仅定位到故障层，不升级为 confirmed_cause」——它在按契约办事，不是判断失误。**要不要加第三个原因码（如 `configuration_value_rejected`）属逻辑/架构改动，须先确认再做。**
+先是查清了原因：**不是证据缺环，是原因码只有两个。** 用四场存档证据回放（`runtime/e2_config_chain.py`）：每场都能在**同一 request_id** 上凑齐「配置快照 `source_sha256` → 应用日志同哈希、同字段、同值、`error_type=ValueError`、`/api/availability`、`status>=500` → edge 同 request_id、同 status 的 503」这条链，四场各有一条（`22f42ad3cecd…`、`84513f082f0c…`、`3bc3859f0a68…`、`52bcb463c8a2…`），`statuses_match=true`。也就是说证据形态与 `configured_downstream_endpoint_mismatch` 完全同构，缺的只是一个原因码：`InvestigationDecision.root_cause_code` 的 `Literal` 只有 `configured_downstream_endpoint_mismatch` 与 `downstream_stopped_after_request`，`_direct_cause_evidence()` 也只登记这两把钥匙，因此 `decide_from_evidence` 的「根因缺少受支持的原因码或完整同请求证据链」分支必然把 `confirmed_cause` 打回 `unlocated`。G00 那场模型在 `root_cause` 里原话写了「该解释不属于两类可确认直接原因码，故仅定位到故障层，不升级为 confirmed_cause」——它在按契约办事，不是判断失误。
+
+经确认后新增第三个直接原因码 `configuration_value_rejected`（「配置值被应用拒绝加载」）。改动只做三处、全部复用已有能力：
+
+1. `root_cause_code` 的 `Literal` 加第三值，描述同步改为「端点错配、下游收到停止请求后退出，或配置值被应用拒绝加载」。
+2. 新增 `_confirmed_configuration_cause_evidence(records, state)`：以 `_configuration_error_findings` 已完成的「日志行 ↔ 独立快照同 `source_sha256`、同字段、同值」配对为起点，只补缺失的那一环——携带该值的失败请求行，以及同 `request_id` 的入口 503。严格谓词一条没放宽：必须有应用自记的 `error_type`、`HTTP>=500`、同哈希同字段同值，**仅凭「值看起来不对」不能确认**。
+3. 提示词加一行说明第三码必须引用哪几类证据，并把「两类结论」改「三类结论」。
+
+零模型调用验证（四项全过）：
+
+- 八场存档回放（`runtime/e2_config_cause_chain.py`）：四个配置场新键各得 3 条证据，下游场为 0；`downstream_stopped_after_request` 在下游场仍各 8 条、在配置场为 0——两条链互不干扰。
+- 判定规则门禁 `tests/test_investigation_strategy.py`、`tests/test_recorded_round_replay.py`、`tests/test_product_direct_causes.py` 共 206 passed，38 轮历史判定不许回退。
+- 新增两条单测（链完整时能确认；缺入口请求、`request_id` 不匹配、入口状态 200 三种情况都为空集）；全量 2110 passed / 106 deselected / 0 failed。
+- `--evaluation-preflight` 新增零成本门禁 `config_error_cause_derivable`（付费前就用真实 Probe 证明链路可达），31 项全过、`model_calls=0`。
+
+**仍未证明的一件事**：新码在真实付费场里模型会不会真的选它。零成本回放只能证明系统侧可达、且该码会通过 `supported_causes` 反馈给模型（下游三场正是靠这条反馈选中的），是否照着选只有跑一轮才知道。
 
 ## 费用、审核与验证
 
@@ -93,7 +108,7 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 
 四次控制器运行的清理全部干净：`owned_processes_stopped=true`、`ports_released=true`、`remaining_listeners=[]`、`cleanup_errors=[]`；每个失败场都保留了完整产物（`mechanism_trace.json`、`events.json`、`checkpoints.sqlite`、`runs.sqlite`、`report.txt`）供复核。
 
-免费门禁：`--scenario-preflight --four-group-suite e2-fault-pair-v1`（`runtime/windows-local-faults-1a0725f5…`，8 轮 / 32 观测 / 0 模型调用）与 `--evaluation-preflight`（`runtime/windows-local-faults-cad2d141…`，31 项全过、`evidence_count=64`、0 模型调用）在付费前后各跑一次。全量回归在本批结束时为 2105 passed / 106 deselected / 0 failed；三处后续修复（`cbe9375` 去重两条、`a55fef8` 一条）累计加到 2108 passed / 0 failed。
+免费门禁：`--scenario-preflight --four-group-suite e2-fault-pair-v1`（`runtime/windows-local-faults-1a0725f5…`，8 轮 / 32 观测 / 0 模型调用）与 `--evaluation-preflight`（`runtime/windows-local-faults-cad2d141…`，31 项全过、`evidence_count=64`、0 模型调用）在付费前后各跑一次。全量回归在本批结束时为 2105 passed / 106 deselected / 0 failed；四处后续修复（`cbe9375` 去重两条、`a55fef8` 一条、`940d1e4` 两条）累计加到 2110 passed / 0 failed。
 
 初步（非约束）语义审核：`runtime/e2-b1b-20261110/preliminary-review.json`，`binding=false`、`written_to_manual_review=false`。它只核对了引用是否逐字落在证据里、机械门与审计是否通过、报告是否包含原因码，**没有**替人做诊断正确性判断。八场的人工三维语义审核仍为 pending。
 
@@ -101,4 +116,4 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 
 1. **夹具目标已达成**：三服务拓扑让下游场的 `downstream_stopped_after_request` 从「结构上不可达」变成「3/4 场实际产出」，且付费前有零成本门禁守着。这条能力在产品链路上（029/033 轮）本来就通，本批只是让四组夹具也能产出同一形态。
 2. **机制层仍无收益证据**：保护零机会、矛盾只在少数组改向，且样本量（八场、每组两场）不支持任何统计结论。与 11-03 批次结论一致：暂不扩大场数、保留机制、不追加机制开发。
-3. **下一批若继续，应先补两件事**：一是把「配置错误场为何只能到 localized_fault」单独查清——四场都引到了 `configuration_error_log_matches_snapshot`，模型却没有把它提升为 `confirmed_cause`，需要判断是提示词门槛过高还是证据链缺一环（现已查清：缺的是原因码，不是证据，见上）；二是决定是否新增第三个直接原因码，属逻辑/架构改动。
+3. **下一批若继续，应先做两件事**：一是跑一轮配置错误场，看真实模型会不会选新建的 `configuration_value_rejected`（这是零成本回放证明不了的部分）；二是补足样本量后再谈机制效果——八场、每组两场不支持任何统计结论。
