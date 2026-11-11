@@ -181,6 +181,9 @@
                    :value="m.id"
                  />
                </el-select>
+               <div v-if="availableModels.length <= 1" class="model-hint">
+                 当前只配置了 1 个模型。可选项来自后端 AVAILABLE_MODELS，不表示供应商额度或可用性。
+               </div>
             </el-form-item>
             <el-form-item label="温度 (Temperature)">
                <el-slider v-model="form.llm_config.temperature" :min="0" :max="1" :step="0.1" show-input />

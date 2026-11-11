@@ -136,7 +136,12 @@ describe('AIOps.vue', () => {
     await panel.find('button.investigation-evidence-ref').trigger('click')
     await flushPromises()
     expect(message).toHaveBeenCalledWith('当前证据账本中未找到该引用，无法定位；请先刷新证据状态。')
-    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+    expect(
+      fetchSpy.mock.calls
+        .map(([url]) => url)
+        // 现场取证前置探测与"是否取原文"无关，单独排除
+        .filter((url) => !String(url).includes('/health/'))
+    ).toEqual([
       '/api/v1/aiops/runs/saved-run', '/api/v1/aiops/runs/saved-run/evidence',
     ])
     wrapper.unmount()

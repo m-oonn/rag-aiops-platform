@@ -195,9 +195,26 @@ async def _check_llm() -> dict:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 llm_url, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=aiohttp.ClientTimeout(total=3),
             ) as resp:
                 if resp.status == 200:
+                    return {"status": "ok", "error": None}
+                return {"status": "unavailable", "error": f"HTTP {resp.status}"}
+    except Exception as e:
+        return {"status": "unavailable", "error": str(e)[:80]}
+
+
+async def _check_probe() -> dict:
+    """检测 Windows Probe（18767）是否可达；仅在 PROBE_ENABLED 时被查询。
+
+    探的是 Probe 自带的 `/health`，与 MCP 端点分开，避免为了一个可用性判断
+    去初始化 MCP 会话。
+    """
+    url = settings.MCP_PROBE_URL.replace("/mcp", "/health")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status < 500:
                     return {"status": "ok", "error": None}
                 return {"status": "unavailable", "error": f"HTTP {resp.status}"}
     except Exception as e:
@@ -209,8 +226,12 @@ async def check_dependencies(current_user: User = Depends(get_current_user)):
     """并发检查所有依赖服务的可用性。
 
     安全最佳实践: 暴露内网服务状态，需认证。
+
+    `PROBE_ENABLED` 打开时额外返回 `probe` 一项：没有它，诊断链路拿不到主机侧
+    现场证据（进程/端口/日志/配置快照），结论只能停在"已定位/待核实"。前端据此
+    在**花钱之前**提示用户，而不是等诊断跑完才发现没有现场证据。
     """
-    results = await asyncio.gather(
+    checks = [
         _check_http("mcp_monitor", settings.MCP_MONITOR_URL.replace("/mcp", "/health")),
         _check_http("mcp_cls", settings.MCP_CLS_URL.replace("/mcp", "/health")),
         _check_rabbitmq(),
@@ -218,8 +239,12 @@ async def check_dependencies(current_user: User = Depends(get_current_user)):
         _check_milvus(),
         _check_minio(),
         _check_llm(),
-    )
+    ]
     names = ["mcp_monitor", "mcp_cls", "rabbitmq", "redis", "milvus", "minio", "llm"]
+    if settings.PROBE_ENABLED:
+        checks.append(_check_probe())
+        names.append("probe")
+    results = await asyncio.gather(*checks)
     services = dict(zip(names, results))
     overall = "ok" if all(s["status"] == "ok" for s in services.values()) else "degraded"
     return {"services": services, "overall": overall}

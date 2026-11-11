@@ -38,6 +38,9 @@
                       :value="m.id"
                     />
                   </el-select>
+                  <div v-if="availableModels.length <= 1" class="model-hint">
+                    当前只配置了 1 个模型。可选项来自后端 AVAILABLE_MODELS，不表示供应商额度或可用性。
+                  </div>
                 </el-form-item>
                 <el-form-item label="系统提示词">
                   <el-input type="textarea" v-model="form.system_prompt" :rows="4" />

@@ -169,8 +169,8 @@ const form = reactive({
   chunking_config: {
       retrieval_mode: 'hybrid',
       method: 'recursive',
-      chunk_size: 500,
-      chunk_overlap: 50,
+      chunk_size: 1000,
+      chunk_overlap: 200,
       separator: ''
   }
 })
@@ -181,8 +181,8 @@ const editForm = reactive({
   chunking_config: {
       retrieval_mode: 'hybrid',
       method: 'recursive',
-      chunk_size: 500,
-      chunk_overlap: 50,
+      chunk_size: 1000,
+      chunk_overlap: 200,
       separator: ''
   }
 })
@@ -214,8 +214,8 @@ const openEditDialog = (kb) => {
     // Deep copy to avoid reference issues
     editForm.chunking_config = JSON.parse(JSON.stringify({ retrieval_mode: 'hybrid', ...(kb.chunking_config || {
         method: 'recursive',
-        chunk_size: 500,
-        chunk_overlap: 50,
+        chunk_size: 1000,
+        chunk_overlap: 200,
         separator: ''
     }) }))
     editDialogVisible.value = true

@@ -24,6 +24,19 @@
           @click="query = ex"
         >{{ ex }}</el-button>
       </div>
+      <el-alert
+        v-if="evidenceWarning"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="evidence-warning"
+      >
+        <template #title>现场取证能力受限，本次诊断可能白费费用</template>
+        <p class="evidence-warning-text">{{ evidenceWarning }}</p>
+        <el-checkbox v-model="weakEvidenceAcknowledged" :disabled="running">
+          我已知晓：本次仍会调用付费模型，但结论可能只到「已定位」或「待核实」
+        </el-checkbox>
+      </el-alert>
       <div class="input-actions">
         <el-switch
           v-model="terminalEnabled"
@@ -48,7 +61,7 @@
           <el-button
             v-else
             type="primary"
-            :disabled="!query.trim()"
+            :disabled="!query.trim() || (Boolean(evidenceWarning) && !weakEvidenceAcknowledged)"
             @click="runDiagnose"
           >开始诊断</el-button>
           <el-button
@@ -462,6 +475,10 @@ echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, Canvas
 const query = ref('')
 const sessionId = ref('web-' + Math.random().toString(36).slice(2, 10))
 const running = ref(false)
+// 现场取证前置条件：Probe 未启用/不可达时，诊断仍会花钱，但拿不到主机侧证据，
+// 结论只能停在「已定位/待核实」。因此花钱之前先探测并让用户显式确认。
+const evidenceWarning = ref('')
+const weakEvidenceAcknowledged = ref(false)
 const terminalEnabled = ref(false)
 const pendingApproval = ref(null)
 const termcpUiUrl = ref('http://127.0.0.1:18765')
@@ -791,8 +808,33 @@ const handleEvent = (evt) => {
   }
 }
 
+// 读 /health/dependencies 判断现场取证能力。这里只负责"花钱前提前告知"，
+// 探测失败不阻断诊断，避免把一次网络抖动变成新的阻塞点。
+const loadEvidenceReadiness = async () => {
+  try {
+    const res = await fetch('/api/v1/health/dependencies', { headers: getAuthHeaders() })
+    if (!res.ok) return
+    const data = await res.json()
+    const services = data.services || {}
+    const isOk = (key) => Boolean(services[key]) && services[key].status === 'ok'
+    if (isOk('probe')) {
+      evidenceWarning.value = ''
+    } else if (!isOk('mcp_monitor') && !isOk('mcp_cls')) {
+      evidenceWarning.value = '现场取证工具当前全部不可用（monitor / cls / probe 均未就绪），诊断只能基于已有材料推理，通常停在「已定位」或「待核实」。'
+    } else {
+      evidenceWarning.value = 'Windows Probe 未启用或不可达，诊断拿不到主机侧现场证据（进程、端口、日志、配置快照），通常停在「已定位」或「待核实」。'
+    }
+  } catch (e) {
+    /* 探测失败保持不提示：宁可少一个告警，也不把网络故障变成误报 */
+  }
+}
+
 const runDiagnose = async () => {
   if (!query.value.trim() || running.value || pendingApproval.value) return
+  if (evidenceWarning.value && !weakEvidenceAcknowledged.value) {
+    ElMessage.warning('请先勾选「我已知晓」再开始诊断，或先启用现场取证工具')
+    return
+  }
   if (abortController) {
     abortController.abort()
   }
@@ -892,6 +934,7 @@ const restorePendingRun = async () => {
 onMounted(() => {
   window.addEventListener('resize', onChartResize)
   restorePendingRun()
+  loadEvidenceReadiness()
 })
 
 onUnmounted(() => {
@@ -912,6 +955,13 @@ onUnmounted(() => {
 }
 .input-area {
   margin-bottom: 16px;
+}
+.evidence-warning {
+  margin-bottom: 12px;
+}
+.evidence-warning-text {
+  margin: 4px 0 8px;
+  line-height: 1.6;
 }
 .examples {
   display: flex;
