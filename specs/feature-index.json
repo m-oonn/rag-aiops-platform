@@ -1,0 +1,1858 @@
+{
+  "schema": "specs/feature-index.json",
+  "schema_version": 1,
+  "generated_at": "2026-11-11T10:10:32+08:00",
+  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "note": "功能单元来自 specs/modules/<module>.md 的『功能单元』表；每个 FEAT 都带源码锚点。case_refs 由 cases/<module>.json 反查得到。",
+  "counts": {
+    "features": 74,
+    "by_module": {
+      "platform": 8,
+      "auth-console": 10,
+      "kb-ingest": 10,
+      "rag-qa": 10,
+      "aiops-diagnosis": 9,
+      "aiops-audit": 8,
+      "evaluation": 6,
+      "assistant-agent": 7,
+      "storage-queue": 6
+    },
+    "features_without_case": [
+      "FEAT-PLAT-002",
+      "FEAT-PLAT-007",
+      "FEAT-AUTH-007",
+      "FEAT-AUTH-008",
+      "FEAT-AUTH-009",
+      "FEAT-AUTH-010",
+      "FEAT-KB-006",
+      "FEAT-KB-009",
+      "FEAT-RAG-004",
+      "FEAT-RAG-006",
+      "FEAT-RAG-008",
+      "FEAT-DIAG-005",
+      "FEAT-AUDIT-007"
+    ],
+    "requirements_without_feature": [
+      "REQ-DIAG-003",
+      "REQ-STORE-004",
+      "REQ-STORE-012"
+    ]
+  },
+  "features": [
+    {
+      "feature_id": "FEAT-PLAT-001",
+      "module_id": "platform",
+      "name": "配好 `.env` 后服务能起来；密钥不合格时进程立刻退出并打印中文原因",
+      "entry": "`python -m src.main` / `uvicorn src.main:app` / `launch_demo.py up`",
+      "requirement_refs": [
+        "REQ-PLAT-001"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 60,
+      "source_anchors": [
+        "src/main.py:47-61",
+        "scripts/launch_demo.py:258-277"
+      ],
+      "case_refs": [
+        "CASE-PLAT-001",
+        "CASE-PLAT-002",
+        "CASE-PLAT-003",
+        "CASE-PLAT-004"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-PLAT-002",
+      "module_id": "platform",
+      "name": "不用手跑迁移：首次启动就有可用的表结构，老库缺列会被自动补上",
+      "entry": "任意启动方式",
+      "requirement_refs": [
+        "REQ-PLAT-002"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 61,
+      "source_anchors": [
+        "src/main.py:31",
+        "src/database/sql_session.py:5-25"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-PLAT-003",
+      "module_id": "platform",
+      "name": "改一处配置就能控制全系统行为，且能从 `.env.example` 对照出有哪些开关",
+      "entry": "编辑 `.env` / 只读审计",
+      "requirement_refs": [
+        "REQ-PLAT-003"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 62,
+      "source_anchors": [
+        "src/settings.py:8-367",
+        "scripts/audit_configuration.py:17-40"
+      ],
+      "case_refs": [
+        "CASE-PLAT-013"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-PLAT-004",
+      "module_id": "platform",
+      "name": "该有的接口都能调到；调不到的就是真的没开",
+      "entry": "各业务页面的接口调用",
+      "requirement_refs": [
+        "REQ-PLAT-004"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 63,
+      "source_anchors": [
+        "src/main.py:255-265"
+      ],
+      "case_refs": [
+        "CASE-PLAT-012"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-PLAT-005",
+      "module_id": "platform",
+      "name": "浏览器从 5273 能正常跨域调用，响应带安全头，一条请求能靠 trace 串起来",
+      "entry": "前端页面发请求",
+      "requirement_refs": [
+        "REQ-PLAT-005"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 64,
+      "source_anchors": [
+        "src/main.py:200-243"
+      ],
+      "case_refs": [
+        "CASE-PLAT-005",
+        "CASE-PLAT-006",
+        "CASE-PLAT-007",
+        "CASE-PLAT-008",
+        "CASE-PLAT-011"
+      ],
+      "case_count": 5
+    },
+    {
+      "feature_id": "FEAT-PLAT-006",
+      "module_id": "platform",
+      "name": "接口出错时只看到一句中文提示，看不到堆栈；生产环境也没有调试文档入口",
+      "entry": "任意接口异常",
+      "requirement_refs": [
+        "REQ-PLAT-006"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 65,
+      "source_anchors": [
+        "src/main.py:189-197"
+      ],
+      "case_refs": [
+        "CASE-PLAT-009",
+        "CASE-PLAT-010"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-PLAT-007",
+      "module_id": "platform",
+      "name": "本机直接跑或一条 compose 起全栈都能用，宿主端口对齐",
+      "entry": "`.venv` 直跑 / `docker compose up`",
+      "requirement_refs": [
+        "REQ-PLAT-007"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 66,
+      "source_anchors": [
+        "src/main.py:283-288",
+        "docker/docker-compose.yml:4-9"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-PLAT-008",
+      "module_id": "platform",
+      "name": "提交后自动跑离线测试，改坏了立刻能看到红",
+      "entry": "git push / pull request",
+      "requirement_refs": [
+        "REQ-PLAT-008"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/platform.md",
+      "spec_line": 67,
+      "source_anchors": [
+        ".github/workflows/tests.yml:46-50"
+      ],
+      "case_refs": [
+        "CASE-PLAT-014"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUTH-001",
+      "module_id": "auth-console",
+      "name": "填用户名、邮箱、密码就能建号，密码弱一点当场被挡回来",
+      "entry": "`/login` 页切到注册表单",
+      "requirement_refs": [
+        "REQ-AUTH-001"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 50,
+      "source_anchors": [
+        "frontend/src/views/Login.vue:21",
+        "src/api/routers/auth.py:15-59"
+      ],
+      "case_refs": [
+        "CASE-AUTH-001",
+        "CASE-AUTH-002",
+        "CASE-AUTH-003",
+        "CASE-AUTH-004"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-AUTH-002",
+      "module_id": "auth-console",
+      "name": "用用户名密码换到一个令牌，拿它能进系统",
+      "entry": "`/login` 页提交登录",
+      "requirement_refs": [
+        "REQ-AUTH-002"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 51,
+      "source_anchors": [
+        "frontend/src/views/Login.vue:49-55",
+        "src/api/routers/auth.py:61-76"
+      ],
+      "case_refs": [
+        "CASE-AUTH-005",
+        "CASE-AUTH-006",
+        "CASE-AUTH-007",
+        "CASE-AUTH-008"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-AUTH-003",
+      "module_id": "auth-console",
+      "name": "令牌被浏览器记住，之后每次请求自动带上，不用反复登录",
+      "entry": "任意页面发请求",
+      "requirement_refs": [
+        "REQ-AUTH-003"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 52,
+      "source_anchors": [
+        "frontend/src/api/index.js:7-13",
+        "frontend/src/utils/sse.js:15"
+      ],
+      "case_refs": [
+        "CASE-AUTH-009",
+        "CASE-AUTH-010",
+        "CASE-AUTH-011"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-AUTH-004",
+      "module_id": "auth-console",
+      "name": "令牌过期或被停用后，下一次请求就被请回登录页",
+      "entry": "任意受保护接口",
+      "requirement_refs": [
+        "REQ-AUTH-004"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 53,
+      "source_anchors": [
+        "src/api/dependencies.py:12-37",
+        "frontend/src/api/index.js:15-24"
+      ],
+      "case_refs": [
+        "CASE-AUTH-013"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUTH-005",
+      "module_id": "auth-console",
+      "name": "没登录时点内部页面会被弹回登录页",
+      "entry": "任意 `requiresAuth` 路由",
+      "requirement_refs": [
+        "REQ-AUTH-005"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 54,
+      "source_anchors": [
+        "frontend/src/router/index.js:24-31"
+      ],
+      "case_refs": [
+        "CASE-AUTH-012"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUTH-006",
+      "module_id": "auth-console",
+      "name": "只能看到自己的知识库、文档、评测任务和诊断记录",
+      "entry": "知识库/文档/评测/存储/AIOps 各页面",
+      "requirement_refs": [
+        "REQ-AUTH-006"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 55,
+      "source_anchors": [
+        "src/api/routers/evaluation.py:27-41",
+        "src/api/routers/aiops.py:123-129",
+        "src/api/routers/storage.py:23-40"
+      ],
+      "case_refs": [
+        "CASE-AUTH-014"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUTH-007",
+      "module_id": "auth-console",
+      "name": "点退出登录就回到登录页；但系统不提供续期、改密、找回",
+      "entry": "左侧栏底部按钮",
+      "requirement_refs": [
+        "REQ-AUTH-007"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 56,
+      "source_anchors": [
+        "frontend/src/App.vue:126-130",
+        "src/api/routers/auth.py:61-76"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-AUTH-008",
+      "module_id": "auth-console",
+      "name": "登录页是干净的一屏，进内部页才出现侧栏与顶栏",
+      "entry": "`/login` 与任意内部页",
+      "requirement_refs": [
+        "REQ-AUTH-008"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 57,
+      "source_anchors": [
+        "frontend/src/App.vue:3"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-AUTH-009",
+      "module_id": "auth-console",
+      "name": "侧栏 9 个入口能直接点到各功能页",
+      "entry": "左侧菜单",
+      "requirement_refs": [
+        "REQ-AUTH-008"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 58,
+      "source_anchors": [
+        "frontend/src/App.vue:11-43"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-AUTH-010",
+      "module_id": "auth-console",
+      "name": "首页一进来就看到汇总数字与依赖健康，某项取不到只显示占位符而不是白屏",
+      "entry": "`/dashboard` 首屏",
+      "requirement_refs": [
+        "REQ-AUTH-008"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/auth-console.md",
+      "spec_line": 59,
+      "source_anchors": [
+        "frontend/src/views/Dashboard.vue:120-173"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-KB-001",
+      "module_id": "kb-ingest",
+      "name": "建/改知识库并选定检索方式",
+      "entry": "`/knowledge-bases` →「创建知识库」",
+      "requirement_refs": [
+        "REQ-KB-001"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 58,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:219-237"
+      ],
+      "case_refs": [
+        "CASE-KB-001"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-KB-002",
+      "module_id": "kb-ingest",
+      "name": "上传文档并通过四道前置校验",
+      "entry": "详情页「批量上传」",
+      "requirement_refs": [
+        "REQ-KB-002"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 59,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:143-215"
+      ],
+      "case_refs": [
+        "CASE-KB-002",
+        "CASE-KB-003",
+        "CASE-KB-004",
+        "CASE-KB-005"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-KB-003",
+      "module_id": "kb-ingest",
+      "name": "上传后任务派发与异步边界",
+      "entry": "上传接口响应",
+      "requirement_refs": [
+        "REQ-KB-003"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 60,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:29-41"
+      ],
+      "case_refs": [
+        "CASE-KB-007",
+        "CASE-KB-008"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-KB-004",
+      "module_id": "kb-ingest",
+      "name": "解析与切分（页号感知）",
+      "entry": "`process_document`",
+      "requirement_refs": [
+        "REQ-KB-004"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 61,
+      "source_anchors": [
+        "src/worker/tasks.py:84-128",
+        "src/processors/text_chunker.py:9-95"
+      ],
+      "case_refs": [
+        "CASE-KB-009",
+        "CASE-KB-010"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-KB-005",
+      "module_id": "kb-ingest",
+      "name": "向量化、双写与 bm25 短路就绪",
+      "entry": "`process_document`",
+      "requirement_refs": [
+        "REQ-KB-005"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 62,
+      "source_anchors": [
+        "src/worker/tasks.py:130-206",
+        "src/database/vector_db.py:108-151"
+      ],
+      "case_refs": [
+        "CASE-KB-011"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-KB-006",
+      "module_id": "kb-ingest",
+      "name": "失败落库、重试与重新切分",
+      "entry": "行内「重试」/「重新切分」",
+      "requirement_refs": [
+        "REQ-KB-006"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 63,
+      "source_anchors": [
+        "src/worker/tasks.py:208-229",
+        "src/api/routers/knowledge_base.py:413-490"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-KB-007",
+      "module_id": "kb-ingest",
+      "name": "bm25 库本地关键词检索",
+      "entry": "详情页「检索手册」",
+      "requirement_refs": [
+        "REQ-KB-007"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 64,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:507-519",
+        "src/retrieval/knowledge_bm25.py:7-19"
+      ],
+      "case_refs": [
+        "CASE-KB-012"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-KB-008",
+      "module_id": "kb-ingest",
+      "name": "QA 对的生成/手建/改/删/导出",
+      "entry": "行内「生成 QA」「管理 QA」",
+      "requirement_refs": [
+        "REQ-KB-008"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 65,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:521-679"
+      ],
+      "case_refs": [
+        "CASE-KB-013"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-KB-009",
+      "module_id": "kb-ingest",
+      "name": "分片查看与原文预览",
+      "entry": "行内「分片」「预览」",
+      "requirement_refs": [
+        "REQ-KB-009"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 66,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:681-753",
+        "src/utils/preview_utils.py:56-183"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-KB-010",
+      "module_id": "kb-ingest",
+      "name": "跨用户权限与删除影响",
+      "entry": "各端点",
+      "requirement_refs": [
+        "REQ-KB-010"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/kb-ingest.md",
+      "spec_line": 67,
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:239-283"
+      ],
+      "case_refs": [
+        "CASE-KB-006",
+        "CASE-KB-014"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-RAG-001",
+      "module_id": "rag-qa",
+      "name": "分两种方式提问（纯聊天流式 / 带知识库同步）",
+      "entry": "`/chat` 页输入框",
+      "requirement_refs": [
+        "REQ-RAG-001"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 51,
+      "source_anchors": [
+        "frontend/src/views/Chat.vue:331-427",
+        "src/api/routers/chat.py:64-278"
+      ],
+      "case_refs": [
+        "CASE-RAG-001",
+        "CASE-RAG-002",
+        "CASE-RAG-003",
+        "CASE-RAG-012"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-RAG-002",
+      "module_id": "rag-qa",
+      "name": "意图识别与分支路由",
+      "entry": "`RAGService.query`",
+      "requirement_refs": [
+        "REQ-RAG-002"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 52,
+      "source_anchors": [
+        "src/services/rag_service.py:15-153"
+      ],
+      "case_refs": [
+        "CASE-RAG-004",
+        "CASE-RAG-005",
+        "CASE-RAG-013"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-RAG-003",
+      "module_id": "rag-qa",
+      "name": "混合检索与 RRF 融合",
+      "entry": "`HybridRetriever.retrieve`",
+      "requirement_refs": [
+        "REQ-RAG-003"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 53,
+      "source_anchors": [
+        "src/retrieval/hybrid_retriever.py:22-193"
+      ],
+      "case_refs": [
+        "CASE-RAG-010"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-RAG-004",
+      "module_id": "rag-qa",
+      "name": "重排序与降级",
+      "entry": "`DashScopeReranker.rerank`",
+      "requirement_refs": [
+        "REQ-RAG-004"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 54,
+      "source_anchors": [
+        "src/retrieval/reranker.py:14-55"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-RAG-005",
+      "module_id": "rag-qa",
+      "name": "生成、来源回传与界面渲染",
+      "entry": "`/chat/` 响应 + 前端来源块",
+      "requirement_refs": [
+        "REQ-RAG-005"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 55,
+      "source_anchors": [
+        "src/services/rag_service.py:230-356",
+        "frontend/src/views/Chat.vue:96-103"
+      ],
+      "case_refs": [
+        "CASE-RAG-008",
+        "CASE-RAG-009"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-RAG-006",
+      "module_id": "rag-qa",
+      "name": "多跳问答",
+      "entry": "`_multi_hop_query`",
+      "requirement_refs": [
+        "REQ-RAG-006"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 56,
+      "source_anchors": [
+        "src/services/rag_service.py:294-335"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-RAG-007",
+      "module_id": "rag-qa",
+      "name": "助手配置的保存与（不）生效",
+      "entry": "`/chat` 左侧助手面板",
+      "requirement_refs": [
+        "REQ-RAG-007"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 57,
+      "source_anchors": [
+        "frontend/src/views/Chat.vue:24-27",
+        "src/services/rag_service.py:84-92"
+      ],
+      "case_refs": [
+        "CASE-RAG-011"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-RAG-008",
+      "module_id": "rag-qa",
+      "name": "会话管理与短期记忆",
+      "entry": "会话列表",
+      "requirement_refs": [
+        "REQ-RAG-008"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 58,
+      "source_anchors": [
+        "src/api/routers/chat.py:283-374",
+        "src/services/memory_service.py:30-69"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-RAG-009",
+      "module_id": "rag-qa",
+      "name": "知识库可见性与权限边界",
+      "entry": "`POST /chat/` 的 kb 过滤",
+      "requirement_refs": [
+        "REQ-RAG-009"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 59,
+      "source_anchors": [
+        "src/api/routers/chat.py:74-94"
+      ],
+      "case_refs": [
+        "CASE-RAG-007"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-RAG-010",
+      "module_id": "rag-qa",
+      "name": "模型白名单与失败可见性",
+      "entry": "模型下拉 + 错误路径",
+      "requirement_refs": [
+        "REQ-RAG-010"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/rag-qa.md",
+      "spec_line": 60,
+      "source_anchors": [
+        "src/api/routers/chat.py:22-40",
+        "src/llm/llm_client.py:17-25"
+      ],
+      "case_refs": [
+        "CASE-RAG-006",
+        "CASE-RAG-014"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-001",
+      "module_id": "aiops-diagnosis",
+      "name": "一句话提交诊断并看着进度跑完",
+      "entry": "`/aiops` 页输入框 + `POST /api/v1/aiops`",
+      "requirement_refs": [
+        "REQ-DIAG-001",
+        "REQ-DIAG-002"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 61,
+      "source_anchors": [
+        "src/api/routers/aiops.py:40-120",
+        "frontend/src/views/AIOps.vue:794-827"
+      ],
+      "case_refs": [
+        "CASE-DIAG-001",
+        "CASE-DIAG-003",
+        "CASE-DIAG-005"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-DIAG-002",
+      "module_id": "aiops-diagnosis",
+      "name": "计划短、可执行、不乱编名字",
+      "entry": "planner 节点",
+      "requirement_refs": [
+        "REQ-DIAG-004",
+        "REQ-DIAG-005"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 62,
+      "source_anchors": [
+        "src/agent/aiops/planner.py:303-418"
+      ],
+      "case_refs": [
+        "CASE-DIAG-006",
+        "CASE-DIAG-007"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-003",
+      "module_id": "aiops-diagnosis",
+      "name": "报告每句话都能挂到证据上",
+      "entry": "`reporting.finalize_report`",
+      "requirement_refs": [
+        "REQ-DIAG-006",
+        "REQ-DIAG-007"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 63,
+      "source_anchors": [
+        "src/agent/aiops/reporting.py:133-422"
+      ],
+      "case_refs": [
+        "CASE-DIAG-008",
+        "CASE-DIAG-016"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-004",
+      "module_id": "aiops-diagnosis",
+      "name": "某个工具服务挂了别的还能用",
+      "entry": "`load_agent_tools` → `load_mcp_tools_safe`",
+      "requirement_refs": [
+        "REQ-DIAG-008"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 64,
+      "source_anchors": [
+        "src/agent/mcp_client.py:85-134",
+        "src/agent/aiops/tools.py:94-132"
+      ],
+      "case_refs": [
+        "CASE-DIAG-014",
+        "CASE-DIAG-015"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-005",
+      "module_id": "aiops-diagnosis",
+      "name": "缺哪类证据要写在报告里",
+      "entry": "报告 `## 证据来源` 段",
+      "requirement_refs": [
+        "REQ-DIAG-009"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 65,
+      "source_anchors": [
+        "src/agent/aiops/evidence_sources.py:49-126"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-DIAG-006",
+      "module_id": "aiops-diagnosis",
+      "name": "刷新/重启后还能查到这次诊断",
+      "entry": "受管运行 + sqlite checkpoint",
+      "requirement_refs": [
+        "REQ-DIAG-010"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 66,
+      "source_anchors": [
+        "src/agent/aiops/graph.py:106"
+      ],
+      "case_refs": [
+        "CASE-DIAG-009",
+        "CASE-DIAG-010"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-007",
+      "module_id": "aiops-diagnosis",
+      "name": "报告草稿先给我看一眼",
+      "entry": "human_review 节点",
+      "requirement_refs": [
+        "REQ-DIAG-011"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 67,
+      "source_anchors": [
+        "src/agent/aiops/human_review.py:23-52"
+      ],
+      "case_refs": [
+        "CASE-DIAG-011",
+        "CASE-DIAG-012"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-008",
+      "module_id": "aiops-diagnosis",
+      "name": "受控终端每条命令都要我批",
+      "entry": "terminal_review 节点 + `/continue`",
+      "requirement_refs": [
+        "REQ-DIAG-012"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 68,
+      "source_anchors": [
+        "src/agent/aiops/graph.py:165-228",
+        "src/agent/aiops/termcp_tools.py:43-83"
+      ],
+      "case_refs": [
+        "CASE-DIAG-002",
+        "CASE-DIAG-013"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-009",
+      "module_id": "aiops-diagnosis",
+      "name": "知道这次诊断花了多少",
+      "entry": "`usage` 帧",
+      "requirement_refs": [
+        "REQ-DIAG-013"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 69,
+      "source_anchors": [
+        "src/api/routers/aiops.py:103-118"
+      ],
+      "case_refs": [
+        "CASE-DIAG-004"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUDIT-001",
+      "module_id": "aiops-audit",
+      "name": "刷新后能查回这次诊断的状态与结论",
+      "entry": "`GET /runs/{thread_id}`",
+      "requirement_refs": [
+        "REQ-AUDIT-001",
+        "REQ-AUDIT-002",
+        "REQ-AUDIT-003"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 71,
+      "source_anchors": [
+        "src/api/routers/aiops.py:132-143",
+        "frontend/src/views/AIOps.vue:856-890"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-001",
+        "CASE-AUDIT-003",
+        "CASE-AUDIT-004",
+        "CASE-AUDIT-011"
+      ],
+      "case_count": 4
+    },
+    {
+      "feature_id": "FEAT-AUDIT-002",
+      "module_id": "aiops-audit",
+      "name": "看每一步的决策与观测快照",
+      "entry": "`GET /runs/{thread_id}/steps`",
+      "requirement_refs": [
+        "REQ-AUDIT-004"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 72,
+      "source_anchors": [
+        "src/api/routers/aiops.py:169-181",
+        "src/agent/aiops/graph.py:292-296"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-005"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUDIT-003",
+      "module_id": "aiops-audit",
+      "name": "逐条核对报告引用了哪些现场证据",
+      "entry": "`GET /runs/{thread_id}/evidence`",
+      "requirement_refs": [
+        "REQ-AUDIT-005"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 73,
+      "source_anchors": [
+        "src/api/routers/aiops.py:184-190"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-006"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUDIT-004",
+      "module_id": "aiops-audit",
+      "name": "审计/管理员取原始证据文件",
+      "entry": "`GET /runs/{thread_id}/evidence/{evidence_id}`",
+      "requirement_refs": [
+        "REQ-AUDIT-006",
+        "REQ-AUDIT-007"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 74,
+      "source_anchors": [
+        "src/api/routers/aiops.py:193-206",
+        "src/agent/aiops/evidence_reader.py:38-79"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-007",
+        "CASE-AUDIT-008",
+        "CASE-AUDIT-012"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-AUDIT-005",
+      "module_id": "aiops-audit",
+      "name": "确认现场探针是活的",
+      "entry": "`GET /targets/{target_id}/status`",
+      "requirement_refs": [
+        "REQ-AUDIT-008"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 75,
+      "source_anchors": [
+        "src/api/routers/aiops.py:209-218"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-009"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUDIT-006",
+      "module_id": "aiops-audit",
+      "name": "重启后端后仍能读到同一诊断",
+      "entry": "受管运行 + 持久 checkpoint",
+      "requirement_refs": [
+        "REQ-AUDIT-001",
+        "REQ-AUDIT-003"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 76,
+      "source_anchors": [
+        "src/agent/aiops/graph.py:140-156"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-002"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AUDIT-007",
+      "module_id": "aiops-audit",
+      "name": "知道哪些审计数据会自己过期",
+      "entry": "探针基线保留策略",
+      "requirement_refs": [
+        "REQ-AUDIT-010"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 77,
+      "source_anchors": [
+        "src/agent/aiops/run_store.py:300-339"
+      ],
+      "case_refs": [],
+      "case_count": 0
+    },
+    {
+      "feature_id": "FEAT-AUDIT-008",
+      "module_id": "aiops-audit",
+      "name": "知道审计面上哪些事查不到",
+      "entry": "审批 / 费用 / 续传缺口",
+      "requirement_refs": [
+        "REQ-AUDIT-009"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-audit.md",
+      "spec_line": 78,
+      "source_anchors": [
+        "src/agent/aiops/run_store.py:98-131",
+        "docs/aiops-run-store.md:55"
+      ],
+      "case_refs": [
+        "CASE-AUDIT-010"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-EVAL-001",
+      "module_id": "evaluation",
+      "name": "选知识库、定题量、开始生成一次评测",
+      "entry": "`/evaluation` →「新建评测」→「开始生成」",
+      "requirement_refs": [
+        "REQ-EVAL-001"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 61,
+      "source_anchors": [
+        "frontend/src/views/Evaluation.vue:271-295",
+        "src/api/routers/evaluation.py:283-335"
+      ],
+      "case_refs": [
+        "CASE-EVAL-001",
+        "CASE-EVAL-002"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-EVAL-002",
+      "module_id": "evaluation",
+      "name": "等数据集自动生成（真实调模型出题，按比例分三类）",
+      "entry": "同一入口的异步阶段",
+      "requirement_refs": [
+        "REQ-EVAL-002",
+        "REQ-EVAL-003"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 62,
+      "source_anchors": [
+        "src/api/routers/evaluation.py:79-163",
+        "src/services/qa_generator.py:10-57"
+      ],
+      "case_refs": [
+        "CASE-EVAL-003",
+        "CASE-EVAL-004",
+        "CASE-EVAL-005"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-EVAL-003",
+      "module_id": "evaluation",
+      "name": "拿自己的题库跑评测（上传 JSON/CSV/XLSX 或逐条改删）",
+      "entry": "勾选自定义数据集 / 数据集弹窗",
+      "requirement_refs": [
+        "REQ-EVAL-004",
+        "REQ-EVAL-005"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 63,
+      "source_anchors": [
+        "src/api/routers/evaluation.py:337-458",
+        "frontend/src/views/Evaluation.vue:297-342"
+      ],
+      "case_refs": [
+        "CASE-EVAL-006",
+        "CASE-EVAL-007",
+        "CASE-EVAL-008"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-EVAL-004",
+      "module_id": "evaluation",
+      "name": "逐题跑真实 RAG 再打分，跑到一半能看进度",
+      "entry": "数据集弹窗「确认并运行评测」",
+      "requirement_refs": [
+        "REQ-EVAL-006"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 64,
+      "source_anchors": [
+        "src/api/routers/evaluation.py:165-279"
+      ],
+      "case_refs": [
+        "CASE-EVAL-009"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-EVAL-005",
+      "module_id": "evaluation",
+      "name": "拿一份 Markdown 报告，四个维度分数 + 延迟分位数",
+      "entry": "行内「查看报告」/「下载报告」",
+      "requirement_refs": [
+        "REQ-EVAL-007",
+        "REQ-EVAL-008"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 65,
+      "source_anchors": [
+        "src/services/evaluator.py:11-141",
+        "src/api/routers/evaluation.py:514-532"
+      ],
+      "case_refs": [
+        "CASE-EVAL-010",
+        "CASE-EVAL-011"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-EVAL-006",
+      "module_id": "evaluation",
+      "name": "管理历史任务（列表 / 批量删除 / 状态与进度）",
+      "entry": "「历史与报告」Tab",
+      "requirement_refs": [
+        "REQ-EVAL-009",
+        "REQ-EVAL-010"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/evaluation.md",
+      "spec_line": 66,
+      "source_anchors": [
+        "src/api/routers/evaluation.py:460-512",
+        "frontend/src/views/Evaluation.vue:395-405"
+      ],
+      "case_refs": [
+        "CASE-EVAL-012",
+        "CASE-EVAL-013"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-AGENT-001",
+      "module_id": "assistant-agent",
+      "name": "建一个助手并配好模型、提示词、知识库与工具，之后能改能删",
+      "entry": "`/assistants` 新建与编辑表单",
+      "requirement_refs": [
+        "REQ-AGENT-001"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 47,
+      "source_anchors": [
+        "src/api/routers/assistant.py:59-147",
+        "frontend/src/views/Assistant.vue:481-527"
+      ],
+      "case_refs": [
+        "CASE-AGENT-001",
+        "CASE-AGENT-003",
+        "CASE-AGENT-004"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-AGENT-002",
+      "module_id": "assistant-agent",
+      "name": "只看得到自己的助手与 Agent；越权访问被挡住，非法入参被拒绝",
+      "entry": "各端点的归属与校验层",
+      "requirement_refs": [
+        "REQ-AGENT-001",
+        "REQ-AGENT-005"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 48,
+      "source_anchors": [
+        "src/api/routers/assistant.py:66-75",
+        "src/api/routers/agent.py:214-225"
+      ],
+      "case_refs": [
+        "CASE-AGENT-002",
+        "CASE-AGENT-009"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-AGENT-003",
+      "module_id": "assistant-agent",
+      "name": "给助手存一份版本快照，之后能翻历史、能回滚",
+      "entry": "「保存版本」与版本列表",
+      "requirement_refs": [
+        "REQ-AGENT-002"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 49,
+      "source_anchors": [
+        "src/api/routers/assistant.py:172-212",
+        "frontend/src/views/Assistant.vue:472-560"
+      ],
+      "case_refs": [
+        "CASE-AGENT-005"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AGENT-004",
+      "module_id": "assistant-agent",
+      "name": "助手里的检索参数（top_k / rerank）在问答中生效",
+      "entry": "表单 `rag_config` 区块",
+      "requirement_refs": [
+        "REQ-AGENT-003"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 50,
+      "source_anchors": [
+        "frontend/src/views/Assistant.vue:80-94",
+        "src/services/rag_service.py:84-103"
+      ],
+      "case_refs": [
+        "CASE-AGENT-006"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AGENT-005",
+      "module_id": "assistant-agent",
+      "name": "助手记得住本轮对话的前几轮，长记忆暂不可用",
+      "entry": "表单 `memory_config` 区块",
+      "requirement_refs": [
+        "REQ-AGENT-004"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 51,
+      "source_anchors": [
+        "frontend/src/views/Assistant.vue:55-61",
+        "src/services/memory_service.py:30-76"
+      ],
+      "case_refs": [
+        "CASE-AGENT-007",
+        "CASE-AGENT-008"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-AGENT-006",
+      "module_id": "assistant-agent",
+      "name": "建一个 Agent 并配好 LLM 与 MCP 工具，能带工具跑一次查询",
+      "entry": "`/agents` 表单 + `POST /agents/{id}/execute`（**执行无界面**）",
+      "requirement_refs": [
+        "REQ-AGENT-006"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 52,
+      "source_anchors": [
+        "src/api/routers/agent.py:176-290",
+        "src/services/agent_tool_service.py:118-256"
+      ],
+      "case_refs": [
+        "CASE-AGENT-010"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-AGENT-007",
+      "module_id": "assistant-agent",
+      "name": "助手挂上 Agent 后，提问改走 Agent 链路并带回工具调用记录",
+      "entry": "表单 `agent_ids` 多选",
+      "requirement_refs": [
+        "REQ-AGENT-007"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/assistant-agent.md",
+      "spec_line": 53,
+      "source_anchors": [
+        "src/services/rag_service.py:196-228",
+        "src/api/routers/chat.py:125-142"
+      ],
+      "case_refs": [
+        "CASE-AGENT-011"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-STORE-001",
+      "module_id": "storage-queue",
+      "name": "打开「MinIO 存储」页，看得到自己名下的文件清单；页上的「登录」只是界面假象",
+      "entry": "`/monitor` →「MinIO 存储」页签",
+      "requirement_refs": [
+        "REQ-STORE-001",
+        "REQ-STORE-005"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 55,
+      "source_anchors": [
+        "src/api/routers/storage.py:43-60",
+        "frontend/src/views/Monitor.vue:264-304"
+      ],
+      "case_refs": [
+        "CASE-STORE-001",
+        "CASE-STORE-002",
+        "CASE-STORE-013"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-STORE-002",
+      "module_id": "storage-queue",
+      "name": "点一下就下载文件，中文名也不乱码",
+      "entry": "行内「下载」",
+      "requirement_refs": [
+        "REQ-STORE-002"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 56,
+      "source_anchors": [
+        "src/api/routers/storage.py:62-96",
+        "frontend/src/views/Monitor.vue:306-315"
+      ],
+      "case_refs": [
+        "CASE-STORE-003",
+        "CASE-STORE-005"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-STORE-003",
+      "module_id": "storage-queue",
+      "name": "不下载直接在线预览（pdf / md / txt / docx / xlsx）",
+      "entry": "行内「预览」",
+      "requirement_refs": [
+        "REQ-STORE-003"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 57,
+      "source_anchors": [
+        "src/api/routers/storage.py:98-135",
+        "src/utils/preview_utils.py:56-183"
+      ],
+      "case_refs": [
+        "CASE-STORE-004"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-STORE-004",
+      "module_id": "storage-queue",
+      "name": "MinIO 挂了系统照样起得来；读写行为有明确差别（读空、写报错）",
+      "entry": "后端启动 / 上传 / 知识库上传",
+      "requirement_refs": [
+        "REQ-STORE-006",
+        "REQ-STORE-007"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 58,
+      "source_anchors": [
+        "src/services/storage.py:7-41",
+        "src/api/routers/knowledge_base.py:356-383"
+      ],
+      "case_refs": [
+        "CASE-STORE-006",
+        "CASE-STORE-007"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-STORE-005",
+      "module_id": "storage-queue",
+      "name": "看排队与处理中的文档任务，并按需删掉",
+      "entry": "`/monitor` →「队列监控」页签",
+      "requirement_refs": [
+        "REQ-STORE-008",
+        "REQ-STORE-009"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 59,
+      "source_anchors": [
+        "src/api/routers/monitor.py:32-163",
+        "frontend/src/views/Monitor.vue:174-233"
+      ],
+      "case_refs": [
+        "CASE-STORE-008",
+        "CASE-STORE-009",
+        "CASE-STORE-010"
+      ],
+      "case_count": 3
+    },
+    {
+      "feature_id": "FEAT-STORE-006",
+      "module_id": "storage-queue",
+      "name": "看 worker 侧队列统计与外部依赖健康",
+      "entry": "`/queue-monitor` 页",
+      "requirement_refs": [
+        "REQ-STORE-010",
+        "REQ-STORE-011"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/storage-queue.md",
+      "spec_line": 60,
+      "source_anchors": [
+        "src/api/routers/health.py:19-173",
+        "frontend/src/views/QueueMonitor.vue:90-113"
+      ],
+      "case_refs": [
+        "CASE-STORE-011",
+        "CASE-STORE-012"
+      ],
+      "case_count": 2
+    }
+  ]
+}
