@@ -33,7 +33,8 @@ class CompetingFaultFixture:
 
     def __init__(self, fault: str, output: Path | None = None, *, stop_mode: str = 'terminate',
                  startup_configuration: bool = False):
-        if fault not in {"normal", "localapp_unavailable", "downstream_unreachable", "downstream_bind_failed", "localapp_wrong_endpoint"}:
+        if fault not in {"normal", "localapp_unavailable", "downstream_unreachable", "downstream_bind_failed",
+                         "localapp_wrong_endpoint", "downstream_slow"}:
             raise ValueError("unsupported competing fault")
         if stop_mode not in {'terminate', 'request'}:
             raise ValueError('unsupported stop mode')
@@ -129,7 +130,8 @@ class CompetingFaultFixture:
             raise
 
     def reset(self, fault):
-        if fault not in {'normal', 'localapp_unavailable', 'downstream_unreachable', 'downstream_bind_failed', 'localapp_wrong_endpoint'}:
+        if fault not in {'normal', 'localapp_unavailable', 'downstream_unreachable', 'downstream_bind_failed',
+                         'localapp_wrong_endpoint', 'downstream_slow'}:
             raise ValueError('unsupported competing fault')
         if fault == 'localapp_wrong_endpoint' and not self.startup_configuration:
             raise ValueError('wrong endpoint requires a startup-configuration fixture')
@@ -165,6 +167,11 @@ class CompetingFaultFixture:
         else:
             self._start('downstream')
         self._start('localapp')
+        if fault == 'downstream_slow':
+            # Latency fault: the dependency keeps running and listening, but answers
+            # only after a delay longer than the application's upstream timeout.
+            (self.output / 'downstream.mode').write_text(
+                json.dumps({'mode': 'slow_response', 'delay_ms': 1200}), encoding='utf-8')
         if fault in {'localapp_unavailable', 'downstream_unreachable'}:
             name = 'localapp' if fault == 'localapp_unavailable' else 'downstream'
             process = self.processes[name]

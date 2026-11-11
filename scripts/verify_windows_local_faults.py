@@ -133,16 +133,27 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
             status, body = 200, 'healthy'
             detail, error_type = '', None
             configuration = None
+            slow_delay = 0.0
             if mode.startswith('{'):
                 parsed = None
                 try:
                     # The controller may inject invalid application configuration.
                     parsed = json.loads(mode)
-                    int(parsed['max_attempts'])
-                    # A startup connection file doubles as the mode file so the
-                    # loaded configuration hash and the injected mode stay identical.
-                    mode = parsed.get('mode') if isinstance(parsed, dict) and parsed.get('mode') in {
-                        'application_error', 'http_error'} else 'normal'
+                    if isinstance(parsed, dict) and parsed.get('mode') == 'slow_response':
+                        # Latency fault: answer the same request correctly, but only
+                        # after the declared delay, so a caller with a shorter
+                        # upstream timeout observes a timeout rather than a refusal.
+                        delay_ms = parsed.get('delay_ms', 1200)
+                        if type(delay_ms) not in (int, float) or not 0 < delay_ms <= 5000:
+                            raise ValueError('invalid delay_ms')
+                        slow_delay = delay_ms / 1000
+                        mode = 'normal'
+                    else:
+                        int(parsed['max_attempts'])
+                        # A startup connection file doubles as the mode file so the
+                        # loaded configuration hash and the injected mode stay identical.
+                        mode = parsed.get('mode') if isinstance(parsed, dict) and parsed.get('mode') in {
+                            'application_error', 'http_error'} else 'normal'
                 except (ValueError, TypeError, KeyError) as exc:
                     status, body = 503, 'temporarily unavailable'
                     detail, error_type = 'invalid max_attempts configuration', type(exc).__name__
@@ -151,6 +162,8 @@ def serve(port, log, downstream, mode_file, stop_file=None, runtime_config=None)
                         'value_present': isinstance(parsed, dict) and 'max_attempts' in parsed,
                         'expected': 'integer-convertible',
                         'source_sha256': hashlib.sha256(config_bytes).hexdigest()}
+            if slow_delay:
+                time.sleep(slow_delay)
             if error_type:
                 pass
             elif mode == 'http_error':
@@ -306,7 +319,7 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
     expected = {'normal': (200, 200), 'downstream_unreachable': (503, None),
         'application_error': (500, 200), 'application_exit': (None, 200),
         'port_conflict': (200, 200), 'missing_evidence': (500, 200),
-        'application_config_error': (503, 200)}
+        'application_config_error': (503, 200), 'downstream_slow': (503, 200)}
     if case not in expected:
         raise ValueError('unknown controller case')
     snapshot = {'case': case, 'checked_at': datetime.now(timezone.utc).isoformat(),
@@ -359,6 +372,18 @@ def verify_case_state(out, case, app, dep, app_port, dep_port, log, blocker=None
         checks['application_log'] = any(row.get('detail') == ('upstream connection failed'
             if case == 'downstream_unreachable' else 'invalid max_attempts configuration')
             and (case != 'application_config_error' or row.get('error_type') == 'ValueError') for row in details)
+    if case == 'downstream_slow':
+        # The dependency stayed alive and eventually answered: the application failed
+        # on its own shorter timeout, not on a refused connection.
+        checks['generic_response'] = snapshot['app'].get('body') == 'temporarily unavailable'
+        entries = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+        app_owners = {row['pid'] for row in rows if row['port'] == app_port}
+        details = [row for row in entries if row.get('pid') in app_owners and row.get('status') == 503]
+        checks['application_log'] = any(row.get('detail') == 'upstream connection failed'
+            and row.get('error_type') in {'TimeoutError', 'timeout'} for row in details)
+        checks['upstream_timeout_trace'] = any(
+            (row.get('upstream_request') or {}).get('connection_established') is True
+            and (row.get('upstream_request') or {}).get('timeout_seconds') == 0.5 for row in details)
     snapshot['passed'] = all(checks.values())
     path = Path(out) / 'controller-observations.jsonl'
     with path.open('a', encoding='utf-8') as handle:
@@ -512,7 +537,8 @@ def review_model_artifacts(directory, case, summary, *, events=None, trace=None)
         'downstream_unreachable': ['localized_fault', 'confirmed_cause'],
         'application_error': ['localized_fault'], 'application_config_error': ['localized_fault', 'confirmed_cause'],
         'application_exit': ['localized_fault'],
-        'port_conflict': ['localized_fault', 'confirmed_cause'], 'missing_evidence': ['unlocated', 'localized_fault']}
+        'port_conflict': ['localized_fault', 'confirmed_cause'], 'missing_evidence': ['unlocated', 'localized_fault'],
+        'downstream_slow': ['localized_fault', 'confirmed_cause']}
     allowed = {'probe_inventory', 'probe_resource_snapshot', 'probe_service_status', 'probe_process_snapshot',
         'probe_port_snapshot', 'probe_event_log', 'probe_text_log', 'probe_config_snapshot', 'probe_dependency_probe',
         'probe_list_evidence', 'search_knowledge_base', 'read_run_evidence'}
@@ -1190,6 +1216,11 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                 else:
                     write_app_mode()
                 dep_mode.write_text('normal', encoding='utf-8')
+                if case == 'downstream_slow':
+                    # Latency fault: the dependency keeps running and listening, but
+                    # answers only after a delay longer than the application's timeout.
+                    dep_mode.write_text(json.dumps({'mode': 'slow_response', 'delay_ms': 1200}),
+                        encoding='utf-8')
                 if case == 'downstream_unreachable':
                     # Start the dependency so its log carries the start identity, then
                     # stop it gracefully before any Probe observation so the stop is provable.
@@ -1230,7 +1261,8 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     scenarios=('normal', 'downstream_unreachable', 'application_error') * 4 + ('normal',)))
                 matching_503 = {}
                 for case in ['normal', 'downstream_unreachable', 'application_error',
-                             'application_exit', 'port_conflict', 'missing_evidence', 'application_config_error']:
+                             'application_exit', 'port_conflict', 'missing_evidence', 'application_config_error',
+                             'downstream_slow']:
                     await set_model_case(case)
                     health = (await query('probe_dependency_probe', {'dependency': 'localapp'}, 'controller-' + case))['payload']
                     downstream = (await query('probe_dependency_probe', {'dependency': 'downstream'}, 'controller-' + case))['payload']
@@ -1239,10 +1271,10 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                     else:
                         expected = {'normal': 200, 'downstream_unreachable': 503,
                                     'application_error': 500, 'port_conflict': 200, 'missing_evidence': 500,
-                                    'application_config_error': 503}[case]
+                                    'application_config_error': 503, 'downstream_slow': 503}[case]
                         assert health['http']['status'] == expected
                     assert downstream['tcp'] == ('failed' if case == 'downstream_unreachable' else 'ok')
-                    if case in {'downstream_unreachable', 'application_config_error'}:
+                    if case in {'downstream_unreachable', 'application_config_error', 'downstream_slow'}:
                         logs = (await query('probe_text_log', {'service': 'localapp', 'path': str(log), 'lines': 100},
                             'controller-' + case))['payload']
                         entries = [json.loads(line) for line in logs['lines']]
@@ -1254,11 +1286,19 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                             assert snapshot['source_sha256'] == hashlib.sha256(app_mode.read_bytes()).hexdigest()
                             assert any(row.get('configuration', {}).get('source_sha256') == snapshot['source_sha256']
                                 for row in entries)
-                        expected_detail = ('upstream connection failed' if case == 'downstream_unreachable'
-                            else 'invalid max_attempts configuration')
+                        expected_detail = ('invalid max_attempts configuration' if case == 'application_config_error'
+                            else 'upstream connection failed')
                         app_owners = {row['pid'] for row in listening_rows([app_port])}
                         assert any(row.get('pid') in app_owners and row.get('status') == 503
                             and row.get('detail') == expected_detail for row in entries)
+                        if case == 'downstream_slow':
+                            # The dependency is still listening and answers late, so the
+                            # controller must see a read timeout, not a refused connection.
+                            slow = [row for row in entries if row.get('pid') in app_owners
+                                and row.get('status') == 503]
+                            assert any(row.get('error_type') in {'TimeoutError', 'timeout'} for row in slow)
+                            assert any((row.get('upstream_request') or {}).get('connection_established') is True
+                                for row in slow)
                         matching_503[case] = {'entry': health, 'downstream': downstream, 'logs': logs,
                             'evidence_ids': [r['evidence_id'] for r in records if r['case'] == 'controller-' + case]}
                         (out / 'matching-503-observations.json').write_text(json.dumps(matching_503,
@@ -1365,6 +1405,18 @@ async def verify(out, evaluation_preflight=False, run_model=False, model_stage='
                         await set_model_case('downstream_unreachable')
                         result = await evaluate_model_case(out, 'downstream_unreachable', launch, previous,
                             knowledge_url=knowledge_config['knowledge']['url'], knowledge_disabled=disabled,
+                            budget_limit_cny=budget_limit_cny)
+                        cases.append(result)
+                        previous = Path(result['cost_file'])
+                    await set_model_case('normal')
+                elif model_stage == 'latency':
+                    # Two paid rounds of the same single latency fault, knowledge
+                    # conditions fixed, so the pair only varies by run.
+                    previous = previous_cost
+                    for _ in range(2):
+                        await set_model_case('downstream_slow')
+                        result = await evaluate_model_case(out, 'downstream_slow', launch, previous,
+                            knowledge_url=knowledge_config['knowledge']['url'],
                             budget_limit_cny=budget_limit_cny)
                         cases.append(result)
                         previous = Path(result['cost_file'])
@@ -1655,7 +1707,7 @@ def main():
         help='Run selected four-group slots only, e.g. downstream_unreachable/G10; repeat per slot')
     parser.add_argument('--run-model', action='store_true',
         help='Paid mode; requires separate explicit authorization for cases and cumulative budget')
-    parser.add_argument('--model-stage', choices=['smoke', 'extended', 'knowledge-control', 'four-groups'], default='smoke')
+    parser.add_argument('--model-stage', choices=['smoke', 'extended', 'knowledge-control', 'latency', 'four-groups'], default='smoke')
     parser.add_argument('--run-budget-cny', type=float, help='Equal per-run cost cap; four-groups may instead use equal per-run request caps with the shared CNY ceiling')
     parser.add_argument('--previous-cost', type=Path)
     parser.add_argument('--budget-limit-cny', type=float, default=5,
@@ -1717,7 +1769,7 @@ def main():
         parser.error('unpriced four-groups require a per-run request cap')
     if args.smoke_case and args.model_stage != 'smoke':
         parser.error('smoke-case requires model-stage smoke')
-    if args.mechanism_group and (not args.run_model or args.model_stage == 'knowledge-control'):
+    if args.mechanism_group and (not args.run_model or args.model_stage in {'knowledge-control', 'latency'}):
         parser.error('mechanism group requires --run-model and fixed knowledge conditions')
     if args.model_stage == 'four-groups' and (not args.run_model or args.mechanism_group
             or (not args.allow_unpriced_model and args.run_max_model_requests is None and (args.run_budget_cny is None
@@ -1729,7 +1781,7 @@ def main():
     if args.run_model and args.model_stage in {'extended', 'four-groups'}:
         if not args.smoke_review or json.loads(args.smoke_review.read_text(encoding='utf-8')).get('smoke_passed') is not True:
             parser.error('extended cases require a completed human smoke review')
-    if args.run_model and args.model_stage in {'extended', 'knowledge-control', 'four-groups'} and not args.previous_cost:
+    if args.run_model and args.model_stage in {'extended', 'knowledge-control', 'latency', 'four-groups'} and not args.previous_cost:
         parser.error('later stages require the cumulative cost ledger; retries must not reset the budget')
     out = ROOT / 'runtime' / ('windows-local-faults-' + uuid.uuid4().hex)
     report = asyncio.run(verify(out, evaluation_preflight=args.evaluation_preflight, run_model=args.run_model,

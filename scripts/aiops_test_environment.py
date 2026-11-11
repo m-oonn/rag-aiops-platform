@@ -53,7 +53,8 @@ async def start(output, duration, scenario):
     from scripts.windows_probe import _set_acl
     if os.name == 'nt':
         _set_acl(output)
-    fault = {'endpoint': 'localapp_wrong_endpoint', 'stopped': 'downstream_unreachable', 'normal': 'normal'}[scenario]
+    fault = {'endpoint': 'localapp_wrong_endpoint', 'stopped': 'downstream_unreachable',
+             'latency': 'downstream_slow', 'normal': 'normal'}[scenario]
     fixture = CompetingFaultFixture(fault, output / 'business', stop_mode='request', startup_configuration=True)
     target, token, canary = 'aiops-test-' + uuid.uuid4().hex[:12], uuid.uuid4().hex + uuid.uuid4().hex, uuid.uuid4().hex
     port = free_port()
@@ -440,7 +441,7 @@ if __name__ == '__main__':
     start_parser = sub.add_parser('start', help='Free persistent business fixture, Probe and gateway')
     start_parser.add_argument('--output', required=True, type=Path)
     start_parser.add_argument('--duration-seconds', type=int, default=3600)
-    start_parser.add_argument('--scenario', choices=['endpoint', 'stopped', 'normal'], default='endpoint')
+    start_parser.add_argument('--scenario', choices=['endpoint', 'stopped', 'latency', 'normal'], default='endpoint')
     product_parser = sub.add_parser('backend', help='Production API and built frontend, isolated database')
     product_parser.add_argument('--output', required=True, type=Path)
     product_parser.add_argument('--port', type=int, default=8200)

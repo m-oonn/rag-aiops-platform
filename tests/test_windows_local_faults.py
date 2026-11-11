@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import time
 import pytest
 
 from scripts import verify_windows_local_faults as module
@@ -206,6 +207,59 @@ def test_controlled_downstream_stop_is_written_by_process_to_allowed_log(tmp_pat
     finally:
         if process.poll() is None:
             module.stop(process)
+
+
+def test_slow_response_mode_answers_late_instead_of_refusing(tmp_path):
+    port = module.free_port()
+    mode_file, log = tmp_path / 'downstream.mode', tmp_path / 'downstream.log'
+    mode_file.write_text(json.dumps({'mode': 'slow_response', 'delay_ms': 1200}), encoding='utf-8')
+    config = tmp_path / 'downstream.connection.json'
+    config.write_text(json.dumps({'downstream_port': None, 'upstream_timeout_seconds': 0.5}), encoding='utf-8')
+    process = subprocess.Popen([
+        sys.executable, str(Path(module.__file__).resolve()), '--serve', str(port),
+        '--mode-file', str(mode_file), '--log', str(log), '--runtime-config', str(config),
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+    try:
+        module.wait_listener(port, process)
+        started = time.monotonic()
+        status, body = module.get_local(port, timeout=5, path='/api/availability')
+        elapsed = time.monotonic() - started
+        assert status == 200
+        assert json.loads(body)['available'] is True
+        assert elapsed >= 1.0
+        record = json.loads(log.read_text(encoding='utf-8').strip().splitlines()[-1])
+        assert record['event'] == 'request_completed'
+        assert record['status'] == 200
+        assert record['duration_ms'] >= 1000
+    finally:
+        if process.poll() is None:
+            module.stop(process)
+
+
+def test_slow_downstream_requires_timeout_trace_instead_of_refusal(tmp_path, monkeypatch):
+    app = SimpleNamespace(pid=111, poll=lambda: None)
+    dep = SimpleNamespace(pid=222, poll=lambda: None)
+    def get_local(port, **_):
+        return (503, 'temporarily unavailable') if port == 24001 else (200, 'healthy')
+    monkeypatch.setattr(module, 'get_local', get_local)
+    monkeypatch.setattr(module, 'listening_rows',
+        lambda ports: [{'port': 24001, 'pid': 111}, {'port': 24002, 'pid': 222}])
+    monkeypatch.setattr(module.psutil, 'Process', lambda pid: SimpleNamespace(children=lambda **kw: []))
+    log = tmp_path / 'app.log'
+    log.write_text(json.dumps({'pid': 111, 'status': 503, 'detail': 'upstream connection failed',
+        'error_type': 'TimeoutError',
+        'upstream_request': {'timeout_seconds': 0.5, 'connection_established': True}}))
+    snapshot = module.verify_case_state(tmp_path, 'downstream_slow', app, dep, 24001, 24002, log)
+    assert snapshot['checks']['upstream_timeout_trace'] is True
+    assert snapshot['checks']['application_log'] is True
+
+    # A refused connection is the stopped-dependency signature, not latency.
+    log.write_text(json.dumps({'pid': 111, 'status': 503, 'detail': 'upstream connection failed',
+        'error_type': 'URLError',
+        'upstream_request': {'timeout_seconds': 0.5, 'connection_established': False}}))
+    with pytest.raises(RuntimeError, match='state verification failed'):
+        module.verify_case_state(tmp_path, 'downstream_slow', app, dep, 24001, 24002, log)
 
 
 @pytest.mark.parametrize('mutation', ['wrong_body', 'missing_body', 'wrong_log', 'wrong_pid', 'wrong_error_type'])
