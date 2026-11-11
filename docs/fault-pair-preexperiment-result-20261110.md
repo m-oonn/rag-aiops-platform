@@ -2,7 +2,7 @@
 
 上一批（2026-11-03，两服务夹具）八场全部停在 `localized_fault`，因为夹具结构上无法产出 `downstream_stopped_after_request` 所需的入口服务日志。本批按用户放行（「b，总共10；放行，触及到逻辑修改和架构等需要和我确认」「按此执行」）把夹具改成 edge→localapp→downstream 三服务拓扑，八场重跑。**新批次与 11-03 批次不合并统计。**
 
-八场真实诊断及工程比较已完成，八场人工语义审核待审。结论：**三服务夹具确实让下游场的直接原因可达——下游四场里三场给出 `confirmed_cause` + `downstream_stopped_after_request`；配置错误四场仍全部停在 `localized_fault`。机制层假设保护依旧零机会、零改向；矛盾触发有 17 次机会，实际改向 3 次且只出现在 G01。**
+八场真实诊断及工程比较已完成，八场人工语义审核已于 2026-11-11 完成（见下文「人工语义审核」节）。结论：**三服务夹具确实让下游场的直接原因可达——下游四场里三场给出 `confirmed_cause` + `downstream_stopped_after_request`；配置错误四场仍全部停在 `localized_fault`。机制层假设保护依旧零机会、零改向；矛盾触发有 17 次机会，实际改向 3 次且只出现在 G01。**
 
 ## 授权、条件与实际执行
 
@@ -110,7 +110,34 @@ G10 只到 `localized_fault`：结论只列了现场条件（入口 503、downst
 
 免费门禁：`--scenario-preflight --four-group-suite e2-fault-pair-v1`（`runtime/windows-local-faults-1a0725f5…`，8 轮 / 32 观测 / 0 模型调用）与 `--evaluation-preflight`（`runtime/windows-local-faults-cad2d141…`，31 项全过、`evidence_count=64`、0 模型调用）在付费前后各跑一次。全量回归在本批结束时为 2105 passed / 106 deselected / 0 failed；四处后续修复（`cbe9375` 去重两条、`a55fef8` 一条、`940d1e4` 两条）累计加到 2110 passed / 0 failed。
 
-初步（非约束）语义审核：`runtime/e2-b1b-20261110/preliminary-review.json`，`binding=false`、`written_to_manual_review=false`。它只核对了引用是否逐字落在证据里、机械门与审计是否通过、报告是否包含原因码，**没有**替人做诊断正确性判断。八场的人工三维语义审核仍为 pending。
+初步（非约束）语义审核：`runtime/e2-b1b-20261110/preliminary-review.json`，`binding=false`、`written_to_manual_review=false`。它只核对了引用是否逐字落在证据里、机械门与审计是否通过、报告是否包含原因码，**没有**替人做诊断正确性判断。八场的人工三维语义审核在当时仍为 pending，已于 2026-11-11 完成，结果见下一节。
+
+## 人工语义审核（2026-11-11 完成）
+
+八场先用 `python scripts/diagnostic_review.py prepare` 生成独立审核包：`runtime/review-e2-b1b/s01-config-G00` … `s08-downstream-G00`，8/8 成功、0 次模型调用、0 费用；每包含 `review-packet.json`（报告 + 诊断去掉内部机制字段 + 脱敏证据）、`manual-review.json`（三维初值 pending）、`source-audit.json`（源哈希与机械核对）。审核人孙仲信于 2026-11-11 完成三维判定并回填，八场 `check` 全部 `review_status=recorded`、`pending_dimensions=[]`。
+
+| 场次 | 故障 / 组 | 系统结论 | diagnosis | citation_support | recommendation |
+|---|---|---|---|---|---|
+| s01 | 配置错误 / G00 | localized_fault | correct_localization | supported | appropriate |
+| s02 | 配置错误 / G01 | localized_fault | correct_localization | supported | appropriate |
+| s03 | 配置错误 / G11 | localized_fault | correct_localization | supported | appropriate |
+| s04 | 配置错误 / G10 | localized_fault | correct_localization | supported | appropriate |
+| s05 | 下游不可达 / G10 | localized_fault | correct_localization | supported | appropriate |
+| s06 | 下游不可达 / G01 | confirmed_cause + downstream_stopped_after_request | correct_localization | supported | appropriate |
+| s07 | 下游不可达 / G11 | confirmed_cause + downstream_stopped_after_request | correct_localization | supported | appropriate |
+| s08 | 下游不可达 / G00 | confirmed_cause + downstream_stopped_after_request | correct_localization | supported | appropriate |
+
+统计口径与限制，逐条写明：
+
+1. **故障层定位 8/8 correct_localization**：配置错误四场都定位到 localapp 的 `max_attempts`（日志字段 + 独立配置快照两类来源），下游四场都定位到 downstream。这是「这批场次的人工判定结果」，不是可以外推的正确率。
+2. **引用支持 8/8 supported**：`s04` 保留一条已知缺陷——`validation_issues` 记录的 `ev-5481c983d34c467c893c055afef0e30c` 未通过证据 ID/片段绑定/连续原文校验；核对该证据原始 payload 确为端口 2485 `LISTEN` / `pid 25848`，事实成立，失败原因是报告渲染句不是 payload 的连续子串。该 id 不在 `review-packet.json` 的 `evidence` 内，因此不在 `evidence_ids` 里，只写在理由文字中。
+3. **处理建议 8/8 appropriate**：建议对象与已确认故障层一致，均带「未执行、不作为根因证明」声明与处理后验证步骤。
+4. **这些是人工断言**：`check` 输出 `review_is_human_assertion=true`、`automatically_verified_correctness=false`，不能表述为系统自动判对。
+5. **样本不支持统计结论**：8 场、2 类故障、每组 2 场。上一节的机制收益结论不变。
+6. **5 场停在 `localized_fault` 但定位正确**：其中 s05 已经引用到 downstream 的 `service_started → controlled_stop(file_presence) → service_exited` 停止链，却只写到「启动、退出及异常传播原因尚未确认」；同批 s06/s07/s08 在同类证据下给出了 `confirmed_cause`，说明这是本场保守、不是能力缺失。
+7. **字段口径未自动改写**：机械审核里 `capability_passed` 仍为 `false`、`semantic_status` 仍为 `pending_manual_review`，那是机械层的既有输出；语义审核结论以本节与八份 `manual-review.json` 为准，能力验收是否通过需按审核流程另行改写，不在此处手工改动。
+
+审核材料索引：`runtime/review-e2-b1b/AI辅助研判汇总-20261111.md`（逐场理由与待确认表）、`runtime/review-e2-b1b/ai-assisted-verdicts.py`（判定草稿）、八场 `manual-review.json`（已回填的最终判定）。
 
 ## 阶段决定
 
