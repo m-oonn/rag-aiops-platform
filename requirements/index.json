@@ -1,0 +1,3166 @@
+{
+  "schema": "requirements/index.json",
+  "schema_version": 1,
+  "generated_at": "2026-11-11T10:10:32+08:00",
+  "baseline": {
+    "kind": "git_commit",
+    "commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+    "branch": "main",
+    "note": "所有 doc_path/doc_line 均以此提交为基线；未提交差异见 requirements/sources/index.json 的 baseline。"
+  },
+  "basis_legend": {
+    "confirmed": "有明确产品决定与其来源，可支撑正式 PASS/FAIL",
+    "observed": "直接读源码/文档核实到的实现事实，只能记 OBSERVED",
+    "unresolved": "缺依据、有冲突或属推断，用例必须 readiness=draft",
+    "proposed": "AI 建议，不得升格为 confirmed"
+  },
+  "counts": {
+    "requirements": 88,
+    "by_module": {
+      "platform": 8,
+      "auth-console": 8,
+      "kb-ingest": 10,
+      "rag-qa": 10,
+      "aiops-diagnosis": 13,
+      "aiops-audit": 10,
+      "evaluation": 10,
+      "assistant-agent": 7,
+      "storage-queue": 12
+    },
+    "by_basis": {
+      "confirmed": 0,
+      "observed": 88,
+      "unresolved": 0,
+      "proposed": 0
+    }
+  },
+  "module_requirements": [
+    {
+      "module_id": "platform",
+      "doc_path": "requirements/modules/platform.md",
+      "requirement_ids": [
+        "REQ-PLAT-001",
+        "REQ-PLAT-002",
+        "REQ-PLAT-003",
+        "REQ-PLAT-004",
+        "REQ-PLAT-005",
+        "REQ-PLAT-006",
+        "REQ-PLAT-007",
+        "REQ-PLAT-008"
+      ],
+      "flow_refs": [
+        "FLOW-PLAT"
+      ]
+    },
+    {
+      "module_id": "auth-console",
+      "doc_path": "requirements/modules/auth-console.md",
+      "requirement_ids": [
+        "REQ-AUTH-001",
+        "REQ-AUTH-002",
+        "REQ-AUTH-003",
+        "REQ-AUTH-004",
+        "REQ-AUTH-005",
+        "REQ-AUTH-006",
+        "REQ-AUTH-007",
+        "REQ-AUTH-008"
+      ],
+      "flow_refs": [
+        "FLOW-AUTH"
+      ]
+    },
+    {
+      "module_id": "kb-ingest",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "requirement_ids": [
+        "REQ-KB-001",
+        "REQ-KB-002",
+        "REQ-KB-003",
+        "REQ-KB-004",
+        "REQ-KB-005",
+        "REQ-KB-006",
+        "REQ-KB-007",
+        "REQ-KB-008",
+        "REQ-KB-009",
+        "REQ-KB-010"
+      ],
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ]
+    },
+    {
+      "module_id": "rag-qa",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "requirement_ids": [
+        "REQ-RAG-001",
+        "REQ-RAG-002",
+        "REQ-RAG-003",
+        "REQ-RAG-004",
+        "REQ-RAG-005",
+        "REQ-RAG-006",
+        "REQ-RAG-007",
+        "REQ-RAG-008",
+        "REQ-RAG-009",
+        "REQ-RAG-010"
+      ],
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ]
+    },
+    {
+      "module_id": "aiops-diagnosis",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "requirement_ids": [
+        "REQ-DIAG-001",
+        "REQ-DIAG-002",
+        "REQ-DIAG-003",
+        "REQ-DIAG-004",
+        "REQ-DIAG-005",
+        "REQ-DIAG-006",
+        "REQ-DIAG-007",
+        "REQ-DIAG-008",
+        "REQ-DIAG-009",
+        "REQ-DIAG-010",
+        "REQ-DIAG-011",
+        "REQ-DIAG-012",
+        "REQ-DIAG-013"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ]
+    },
+    {
+      "module_id": "aiops-audit",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "requirement_ids": [
+        "REQ-AUDIT-001",
+        "REQ-AUDIT-002",
+        "REQ-AUDIT-003",
+        "REQ-AUDIT-004",
+        "REQ-AUDIT-005",
+        "REQ-AUDIT-006",
+        "REQ-AUDIT-007",
+        "REQ-AUDIT-008",
+        "REQ-AUDIT-009",
+        "REQ-AUDIT-010"
+      ],
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ]
+    },
+    {
+      "module_id": "evaluation",
+      "doc_path": "requirements/modules/evaluation.md",
+      "requirement_ids": [
+        "REQ-EVAL-001",
+        "REQ-EVAL-002",
+        "REQ-EVAL-003",
+        "REQ-EVAL-004",
+        "REQ-EVAL-005",
+        "REQ-EVAL-006",
+        "REQ-EVAL-007",
+        "REQ-EVAL-008",
+        "REQ-EVAL-009",
+        "REQ-EVAL-010"
+      ],
+      "flow_refs": [
+        "FLOW-EVAL"
+      ]
+    },
+    {
+      "module_id": "assistant-agent",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "requirement_ids": [
+        "REQ-AGENT-001",
+        "REQ-AGENT-002",
+        "REQ-AGENT-003",
+        "REQ-AGENT-004",
+        "REQ-AGENT-005",
+        "REQ-AGENT-006",
+        "REQ-AGENT-007"
+      ],
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ]
+    },
+    {
+      "module_id": "storage-queue",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "requirement_ids": [
+        "REQ-STORE-001",
+        "REQ-STORE-002",
+        "REQ-STORE-003",
+        "REQ-STORE-004",
+        "REQ-STORE-005",
+        "REQ-STORE-006",
+        "REQ-STORE-007",
+        "REQ-STORE-008",
+        "REQ-STORE-009",
+        "REQ-STORE-010",
+        "REQ-STORE-011",
+        "REQ-STORE-012"
+      ],
+      "flow_refs": [
+        "FLOW-STORE"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "requirement_id": "REQ-PLAT-001",
+      "module_id": "platform",
+      "title": "启动前置条件与四类启动失败的落点",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 60,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "scripts/demo.sh:35",
+        "docker/docker-compose.yml:4-9",
+        "src/main.py:283-288",
+        "scripts/launch_demo.py:258-277",
+        "scripts/launch_demo.py:263-269",
+        "scripts/launch_demo.py:266-269",
+        "src/main.py:47-61",
+        "src/main.py:36-43",
+        "src/main.py:44",
+        "src/main.py:177-279",
+        "src/api/routers/health.py:14-16",
+        "src/main.py:178",
+        "scripts/launch_demo.py:299-309",
+        "src/main.py:285",
+        "src/main.py:23-28",
+        "src/utils/preview_utils.py:13-16",
+        "src/main.py:31",
+        "src/settings.py:381-383",
+        "scripts/create_tables.py:10",
+        "scripts/create_tables.py:6-11"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-002",
+      "module_id": "platform",
+      "title": "数据库引导：create_all 加列级 ALTER，没有迁移框架",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 90,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/settings.py:103",
+        "src/main.py:31",
+        "src/main.py:89-144",
+        "src/main.py:138",
+        "src/main.py:98-108",
+        "src/main.py:128-137",
+        "src/main.py:139-144",
+        "src/main.py:141",
+        "src/main.py:92-94",
+        "src/database/sql_session.py:13-21",
+        "src/database/sql_session.py:14-15",
+        "src/database/sql_session.py:5-25",
+        "src/database/models.py:7-22"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-003",
+      "module_id": "platform",
+      "title": "配置分层、单例与死配置",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 116,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/settings.py:360-364",
+        "src/settings.py:367",
+        "tests/test_configuration_audit.py:92-99",
+        "src/settings.py:10",
+        "src/settings.py:304-323",
+        "docker/docker-compose.yml:17-25",
+        "src/settings.py:106",
+        "src/settings.py:8-26"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-004",
+      "module_id": "platform",
+      "title": "路由挂载清单与两条未挂载的死路由",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 138,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/main.py:255-265",
+        "src/main.py:265",
+        "src/main.py:16",
+        "src/main.py:267-276"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-005",
+      "module_id": "platform",
+      "title": "请求进入链：限流、CORS、主机白名单、安全头、trace",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 160,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/main.py:200-243",
+        "src/utils/rate_limit.py:9",
+        "src/main.py:200-202",
+        "src/api/routers/auth.py:62",
+        "src/main.py:64-87",
+        "src/main.py:214-220",
+        "src/main.py:205-211",
+        "src/main.py:223-230",
+        "src/utils/tracing.py:27-30",
+        "src/main.py:233-243",
+        "tests/test_security.py:171-192",
+        "src/utils/tracing.py:22-40"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-006",
+      "module_id": "platform",
+      "title": "错误外泄边界与文档/指标端点开关",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 187,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/main.py:181",
+        "src/main.py:189-197",
+        "src/main.py:246-252",
+        "src/main.py:162-172",
+        "src/main.py:147-174"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-007",
+      "module_id": "platform",
+      "title": "运行平台与容器化：8200 与 8000 两套口径",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 212,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        "src/main.py:288",
+        "scripts/launch_demo.py:44-64",
+        "docker/docker-compose.yml:4-9",
+        "docker/docker-compose.yml:17-25",
+        "docker/docker-compose.yml:18",
+        "docker/docker-compose.yml:4-245",
+        "docker/docker-compose.yml:142",
+        "src/main.py:172",
+        "docker/docker-compose.yml:218-244",
+        "docker/docker-compose.yml:11-15",
+        "docker/docker-compose.yml:4-25"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAT-008",
+      "module_id": "platform",
+      "title": "CI 门禁与\"离线\"口径",
+      "doc_path": "requirements/modules/platform.md",
+      "doc_line": 240,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-PLAT"
+      ],
+      "source_anchors": [
+        ".github/workflows/tests.yml:1-28",
+        ".github/workflows/tests.yml:17-20",
+        ".github/workflows/tests.yml:38",
+        ".github/workflows/tests.yml:46-47",
+        ".github/workflows/tests.yml:49-50",
+        ".github/workflows/tests.yml:41-45",
+        ".github/workflows/deploy-pages.yml:1-45",
+        ".github/workflows/deploy-pages.yml:14-17",
+        "tests/conftest.py:6",
+        ".github/workflows/tests.yml:1-50",
+        "tests/conftest.py:6-7",
+        "frontend/package.json:6-11",
+        "frontend/vitest.config.js:5-9",
+        "src/main.py:288",
+        "src/main.py:80-87",
+        "src/main.py:189-197",
+        "scripts/launch_demo.py:299-309",
+        "src/main.py:143-144",
+        "src/main.py:1-31",
+        "src/settings.py:8-26",
+        "src/utils/security.py:7-31",
+        "src/utils/rate_limit.py:1-9",
+        "src/utils/tracing.py:22-73",
+        "src/utils/preview_utils.py:13-53",
+        "src/database/sql_session.py:5-32",
+        "src/database/models.py:7-22",
+        "src/api/routers/health.py:14-16",
+        "scripts/launch_demo.py:34-64",
+        "scripts/demo.sh:35",
+        "scripts/create_tables.py:6-11",
+        "docker/docker-compose.yml:1-25",
+        "docker/docker-compose.observability.yml:1-70",
+        "tests/test_security.py:171-192",
+        "tests/test_configuration_audit.py:92-99"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-001",
+      "module_id": "auth-console",
+      "title": "注册：不需要登录，四种校验，冲突统一 409",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 87,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Login.vue:21",
+        "frontend/src/views/Login.vue:44-47",
+        "src/api/routers/auth.py:40-41",
+        "src/database/models.py:7-22",
+        "src/api/routers/auth.py:18",
+        "src/api/routers/auth.py:20-28",
+        "src/api/routers/auth.py:42-44",
+        "src/api/routers/auth.py:34-38",
+        "tests/test_auth_functional.py:14-29",
+        "src/api/routers/auth.py:46-50",
+        "tests/test_auth_functional.py:31-43",
+        "src/utils/security.py:14-18",
+        "src/api/routers/auth.py:15-59",
+        "tests/test_auth_functional.py:14-56"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-002",
+      "module_id": "auth-console",
+      "title": "登录：表单换 token，唯一被限流的端点",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 113,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Login.vue:49-55",
+        "src/api/routers/auth.py:69",
+        "frontend/src/views/Login.vue:42-63",
+        "src/api/routers/auth.py:61-76",
+        "src/settings.py:20",
+        "src/utils/security.py:20-31",
+        "tests/test_auth_functional.py:58-70",
+        "src/api/routers/auth.py:71",
+        "tests/test_auth_functional.py:80-98",
+        "src/api/routers/auth.py:62",
+        "src/utils/rate_limit.py:8-9",
+        "frontend/src/views/Login.vue:59-61",
+        "frontend/src/views/Login.vue:49-61",
+        "tests/test_auth_functional.py:58-98"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-003",
+      "module_id": "auth-console",
+      "title": "凭据携带：只存 localStorage，只走 Authorization 头",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 139,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Login.vue:53-54",
+        "frontend/src/App.vue:103",
+        "frontend/src/api/index.js:7-13",
+        "frontend/src/utils/auth.js:4-11",
+        "frontend/src/utils/sse.js:15",
+        "frontend/src/views/KnowledgeBaseDetail.vue:268-270",
+        "frontend/src/api/index.js:15-24",
+        "frontend/src/utils/auth.js:13-24",
+        "frontend/src/utils/auth.test.js:39-67",
+        "frontend/src/views/Login.test.js:31-52",
+        "frontend/src/api/index.js:3-24",
+        "frontend/src/utils/auth.js:4-24",
+        "src/settings.py:20"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-004",
+      "module_id": "auth-console",
+      "title": "后端每次请求重验：验签 + 查库 + is_active",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 163,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "src/api/dependencies.py:10",
+        "src/api/dependencies.py:12",
+        "src/api/dependencies.py:19",
+        "src/api/dependencies.py:24-28",
+        "src/api/dependencies.py:15-20",
+        "src/api/dependencies.py:35-36",
+        "tests/test_health.py:16-19",
+        "tests/test_aiops_auth.py:12",
+        "tests/test_security.py:13-58",
+        "src/api/dependencies.py:10-36",
+        "tests/test_health.py:16-26"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-005",
+      "module_id": "auth-console",
+      "title": "前端守卫只判\"有没有\"，不判\"好不好\"",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 188,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/router/index.js:24-31",
+        "frontend/src/router/index.js:4-17",
+        "frontend/src/api/index.js:15-24"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-006",
+      "module_id": "auth-console",
+      "title": "对象级越权边界：四个域，四条不同策略",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 210,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "src/api/routers/monitor.py:116-127",
+        "src/api/routers/evaluation.py:27-41",
+        "src/api/routers/evaluation.py:347",
+        "src/api/routers/evaluation.py:495-496",
+        "src/api/routers/storage.py:18-20",
+        "src/api/routers/storage.py:23-40",
+        "src/api/routers/storage.py:53-55",
+        "src/api/routers/aiops.py:123-129",
+        "src/api/routers/aiops.py:184-190",
+        "src/api/routers/aiops.py:193-205",
+        "src/database/models.py:7-22",
+        "tests/test_storage_security.py:32-100",
+        "src/api/routers/monitor.py:108-130",
+        "src/api/routers/storage.py:18-55"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-007",
+      "module_id": "auth-console",
+      "title": "没有登出、续期、改密、找回",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 237,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "未标注",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/App.vue:126-130",
+        "src/api/routers/auth.py:40",
+        "src/api/dependencies.py:10-36",
+        "src/utils/security.py:20-31"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUTH-008",
+      "module_id": "auth-console",
+      "title": "控制台骨架：12 条路由、9 个导航项、两处已核实的口径裂缝",
+      "doc_path": "requirements/modules/auth-console.md",
+      "doc_line": 260,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUTH"
+      ],
+      "source_anchors": [
+        "frontend/src/App.vue:3",
+        "frontend/src/App.vue:56",
+        "frontend/src/App.vue:105",
+        "frontend/src/App.vue:11-43",
+        "frontend/src/router/index.js:4-17",
+        "frontend/src/views/Monitor.vue:306-310",
+        "frontend/src/views/Monitor.vue:321-329",
+        "src/api/routers/storage.py:63",
+        "frontend/src/views/KnowledgeBaseDetail.vue:268-270",
+        "frontend/src/views/Monitor.vue:213",
+        "src/api/routers/monitor.py:116-119",
+        "frontend/src/views/Dashboard.vue:120-151",
+        "frontend/src/views/Dashboard.vue:105-113",
+        "src/api/routers/storage.py:62-63",
+        "frontend/src/views/Dashboard.vue:105-173",
+        "frontend/src/views/Login.vue:35",
+        "tests/test_auth_functional.py:14-56",
+        "tests/test_auth_functional.py:14-29",
+        "tests/test_security.py:102-140",
+        "tests/test_auth_functional.py:100-103",
+        "tests/test_auth_functional.py:58-70",
+        "tests/test_security.py:13-58",
+        "tests/test_auth_functional.py:80-98",
+        "tests/test_health.py:16-26",
+        "frontend/src/views/Login.test.js:31-52",
+        "frontend/src/utils/auth.test.js:39-67",
+        "tests/test_storage_security.py:32-100",
+        "frontend/src/App.vue:126-130",
+        "src/main.py:223-230",
+        "src/api/routers/auth.py:69",
+        "frontend/src/views/Monitor.vue:306-329",
+        "frontend/src/router/index.js:24-31",
+        "src/api/routers/auth.py:15-28",
+        "src/api/routers/auth.py:40-59",
+        "src/api/routers/auth.py:61-76",
+        "src/api/dependencies.py:10-36",
+        "src/utils/security.py:7-31",
+        "src/utils/rate_limit.py:8-9",
+        "src/settings.py:19-20",
+        "src/database/models.py:7-22",
+        "src/api/routers/monitor.py:108-130",
+        "src/api/routers/evaluation.py:27-41",
+        "src/api/routers/evaluation.py:495-496",
+        "src/api/routers/storage.py:18-55",
+        "src/api/routers/aiops.py:123-129",
+        "src/api/routers/aiops.py:184-205",
+        "frontend/src/router/index.js:4-31",
+        "frontend/src/api/index.js:3-24",
+        "frontend/src/utils/auth.js:4-36",
+        "frontend/src/utils/sse.js:12-24",
+        "frontend/src/views/Login.vue:35-63",
+        "frontend/src/App.vue:3-56",
+        "frontend/src/utils/constants.js:5-7"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-001",
+      "module_id": "kb-ingest",
+      "title": "创建知识库并选择检索方式",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 63,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "frontend/src/views/KnowledgeBase.vue:5",
+        "frontend/src/views/KnowledgeBase.vue:61",
+        "src/api/routers/knowledge_base.py:219",
+        "src/main.py:257",
+        "src/api/routers/knowledge_base.py:46",
+        "src/api/routers/knowledge_base.py:49",
+        "src/api/routers/knowledge_base.py:51-56",
+        "src/api/routers/knowledge_base.py:64",
+        "frontend/src/views/KnowledgeBase.vue:166-176",
+        "src/worker/tasks.py:95-107",
+        "src/api/routers/knowledge_base.py:66-76",
+        "frontend/src/views/KnowledgeBase.vue:199-208",
+        "frontend/src/views/KnowledgeBase.vue:207",
+        "src/api/routers/knowledge_base.py:232",
+        "src/database/models.py:24-41",
+        "src/api/routers/knowledge_base.py:226-233",
+        "src/api/routers/knowledge_base.py:45-56",
+        "frontend/src/views/KnowledgeBase.vue:61-101"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-002",
+      "module_id": "kb-ingest",
+      "title": "上传前的四道门：文件名、扩展名、大小、魔数",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 89,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "frontend/src/views/KnowledgeBaseDetail.vue:23-36",
+        "src/api/routers/knowledge_base.py:315-316",
+        "src/api/routers/knowledge_base.py:197-215",
+        "src/api/routers/knowledge_base.py:145-148",
+        "src/api/routers/knowledge_base.py:339-345",
+        "src/api/routers/knowledge_base.py:159-194",
+        "src/api/routers/knowledge_base.py:404",
+        "src/api/routers/knowledge_base.py:411",
+        "frontend/src/views/KnowledgeBaseDetail.vue:44-56",
+        "src/api/routers/knowledge_base.py:339",
+        "src/api/routers/knowledge_base.py:382-383",
+        "src/api/routers/knowledge_base.py:363-364",
+        "src/api/routers/knowledge_base.py:165-167",
+        "src/api/routers/knowledge_base.py:320-324",
+        "src/api/routers/knowledge_base.py:281",
+        "src/settings.py:15",
+        "src/api/routers/knowledge_base.py:368",
+        "src/api/routers/knowledge_base.py:374-380",
+        "src/api/routers/knowledge_base.py:143-215"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-003",
+      "module_id": "kb-ingest",
+      "title": "上传后的异步边界：三种情形，用户只看到一种",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 122,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:131-141",
+        "src/api/routers/knowledge_base.py:132-137",
+        "src/api/routers/knowledge_base.py:133",
+        "src/api/routers/knowledge_base.py:138-141",
+        "src/api/routers/knowledge_base.py:29-41",
+        "src/api/routers/knowledge_base.py:405-411",
+        "src/worker/celery_app.py:23-24",
+        "frontend/src/views/KnowledgeBaseDetail.vue:345-357",
+        "frontend/src/composables/usePolling.js:8",
+        "frontend/src/views/KnowledgeBaseDetail.vue:316-328",
+        "src/worker/tasks.py:65",
+        "src/main.py:255-265",
+        "src/worker/celery_app.py:15-24"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-004",
+      "module_id": "kb-ingest",
+      "title": "解析与页号感知切分",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 145,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/processors/multi_doc_parser.py:17-36",
+        "src/processors/pdf_parser.py:58-59",
+        "src/processors/pdf_parser.py:61-63",
+        "src/processors/multi_doc_parser.py:14",
+        "src/processors/multi_doc_parser.py:80",
+        "src/processors/multi_doc_parser.py:93",
+        "src/processors/multi_doc_parser.py:157-162",
+        "src/processors/pdf_parser.py:80-86",
+        "src/worker/tasks.py:88-89",
+        "src/processors/text_chunker.py:12-16",
+        "src/worker/tasks.py:112-115",
+        "src/processors/text_chunker.py:69-95",
+        "src/processors/text_chunker.py:18-67",
+        "src/worker/tasks.py:95-107",
+        "src/processors/text_chunker.py:51",
+        "src/worker/tasks.py:119",
+        "frontend/src/views/KnowledgeBaseDetail.vue:79",
+        "src/worker/tasks.py:122-128",
+        "src/worker/tasks.py:106-107",
+        "src/processors/multi_doc_parser.py:14-36",
+        "src/processors/pdf_parser.py:58-63",
+        "src/processors/text_chunker.py:12-95",
+        "src/worker/tasks.py:84-128",
+        "frontend/src/views/KnowledgeBase.vue:77-84"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-005",
+      "module_id": "kb-ingest",
+      "title": "就绪：向量化、双写、以及 bm25 的短路",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 170,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "未标注",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/worker/tasks.py:144-206",
+        "src/embedding/dashscope_embedding.py:21",
+        "src/settings.py:50-51",
+        "src/embedding/dashscope_embedding.py:37-38",
+        "src/worker/tasks.py:149-150",
+        "src/worker/tasks.py:159",
+        "src/worker/tasks.py:169-178",
+        "src/worker/tasks.py:182-193",
+        "src/worker/tasks.py:198",
+        "src/database/vector_db.py:128",
+        "src/database/vector_db.py:130-131",
+        "src/worker/tasks.py:201",
+        "src/worker/tasks.py:130-140",
+        "src/database/vector_db.py:35-41",
+        "src/database/vector_db.py:172-174",
+        "src/database/local_vector_store.py:64-87",
+        "src/database/models.py:74",
+        "src/database/vector_db.py:206-218",
+        "src/database/models.py:39-40",
+        "src/api/routers/knowledge_base.py:260-269",
+        "src/worker/tasks.py:130-206",
+        "src/embedding/dashscope_embedding.py:17-43",
+        "src/database/vector_db.py:108-151"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-006",
+      "module_id": "kb-ingest",
+      "title": "失败、重试与重新切分",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 194,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/worker/tasks.py:208-229",
+        "src/worker/tasks.py:220-224",
+        "frontend/src/utils/status.js:30",
+        "frontend/src/views/KnowledgeBaseDetail.vue:59-106",
+        "src/api/routers/knowledge_base.py:78-89",
+        "frontend/src/views/KnowledgeBaseDetail.vue:103",
+        "src/api/routers/knowledge_base.py:474-490",
+        "frontend/src/views/KnowledgeBaseDetail.vue:38",
+        "src/api/routers/knowledge_base.py:413-434",
+        "frontend/src/views/KnowledgeBaseDetail.vue:102",
+        "src/api/routers/knowledge_base.py:698-733",
+        "frontend/src/views/KnowledgeBaseDetail.vue:543-560",
+        "src/worker/tasks.py:106-107",
+        "src/api/routers/knowledge_base.py:448-452"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-007",
+      "module_id": "kb-ingest",
+      "title": "本地关键词检索入口（仅 bm25 库）",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 220,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "frontend/src/views/KnowledgeBaseDetail.vue:9-20",
+        "src/api/routers/knowledge_base.py:507-519",
+        "src/api/routers/knowledge_base.py:120-122",
+        "frontend/src/views/KnowledgeBaseDetail.vue:283",
+        "frontend/src/views/KnowledgeBaseDetail.vue:278",
+        "src/api/routers/knowledge_base.py:516-519",
+        "frontend/src/views/KnowledgeBaseDetail.vue:14-19",
+        "src/api/routers/knowledge_base.py:512-513",
+        "frontend/src/views/KnowledgeBaseDetail.vue:13",
+        "src/retrieval/knowledge_bm25.py:7-19"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-008",
+      "module_id": "kb-ingest",
+      "title": "QA 对：生成、手建、编辑、删除、导出",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 240,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:521-570",
+        "src/api/routers/knowledge_base.py:524",
+        "src/api/routers/knowledge_base.py:541",
+        "src/api/routers/knowledge_base.py:546",
+        "src/services/qa_generator.py:28",
+        "src/services/qa_generator.py:55-57",
+        "frontend/src/views/KnowledgeBaseDetail.vue:429",
+        "src/api/routers/knowledge_base.py:560",
+        "src/services/qa_generator.py:10",
+        "src/api/routers/knowledge_base.py:561",
+        "src/api/routers/knowledge_base.py:575-602",
+        "src/api/routers/knowledge_base.py:604-630",
+        "src/api/routers/knowledge_base.py:632-648",
+        "src/api/routers/knowledge_base.py:755-769",
+        "src/api/routers/knowledge_base.py:650-679",
+        "frontend/src/views/KnowledgeBaseDetail.vue:499-516",
+        "src/api/routers/knowledge_base.py:537-538",
+        "src/api/routers/knowledge_base.py:521-679",
+        "src/services/qa_generator.py:10-57"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-009",
+      "module_id": "kb-ingest",
+      "title": "分片查看与原文预览",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 264,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:681-696",
+        "src/api/routers/knowledge_base.py:111-117",
+        "frontend/src/views/KnowledgeBaseDetail.vue:199-205",
+        "src/api/routers/knowledge_base.py:735-753",
+        "src/utils/preview_utils.py:56-183",
+        "src/api/routers/knowledge_base.py:750-751",
+        "frontend/src/views/KnowledgeBaseDetail.vue:534",
+        "src/utils/preview_utils.py:113",
+        "src/utils/preview_utils.py:145-146"
+      ]
+    },
+    {
+      "requirement_id": "REQ-KB-010",
+      "module_id": "kb-ingest",
+      "title": "权限边界与删除的真实影响",
+      "doc_path": "requirements/modules/kb-ingest.md",
+      "doc_line": 288,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "未标注",
+        "enabled": "未标注",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-KB-INGEST"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:281-282",
+        "src/api/routers/knowledge_base.py:244-246",
+        "src/api/routers/knowledge_base.py:260-269",
+        "src/api/routers/knowledge_base.py:448-452",
+        "src/api/routers/knowledge_base.py:239-309",
+        "src/database/models.py:39-40",
+        "src/database/vector_db.py:206-218",
+        "frontend/src/views/KnowledgeBase.vue:77-84",
+        "src/worker/tasks.py:106-107",
+        "src/api/routers/knowledge_base.py:78-89",
+        "frontend/src/views/KnowledgeBase.vue:166-176",
+        "src/worker/tasks.py:95-107",
+        "src/api/routers/knowledge_base.py:436-457",
+        "src/api/routers/knowledge_base.py:226-233",
+        "src/api/routers/knowledge_base.py:29-41",
+        "src/worker/tasks.py:34-232",
+        "src/worker/celery_app.py:6-24",
+        "src/processors/multi_doc_parser.py:14-162",
+        "src/processors/pdf_parser.py:32-86",
+        "src/processors/text_chunker.py:9-95",
+        "src/database/vector_db.py:26-218",
+        "src/database/local_vector_store.py:64-262",
+        "src/embedding/dashscope_embedding.py:9-52",
+        "src/retrieval/knowledge_bm25.py:7-19",
+        "src/utils/preview_utils.py:19-183",
+        "frontend/src/views/KnowledgeBase.vue:5-244",
+        "frontend/src/views/KnowledgeBaseDetail.vue:9-618",
+        "frontend/src/composables/usePolling.js:8",
+        "frontend/src/utils/status.js:30-33",
+        "src/database/models.py:24-93"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-001",
+      "module_id": "rag-qa",
+      "title": "两种提问方式：纯聊天流式、带知识库同步",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 76,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Chat.vue:340-343",
+        "src/api/routers/chat.py:210",
+        "frontend/src/views/Chat.vue:345-358",
+        "src/api/routers/chat.py:64",
+        "src/api/routers/chat.py:243-247",
+        "src/api/routers/chat.py:216-221",
+        "src/api/routers/chat.py:144-150",
+        "src/llm/llm_client.py:75",
+        "src/llm/llm_client.py:97",
+        "frontend/src/views/Chat.vue:335-358",
+        "frontend/src/views/Chat.vue:385-392",
+        "frontend/src/views/Chat.vue:331-374",
+        "src/api/routers/chat.py:64-169"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-002",
+      "module_id": "rag-qa",
+      "title": "意图路由：先规则、后模型、再分派",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 99,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/services/rag_service.py:28-46",
+        "src/services/rag_service.py:15-18",
+        "src/services/rag_service.py:20-25",
+        "src/services/question_analyzer.py:12-57",
+        "src/services/question_analyzer.py:50-57",
+        "src/services/rag_service.py:125-153",
+        "src/services/rag_service.py:172",
+        "src/services/rag_service.py:223-228",
+        "src/services/rag_service.py:15-46"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-003",
+      "module_id": "rag-qa",
+      "title": "检索：混合（向量 + BM25 + RRF 融合）与它的陈旧陷阱",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 128,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/retrieval/hybrid_retriever.py:151-193",
+        "src/retrieval/vector_retriever.py:12-27",
+        "src/retrieval/bm25_retriever.py:70-122",
+        "src/retrieval/hybrid_retriever.py:22",
+        "src/services/rag_service.py:267-281",
+        "src/retrieval/hybrid_retriever.py:53-60",
+        "src/retrieval/bm25_retriever.py:22-37",
+        "src/retrieval/hybrid_retriever.py:85-86",
+        "src/retrieval/hybrid_retriever.py:97-101",
+        "src/retrieval/hybrid_retriever.py:141-149",
+        "src/worker/tasks.py:34-232",
+        "src/retrieval/bm25_retriever.py:43",
+        "src/retrieval/hybrid_retriever.py:137-139",
+        "src/retrieval/knowledge_bm25.py:7-19",
+        "src/settings.py:110",
+        "src/retrieval/hybrid_retriever.py:156",
+        "src/services/rag_service.py:49-64",
+        "src/settings.py:86",
+        "src/database/vector_db.py:128",
+        "src/database/vector_db.py:172-174",
+        "src/retrieval/hybrid_retriever.py:22-61",
+        "src/retrieval/bm25_retriever.py:22-122"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-004",
+      "module_id": "rag-qa",
+      "title": "重排：真实在线调用，失败静默降级",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 162,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/retrieval/reranker.py:14-55",
+        "src/retrieval/reranker.py:28-36",
+        "src/settings.py:113",
+        "src/settings.py:114",
+        "src/settings.py:115",
+        "src/retrieval/reranker.py:38-47",
+        "src/retrieval/reranker.py:49-51",
+        "src/retrieval/reranker.py:53-55",
+        "src/services/rag_service.py:241",
+        "src/settings.py:113-115",
+        "src/services/rag_service.py:241-253"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-005",
+      "module_id": "rag-qa",
+      "title": "生成、来源回传与界面渲染",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 182,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/services/rag_service.py:267-281",
+        "src/llm/llm_client.py:176-212",
+        "src/services/rag_service.py:256-263",
+        "src/services/rag_service.py:352-356",
+        "src/services/rag_service.py:337-350",
+        "src/api/routers/chat.py:164-169",
+        "src/worker/tasks.py:182-193",
+        "frontend/src/views/Chat.vue:96-103",
+        "src/services/rag_service.py:282-288",
+        "src/api/routers/chat.py:153-162",
+        "src/services/rag_service.py:230-292",
+        "src/api/routers/chat.py:153-169"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-006",
+      "module_id": "rag-qa",
+      "title": "多跳问答",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 206,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/services/rag_service.py:182-186",
+        "src/settings.py:127",
+        "src/settings.py:128",
+        "src/services/rag_service.py:309",
+        "src/services/rag_service.py:317",
+        "src/services/rag_service.py:320-326",
+        "src/services/rag_service.py:333",
+        "src/services/question_analyzer.py:12-57",
+        "src/services/rag_service.py:107-117",
+        "src/services/rag_service.py:174-194",
+        "src/settings.py:127-128"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-007",
+      "module_id": "rag-qa",
+      "title": "助手配置：能保存、能透传、但检索参数不生效",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 222,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Chat.vue:24",
+        "frontend/src/views/Chat.vue:170-209",
+        "src/api/routers/assistant.py:24",
+        "src/database/models.py:188",
+        "src/api/routers/chat.py:133-142",
+        "src/services/rag_service.py:84-92",
+        "src/api/routers/chat.py:22-40",
+        "frontend/src/views/Chat.vue:346-350",
+        "frontend/src/views/Chat.vue:24-27"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-008",
+      "module_id": "rag-qa",
+      "title": "会话与短期记忆",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 239,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/api/routers/chat.py:96-123",
+        "src/services/memory_service.py:30-53",
+        "src/services/memory_service.py:55-64",
+        "src/services/rag_service.py:91-92",
+        "src/settings.py:194",
+        "src/settings.py:196",
+        "src/services/memory_service.py:56",
+        "frontend/src/views/Chat.vue:472-481",
+        "src/api/routers/chat.py:346-356",
+        "src/services/memory_service.py:30-69",
+        "src/settings.py:194-196"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-009",
+      "module_id": "rag-qa",
+      "title": "权限与知识库可见性边界",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 257,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/api/routers/chat.py:74-80",
+        "src/api/routers/chat.py:83",
+        "src/api/routers/chat.py:84-86",
+        "src/api/routers/chat.py:89-94",
+        "frontend/src/api/index.js:7-10",
+        "frontend/src/router/index.js:24-31",
+        "src/api/routers/chat.py:74-94",
+        "frontend/src/api/index.js:4-19"
+      ]
+    },
+    {
+      "requirement_id": "REQ-RAG-010",
+      "module_id": "rag-qa",
+      "title": "模型白名单与失败时的用户可见性",
+      "doc_path": "requirements/modules/rag-qa.md",
+      "doc_line": 276,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-RAG-QUERY"
+      ],
+      "source_anchors": [
+        "src/settings.py:77-79",
+        "src/api/routers/chat.py:22-40",
+        "src/api/routers/health.py:176-195",
+        "frontend/src/views/Chat.vue:440-448",
+        "src/llm/llm_client.py:100-140",
+        "src/llm/llm_client.py:17-25",
+        "frontend/src/views/Chat.vue:372",
+        "src/llm/llm_client.py:174",
+        "src/api/routers/chat.py:271-276",
+        "frontend/src/views/Chat.vue:398-400",
+        "src/main.py:246-252",
+        "src/services/rag_service.py:84-92",
+        "src/retrieval/hybrid_retriever.py:85-86",
+        "src/retrieval/hybrid_retriever.py:137-139",
+        "frontend/src/views/Chat.vue:96-103",
+        "src/worker/tasks.py:182-193",
+        "src/api/routers/chat.py:144-150",
+        "frontend/src/views/Chat.vue:345-358",
+        "src/services/rag_service.py:223-228",
+        "src/settings.py:108-110",
+        "src/api/routers/chat.py:89-94",
+        "src/services/memory_service.py:72-73",
+        "src/settings.py:195",
+        "src/services/memory_service.py:75-76",
+        "src/services/rag_service.py:15-46",
+        "src/services/question_analyzer.py:12-57",
+        "src/retrieval/hybrid_retriever.py:22-61",
+        "src/retrieval/vector_retriever.py:12-27",
+        "src/retrieval/bm25_retriever.py:22-122",
+        "src/retrieval/knowledge_bm25.py:7-19",
+        "src/retrieval/reranker.py:14-55",
+        "src/database/vector_db.py:108-218",
+        "src/database/local_vector_store.py:150-226",
+        "src/settings.py:56",
+        "src/services/memory_service.py:12-76",
+        "frontend/src/views/Chat.vue:24-27",
+        "frontend/src/api/index.js:4-19",
+        "frontend/src/utils/chat.js:8",
+        "src/database/models.py:169-203"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-001",
+      "module_id": "aiops-diagnosis",
+      "title": "一个 SSE 端点、三个字段的提交契约",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 136,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:40-44",
+        "src/main.py:263",
+        "src/api/routers/aiops.py:43",
+        "src/api/routers/aiops.py:35",
+        "src/api/routers/aiops.py:54",
+        "src/api/routers/aiops.py:55-56",
+        "src/agent/aiops/graph.py:341-343",
+        "frontend/src/views/AIOps.vue:715-792",
+        "src/api/routers/aiops.py:86-94",
+        "frontend/src/views/AIOps.vue:816-819",
+        "src/agent/aiops/graph.py:427-434",
+        "docs/aiops-run-store.md:55",
+        "src/api/routers/aiops.py:58",
+        "docs/aiops-goal-handover-20261108.md:48-64",
+        "src/api/routers/aiops.py:32-56",
+        "src/agent/aiops/graph.py:341-345"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-002",
+      "module_id": "aiops-diagnosis",
+      "title": "事件契约：实际 11 种，文档只写 5 种（文档缺陷）",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 178,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "未标注",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/events.py:66-74",
+        "src/api/routers/aiops.py:113-116",
+        "src/utils/token_meter.py:132-141",
+        "src/agent/aiops/graph.py:396-407",
+        "src/api/routers/aiops.py:45-53",
+        "docs/aiops-events.md:18-27",
+        "docs/aiops-events.md:6",
+        "docs/aiops-events.md:80-83",
+        "src/agent/aiops/events.py:282-309",
+        "frontend/src/views/AIOps.vue:715-792",
+        "frontend/src/views/AIOps.vue:775-778",
+        "src/agent/aiops/graph.py:590",
+        "src/agent/aiops/events.py:66-86"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-003",
+      "module_id": "aiops-diagnosis",
+      "title": "图结构：5 个节点、1 条固定边、2 处条件分叉",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 220,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/graph.py:55-59",
+        "src/agent/aiops/graph.py:213",
+        "src/agent/aiops/graph.py:214",
+        "src/agent/aiops/graph.py:216-217",
+        "src/agent/aiops/graph.py:224-228",
+        "src/agent/aiops/graph.py:230-254",
+        "src/agent/aiops/graph.py:255-268",
+        "src/agent/aiops/graph.py:242-243",
+        "src/agent/aiops/graph.py:285-287",
+        "src/agent/aiops/graph.py:289-290",
+        "src/agent/aiops/state.py:3-6",
+        "src/agent/aiops/state.py:13-78",
+        "src/agent/aiops/graph.py:596-603"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-004",
+      "module_id": "aiops-diagnosis",
+      "title": "计划生成：6 步硬上限、目标未核实不出计划、异常兜底 3 步",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 253,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/planner.py:39",
+        "src/agent/aiops/planner.py:392-394",
+        "src/agent/aiops/planner.py:364-370",
+        "src/agent/aiops/planner.py:408-418",
+        "src/agent/aiops/planner.py:229-284",
+        "src/agent/aiops/planner.py:41-55",
+        "src/agent/aiops/planner.py:380-385",
+        "src/agent/aiops/planner.py:332-359",
+        "frontend/src/views/AIOps.vue:718-730"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-005",
+      "module_id": "aiops-diagnosis",
+      "title": "什么时候停：两套阈值，且\"自主调查\"模式下步数上限不生效",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 279,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/strategies/default.py:20",
+        "src/agent/aiops/strategies/default.py:21",
+        "src/agent/aiops/strategies/default.py:120-121",
+        "src/agent/aiops/strategies/default.py:238-240",
+        "src/agent/aiops/strategies/dynamic_classification.py:49",
+        "src/agent/aiops/strategies/dynamic_classification.py:39",
+        "src/agent/aiops/strategies/dynamic_classification.py:41",
+        "src/agent/aiops/strategies/default.py:197",
+        "src/agent/aiops/strategies/dynamic_classification.py:708",
+        "src/agent/aiops/graph.py:372-383",
+        "src/agent/aiops/strategies/investigation.py:3756-3799",
+        "src/agent/aiops/strategies/investigation.py:3789-3790",
+        "docs/aiops-events.md:78",
+        "src/agent/aiops/state.py:13-78",
+        "docs/aiops-goal-handover-20261108.md:48-64",
+        "src/agent/aiops/strategies/default.py:20-21",
+        "src/agent/aiops/strategies/dynamic_classification.py:39-49"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-006",
+      "module_id": "aiops-diagnosis",
+      "title": "报告必须挂证据引用，引用对不上就降级（不崩溃）",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 314,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/reporting.py:21-22",
+        "src/agent/aiops/reporting.py:24-26",
+        "src/agent/aiops/reporting.py:138-145",
+        "src/agent/aiops/reporting.py:265",
+        "src/agent/aiops/reporting.py:276",
+        "src/agent/aiops/reporting.py:403-405",
+        "src/agent/aiops/reporting.py:418-419",
+        "src/agent/aiops/reporting.py:414-417",
+        "src/agent/aiops/reporting.py:299-365",
+        "src/agent/aiops/reporting.py:420-421",
+        "src/agent/aiops/run_store.py:106-107",
+        "docs/aiops-goal-handover-20261108.md:48-64",
+        "src/agent/aiops/reporting.py:21-26"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-007",
+      "module_id": "aiops-diagnosis",
+      "title": "判定枚举：4 个字段的取值集合是硬约束",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 350,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/strategies/investigation.py:45",
+        "src/agent/aiops/strategies/investigation.py:99-101",
+        "src/agent/aiops/strategies/investigation.py:109",
+        "src/agent/aiops/strategies/investigation.py:110",
+        "src/agent/aiops/strategies/investigation.py:60-68",
+        "docs/aiops-goal-handover-20261108.md:74-83",
+        "src/agent/aiops/strategies/investigation.py:3409",
+        "docs/aiops-goal-handover-20261108.md:85-94",
+        "docs/aiops-goal-handover-20261108.md:96-107",
+        "docs/aiops-goal-handover-20261108.md:114-155",
+        "docs/aiops-goal-handover-20261108.md:186-200",
+        ".github/workflows/tests.yml:46-47",
+        "docs/aiops-goal-handover-20261108.md:161-163",
+        "src/agent/aiops/strategies/investigation.py:43-68",
+        "docs/aiops-goal-handover-20261108.md:74-107"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-008",
+      "module_id": "aiops-diagnosis",
+      "title": "工具加载：MCP 两层降级 + 探测工具互斥",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 383,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/mcp_client.py:85-134",
+        "src/agent/mcp_client.py:36",
+        "src/agent/mcp_client.py:108",
+        "src/agent/mcp_client.py:129",
+        "src/agent/mcp_client.py:132",
+        "src/agent/mcp_client.py:1-12",
+        "src/agent/aiops/executor.py:88",
+        "src/agent/aiops/executor.py:91",
+        "src/agent/aiops/executor.py:268",
+        "src/agent/aiops/executor.py:146-148",
+        "src/agent/aiops/executor.py:235",
+        "src/agent/aiops/executor.py:174-179",
+        "src/agent/aiops/tools.py:108-112",
+        "src/agent/aiops/tools.py:117-119",
+        "src/agent/aiops/tools.py:114-116",
+        "src/agent/aiops/executor.py:81-86",
+        "src/agent/aiops/executor.py:63-68",
+        "src/agent/aiops/tools.py:94-132",
+        "src/agent/aiops/executor.py:63-91"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-009",
+      "module_id": "aiops-diagnosis",
+      "title": "证据来源可用性：6+1 个来源、7 种状态、缺了就写在报告里",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 411,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/evidence_sources.py:1-11",
+        "src/agent/aiops/evidence_sources.py:17-29",
+        "src/agent/aiops/evidence_sources.py:31-34",
+        "src/agent/aiops/evidence_sources.py:57-63",
+        "src/agent/aiops/evidence_sources.py:73-81",
+        "src/agent/aiops/evidence_sources.py:49-97",
+        "src/agent/aiops/evidence_sources.py:92-95",
+        "src/agent/aiops/evidence_sources.py:118-126",
+        "src/agent/aiops/evidence_sources.py:105-115",
+        "src/agent/aiops/evidence_sources.py:129-176",
+        "src/agent/aiops/evidence_sources.py:179-229",
+        "frontend/src/views/AIOps.vue:392-397"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-010",
+      "module_id": "aiops-diagnosis",
+      "title": "持久化边界：默认配置下诊断不可跨重启恢复",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 448,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/graph.py:106",
+        "src/agent/aiops/graph.py:148-156",
+        "src/settings.py:217",
+        "src/agent/aiops/graph.py:348",
+        "src/agent/aiops/graph.py:349-353",
+        "src/agent/aiops/graph.py:354-359",
+        "src/settings.py:187",
+        "src/settings.py:213",
+        "src/settings.py:220",
+        "src/api/routers/aiops.py:123-129",
+        "docs/aiops-run-store.md:47",
+        "docs/aiops-goal-handover-20261108.md:9-22"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-011",
+      "module_id": "aiops-diagnosis",
+      "title": "人工复核（HITL）：能挂起，但没有 HTTP 审批入口，也没有超时",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 478,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/human_review.py:32",
+        "src/agent/aiops/human_review.py:39-41",
+        "src/agent/aiops/human_review.py:45-50",
+        "src/agent/aiops/human_review.py:20",
+        "src/agent/aiops/graph.py:410-416",
+        "src/api/routers/aiops.py:157-158",
+        "src/agent/aiops/run_store.py:114-131",
+        "src/agent/aiops/run_store.py:98-103",
+        "src/settings.py:189",
+        "frontend/src/views/AIOps.vue:715-792",
+        "src/agent/aiops/graph.py:443-452",
+        "src/agent/aiops/graph.py:446-449",
+        "src/agent/aiops/graph.py:230-254",
+        "src/agent/aiops/human_review.py:20-52",
+        "src/api/routers/aiops.py:146-166",
+        "src/agent/aiops/run_store.py:98-131",
+        "src/settings.py:187-189",
+        "frontend/src/views/AIOps.vue:76-78"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-012",
+      "module_id": "aiops-diagnosis",
+      "title": "受控终端（Termcp）：前置拒绝、8 条审批校验、续跑只走 approve",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 509,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:55-56",
+        "src/agent/aiops/graph.py:347",
+        "src/agent/aiops/graph.py:372-383",
+        "src/agent/aiops/termcp_tools.py:133",
+        "src/agent/aiops/termcp_tools.py:133-221",
+        "src/agent/aiops/graph.py:167-173",
+        "src/agent/aiops/graph.py:396-407",
+        "src/agent/aiops/termcp_tools.py:43-83",
+        "src/api/routers/aiops.py:146-166",
+        "src/api/routers/aiops.py:150-155",
+        "src/api/routers/aiops.py:156",
+        "frontend/src/views/AIOps.vue:76-78",
+        "frontend/src/views/AIOps.vue:829-854",
+        "frontend/src/views/AIOps.vue:856-890",
+        "src/agent/aiops/graph.py:183-195",
+        "src/settings.py:213",
+        "src/settings.py:215",
+        "src/settings.py:214",
+        "src/agent/aiops/termcp_tools.py:36-83",
+        "src/settings.py:212-216"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-013",
+      "module_id": "aiops-diagnosis",
+      "title": "本次消耗计量：后端一定会推，前端一定不显示",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 557,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:103-116",
+        "src/utils/token_meter.py:132-141",
+        "src/api/routers/aiops.py:107",
+        "src/api/routers/aiops.py:117-118",
+        "frontend/src/views/AIOps.vue:715-792",
+        "src/utils/token_meter.py:23-29",
+        "docs/aiops-goal-handover-20261108.md:166-168",
+        "docs/aiops-goal-handover-20261108.md:26-39",
+        "src/api/routers/aiops.py:103-118",
+        "src/settings.py:189",
+        "src/api/routers/aiops.py:157-158",
+        "src/agent/aiops/run_store.py:114-131",
+        "src/api/routers/aiops.py:45-53",
+        "docs/aiops-events.md:18-27",
+        "src/agent/aiops/events.py:316-320",
+        "src/database/models.py:276",
+        "src/agent/aiops/run_store.py:27",
+        "docs/aiops-run-store.md:47",
+        "src/agent/aiops/graph.py:348",
+        "src/agent/aiops/graph.py:106",
+        "src/api/routers/aiops.py:156",
+        "docs/aiops-goal-handover-20261108.md:161-163",
+        "docs/aiops-goal-handover-20261108.md:171-172",
+        "src/settings.py:184-185",
+        "src/main.py:255-265",
+        "src/api/routers/aiops.py:1-7",
+        "src/api/routers/aiops.py:146-166",
+        "src/main.py:263",
+        "src/agent/aiops/graph.py:55-59",
+        "src/agent/aiops/graph.py:332-441",
+        "src/agent/aiops/state.py:3-6",
+        "src/agent/aiops/events.py:20-86",
+        "docs/aiops-events.md:6",
+        "src/agent/aiops/planner.py:35",
+        "src/agent/aiops/executor.py:63-91",
+        "src/agent/aiops/replanner.py:23-56",
+        "src/agent/aiops/strategies/base.py:12-40",
+        "src/agent/aiops/strategies/default.py:20-22",
+        "src/agent/aiops/strategies/dynamic_classification.py:38-55",
+        "src/agent/aiops/strategies/investigation.py:27-126",
+        "src/agent/aiops/human_review.py:3-52",
+        "src/agent/aiops/reporting.py:21-41",
+        "src/agent/aiops/tools.py:21-132",
+        "src/agent/mcp_client.py:1-134",
+        "src/agent/aiops/evidence_sources.py:1-229",
+        "src/agent/aiops/evidence_reader.py:13-87",
+        "src/agent/aiops/termcp_tools.py:36-95",
+        "src/settings.py:132",
+        "src/agent/aiops/run_store.py:3",
+        "src/database/models.py:267-282",
+        "frontend/src/views/AIOps.vue:13-78",
+        "docs/aiops-goal-handover-20261108.md:9-22",
+        ".github/workflows/tests.yml:46-47",
+        "tests/test_recorded_round_replay.py:1"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-001",
+      "module_id": "aiops-audit",
+      "title": "运行记录只在受管运行时落库",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 99,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/graph.py:348",
+        "src/agent/aiops/graph.py:353",
+        "src/agent/aiops/graph.py:106",
+        "src/settings.py:187",
+        "src/api/routers/aiops.py:127-128",
+        "docs/aiops-goal-handover-20261108.md:18",
+        "src/agent/aiops/graph.py:348-353",
+        "src/api/routers/aiops.py:123-129"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-002",
+      "module_id": "aiops-audit",
+      "title": "运行状态有 7 个，但两处文档只写 6 个",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 117,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/run_store.py:75-87",
+        "src/agent/aiops/run_store.py:90-91",
+        "src/agent/aiops/graph.py:413",
+        "src/agent/aiops/run_store.py:94-95",
+        "src/agent/aiops/graph.py:398",
+        "src/agent/aiops/graph.py:422",
+        "src/agent/aiops/graph.py:325",
+        "src/database/models.py:276",
+        "src/agent/aiops/run_store.py:3",
+        "docs/aiops-run-store.md:23",
+        "docs/aiops-events.md:78",
+        "src/agent/aiops/run_store.py:25-31"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-003",
+      "module_id": "aiops-audit",
+      "title": "看运行详情时，checkpoint 的归属校验在路由层完成",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 143,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:123-129",
+        "src/api/routers/aiops.py:142",
+        "src/agent/aiops/graph.py:141",
+        "src/api/routers/aiops.py:123-143",
+        "src/agent/aiops/graph.py:140-146"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-004",
+      "module_id": "aiops-audit",
+      "title": "步级快照端点存在，但默认配置下 `total` 恒为 0",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 161,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/graph.py:292-296",
+        "src/settings.py:154",
+        "src/api/routers/aiops.py:180-181",
+        "docs/aiops-goal-handover-20261108.md:179",
+        "src/api/routers/aiops.py:169-181",
+        "docs/aiops-run-store.md:47"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-005",
+      "module_id": "aiops-audit",
+      "title": "证据台账按用户过滤，列表里不给原始文件引用",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 179,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:188",
+        "src/agent/aiops/run_store.py:249-250",
+        "src/agent/aiops/run_store.py:251-255",
+        "src/agent/aiops/run_store.py:254",
+        "src/agent/aiops/run_store.py:223",
+        "src/api/routers/aiops.py:190",
+        "frontend/src/views/AIOps.vue:413",
+        "docs/aiops-goal-handover-20261108.md:179",
+        "src/api/routers/aiops.py:184-190",
+        "src/agent/aiops/run_store.py:245-257"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-006",
+      "module_id": "aiops-audit",
+      "title": "原始证据引用只给 admin / auditor",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 198,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:198",
+        "src/agent/aiops/run_store.py:274-278",
+        "src/api/routers/aiops.py:204-205",
+        "src/database/models.py:14",
+        "frontend/src/views/AIOps.vue:415",
+        "src/agent/aiops/run_store.py:227",
+        "frontend/src/views/AIOps.test.js:253-281",
+        "src/api/routers/aiops.py:193-206",
+        "src/agent/aiops/run_store.py:260-281"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-007",
+      "module_id": "aiops-audit",
+      "title": "读原始证据文件有一整套护栏",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 218,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/evidence_reader.py:13-15",
+        "src/agent/aiops/evidence_reader.py:16-17",
+        "src/agent/aiops/evidence_reader.py:19",
+        "src/agent/aiops/evidence_reader.py:44-47",
+        "src/agent/aiops/evidence_reader.py:50-53",
+        "src/agent/aiops/evidence_reader.py:55-64",
+        "src/agent/aiops/evidence_reader.py:67",
+        "src/agent/aiops/evidence_reader.py:69-75",
+        "src/agent/aiops/evidence_reader.py:79",
+        "src/agent/aiops/evidence_reader.py:82-87",
+        "src/agent/aiops/planner.py:324-325",
+        "src/agent/aiops/evidence_reader.py:1-87"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-008",
+      "module_id": "aiops-audit",
+      "title": "探针状态：只有登记过的那台机器能查，新鲜度窗口是 [-30s, 180s]",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 245,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "否",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/api/routers/aiops.py:209-218",
+        "src/agent/aiops/run_store.py:284-297",
+        "mcp_servers/probe_gateway.py:78",
+        "src/database/models.py:315",
+        "frontend/src/views/AIOps.vue:395-397",
+        "src/database/models.py:314-328"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-009",
+      "module_id": "aiops-audit",
+      "title": "审计面上的四个空洞",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 263,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "否",
+        "enabled": "否",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/run_store.py:98-131",
+        "src/database/models.py:285-296",
+        "src/api/routers/aiops.py:40-218",
+        "src/settings.py:188-189",
+        "src/api/routers/aiops.py:113-116",
+        "frontend/src/views/AIOps.vue:715-792",
+        "docs/aiops-run-store.md:55",
+        "src/database/models.py:280",
+        "frontend/src/views/AIOps.vue:857",
+        "src/settings.py:189"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AUDIT-010",
+      "module_id": "aiops-audit",
+      "title": "数据保留：探针基线 24 小时，证据文件不自动清理",
+      "doc_path": "requirements/modules/aiops-audit.md",
+      "doc_line": 286,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-AUDIT",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "src/agent/aiops/run_store.py:313-320",
+        "src/agent/aiops/run_store.py:331",
+        "src/database/models.py:332",
+        "mcp_servers/probe_gateway.py:287",
+        "src/agent/aiops/run_store.py:332",
+        "src/settings.py:225",
+        "src/agent/aiops/run_store.py:300-339",
+        "src/database/models.py:331-343",
+        "src/settings.py:189",
+        "docs/aiops-run-store.md:23",
+        "src/database/models.py:14",
+        "src/database/models.py:280",
+        "src/api/routers/aiops.py:169-181",
+        "requirements/overview.md:112-127",
+        "src/api/routers/aiops.py:123-129",
+        "src/api/dependencies.py:12-37",
+        "src/agent/aiops/run_store.py:25-31",
+        "src/agent/aiops/run_store.py:134-143",
+        "src/agent/aiops/run_store.py:223-242",
+        "src/agent/aiops/run_store.py:203-220",
+        "mcp_servers/probe_gateway.py:25-36",
+        "src/database/models.py:267-363",
+        "src/agent/aiops/evidence_reader.py:13-19",
+        "src/probe/storage.py:7-45",
+        "src/probe/protocol.py:58-62",
+        "frontend/src/views/AIOps.vue:392-420",
+        "frontend/src/utils/chat.js:16-21",
+        "docs/aiops-run-store.md:6",
+        "docs/aiops-events.md:10-14",
+        "docs/aiops-goal-handover-20261108.md:26-39",
+        "src/settings.py:154"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-001",
+      "module_id": "evaluation",
+      "title": "新建评测任务",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 57,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "frontend/src/router/index.js:11",
+        "frontend/src/views/Evaluation.vue:238-250",
+        "src/api/routers/evaluation.py:283",
+        "src/main.py:264",
+        "src/api/routers/evaluation.py:44-52",
+        "frontend/src/views/Evaluation.vue:70",
+        "frontend/src/views/Evaluation.vue:65",
+        "src/api/routers/evaluation.py:292-293",
+        "src/api/routers/evaluation.py:294",
+        "src/api/routers/evaluation.py:297-306",
+        "src/api/routers/evaluation.py:310",
+        "src/api/routers/evaluation.py:314",
+        "src/api/routers/evaluation.py:54-64",
+        "frontend/src/views/Evaluation.vue:286-289",
+        "frontend/src/views/Evaluation.vue:291",
+        "src/api/routers/evaluation.py:322",
+        "src/api/routers/evaluation.py:316-323",
+        "frontend/src/views/Evaluation.vue:238-295"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-002",
+      "module_id": "evaluation",
+      "title": "题目数量的分配：ratios 如何变成实际条数",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 92,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/api/routers/evaluation.py:111-114",
+        "src/api/routers/evaluation.py:148-154",
+        "src/api/routers/evaluation.py:123-146",
+        "frontend/src/views/Evaluation.vue:85-92",
+        "frontend/src/views/Evaluation.vue:76-92"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-003",
+      "module_id": "evaluation",
+      "title": "题目由模型真实生成，不是模板拼装",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 119,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/services/qa_generator.py:10-57",
+        "src/api/routers/evaluation.py:116-119",
+        "src/services/qa_generator.py:28",
+        "src/services/qa_generator.py:11-17",
+        "src/services/qa_generator.py:36-38",
+        "src/services/qa_generator.py:40",
+        "src/services/qa_generator.py:43",
+        "src/api/routers/evaluation.py:123-146",
+        "src/services/qa_generator.py:46-51",
+        "src/services/qa_generator.py:52-54",
+        "src/services/qa_generator.py:55-57",
+        "src/api/routers/evaluation.py:143-144",
+        "src/api/routers/evaluation.py:156-161",
+        "src/api/routers/evaluation.py:116-146"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-004",
+      "module_id": "evaluation",
+      "title": "自定义评测集上传（JSON / CSV / XLSX）",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 150,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Evaluation.vue:238-250",
+        "src/api/routers/evaluation.py:337",
+        "frontend/src/views/Evaluation.vue:22-29",
+        "src/api/routers/evaluation.py:357-368",
+        "frontend/src/views/Evaluation.vue:34-36",
+        "src/api/routers/evaluation.py:379-383",
+        "frontend/src/views/Evaluation.vue:282",
+        "src/api/routers/evaluation.py:385",
+        "src/api/routers/evaluation.py:347",
+        "src/api/routers/evaluation.py:27-42",
+        "src/api/routers/evaluation.py:337-385",
+        "frontend/src/views/Evaluation.vue:22-36"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-005",
+      "module_id": "evaluation",
+      "title": "查看、编辑、删除评测集条目",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 182,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Evaluation.vue:183-184",
+        "src/api/routers/evaluation.py:405-415",
+        "src/api/routers/evaluation.py:74-77",
+        "src/api/routers/evaluation.py:417-436",
+        "src/api/routers/evaluation.py:438-458",
+        "src/database/models.py:161",
+        "src/database/models.py:163",
+        "frontend/src/views/Evaluation.vue:322-342",
+        "src/api/routers/evaluation.py:458",
+        "src/api/routers/evaluation.py:425",
+        "src/database/models.py:158-167",
+        "frontend/src/views/Evaluation.vue:297-342"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-006",
+      "module_id": "evaluation",
+      "title": "执行评测：逐题跑真实 RAG 再打分",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 209,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Evaluation.vue:191",
+        "src/api/routers/evaluation.py:387",
+        "src/api/routers/evaluation.py:399-400",
+        "src/api/routers/evaluation.py:165-279",
+        "src/api/routers/evaluation.py:171-172",
+        "src/api/routers/evaluation.py:199",
+        "src/api/routers/evaluation.py:202-207",
+        "src/api/routers/evaluation.py:209-214",
+        "src/api/routers/evaluation.py:221-234",
+        "src/api/routers/evaluation.py:246-248",
+        "src/api/routers/evaluation.py:402",
+        "src/api/routers/evaluation.py:216-218",
+        "src/api/routers/evaluation.py:237-244",
+        "src/api/routers/evaluation.py:272-277",
+        "src/api/routers/evaluation.py:397",
+        "frontend/src/views/Evaluation.vue:183-191"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-007",
+      "module_id": "evaluation",
+      "title": "打分：自研 LLM-as-Judge 的四维与它的边界",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 242,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/services/evaluator.py:11-61",
+        "src/services/evaluator.py:15",
+        "src/services/evaluator.py:17-47",
+        "src/services/evaluator.py:50-56",
+        "src/services/evaluator.py:70-73",
+        "src/services/evaluator.py:58",
+        "src/services/evaluator.py:59-61",
+        "src/api/routers/evaluation.py:202-244"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-008",
+      "module_id": "evaluation",
+      "title": "报告：写成 Markdown 文件，接口读磁盘",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 269,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/services/evaluator.py:63-141",
+        "src/services/evaluator.py:67-68",
+        "src/api/routers/evaluation.py:254-261",
+        "src/api/routers/evaluation.py:263-266",
+        "src/api/routers/evaluation.py:268-269",
+        "src/api/routers/evaluation.py:526-527",
+        "src/api/routers/evaluation.py:529-532",
+        "frontend/src/views/Evaluation.vue:196-204",
+        "frontend/src/views/Evaluation.vue:418-426",
+        "src/api/routers/evaluation.py:251-269"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-009",
+      "module_id": "evaluation",
+      "title": "任务列表与批量删除",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 295,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/api/routers/evaluation.py:484",
+        "src/api/routers/evaluation.py:494-497",
+        "frontend/src/views/Evaluation.vue:441-445",
+        "frontend/src/composables/usePolling.js:9",
+        "src/api/routers/evaluation.py:462",
+        "src/api/routers/evaluation.py:472-473",
+        "src/api/routers/evaluation.py:476-478",
+        "src/api/routers/evaluation.py:482",
+        "frontend/src/views/Evaluation.vue:364",
+        "frontend/src/views/Evaluation.vue:369",
+        "frontend/src/views/Evaluation.vue:396-398",
+        "src/api/routers/evaluation.py:460-499",
+        "frontend/src/views/Evaluation.vue:360-405"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVAL-010",
+      "module_id": "evaluation",
+      "title": "状态机与\"用户能看到的进度\"",
+      "doc_path": "requirements/modules/evaluation.md",
+      "doc_line": 317,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-EVAL"
+      ],
+      "source_anchors": [
+        "src/database/models.py:130",
+        "src/api/routers/evaluation.py:316-323",
+        "frontend/src/utils/status.js:13",
+        "frontend/src/utils/status.js:36",
+        "frontend/src/utils/status.js:38-40",
+        "frontend/src/views/Evaluation.vue:122-129",
+        "src/api/routers/evaluation.py:54-64",
+        "src/database/models.py:123-141",
+        "frontend/src/utils/status.js:13-40",
+        "src/api/routers/evaluation.py:417-458",
+        "src/api/routers/evaluation.py:199",
+        "src/services/rag_service.py:230-263",
+        "src/services/qa_generator.py:11-17",
+        "src/api/routers/evaluation.py:116-119",
+        "src/api/routers/evaluation.py:370-380",
+        "src/api/routers/evaluation.py:263",
+        "src/api/routers/evaluation.py:44-52",
+        "frontend/src/views/Evaluation.vue:65-92",
+        "src/api/routers/evaluation.py:22-77",
+        "src/services/evaluator.py:11-61",
+        "src/services/qa_generator.py:10-57",
+        "src/services/question_analyzer.py:45-57",
+        "src/services/rag_service.py:75-114",
+        "src/api/routers/chat.py:133-150",
+        "src/database/models.py:123-167",
+        "frontend/src/views/Evaluation.vue:22-36",
+        "frontend/src/composables/usePolling.js:8-9",
+        "frontend/src/router/index.js:11",
+        "src/main.py:264",
+        "src/settings.py:12"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-001",
+      "module_id": "assistant-agent",
+      "title": "创建与维护助手配置",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 58,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "frontend/src/router/index.js:12",
+        "src/api/routers/assistant.py:59",
+        "frontend/src/router/index.js:24-31",
+        "src/api/routers/assistant.py:18",
+        "src/settings.py:77-79",
+        "src/api/routers/assistant.py:19",
+        "src/api/routers/assistant.py:32",
+        "src/api/routers/assistant.py:22",
+        "src/api/routers/assistant.py:24",
+        "src/api/routers/assistant.py:66-75",
+        "src/api/routers/assistant.py:131-141",
+        "src/api/routers/assistant.py:96-101",
+        "src/api/routers/assistant.py:103-114",
+        "src/api/routers/assistant.py:156-170",
+        "src/database/models.py:199-201",
+        "src/api/routers/assistant.py:14-26",
+        "src/api/routers/assistant.py:59-147",
+        "src/database/models.py:169-201"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-002",
+      "module_id": "assistant-agent",
+      "title": "助手版本快照",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 78,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Assistant.vue:481-527",
+        "src/api/routers/assistant.py:172",
+        "src/api/routers/assistant.py:195",
+        "src/api/routers/assistant.py:185-189",
+        "frontend/src/views/Assistant.vue:502-517",
+        "frontend/src/views/Assistant.vue:529-548",
+        "src/database/models.py:203-212",
+        "src/api/routers/assistant.py:172-212",
+        "frontend/src/views/Assistant.vue:481-560"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-003",
+      "module_id": "assistant-agent",
+      "title": "助手的检索参数在问答中生效",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 92,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Assistant.vue:80-94",
+        "frontend/src/views/Assistant.vue:302-311",
+        "src/api/routers/assistant.py:24",
+        "src/api/routers/chat.py:138",
+        "src/services/rag_service.py:84-103",
+        "src/services/rag_service.py:241",
+        "src/services/rag_service.py:250-253",
+        "src/api/routers/chat.py:133-150",
+        "src/services/rag_service.py:75-103",
+        "src/api/routers/assistant.py:22-24"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-004",
+      "module_id": "assistant-agent",
+      "title": "助手的记忆配置在问答中生效",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 107,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Assistant.vue:55-61",
+        "src/api/routers/assistant.py:22",
+        "src/services/rag_service.py:90-92",
+        "src/services/rag_service.py:95-96",
+        "src/services/memory_service.py:30-64",
+        "src/services/memory_service.py:71-73",
+        "src/services/memory_service.py:51-53",
+        "src/api/routers/chat.py:122-123",
+        "src/services/memory_service.py:57",
+        "src/services/rag_service.py:84-103",
+        "src/services/memory_service.py:18-76"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-005",
+      "module_id": "assistant-agent",
+      "title": "创建与维护 Agent 配置",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 121,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "frontend/src/router/index.js:13",
+        "src/api/routers/agent.py:176",
+        "src/api/routers/agent.py:135-139",
+        "src/database/models.py:220",
+        "src/api/routers/agent.py:16-38",
+        "src/api/routers/agent.py:73-74",
+        "src/api/routers/agent.py:86-93",
+        "src/api/routers/agent.py:94-96",
+        "src/api/routers/agent.py:99-107",
+        "src/api/routers/agent.py:110-118",
+        "src/api/routers/agent.py:189",
+        "src/api/routers/agent.py:206-211",
+        "src/api/routers/agent.py:214-225",
+        "src/api/routers/agent.py:258-272",
+        "src/database/models.py:214-249",
+        "src/api/routers/agent.py:16-203"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-006",
+      "module_id": "assistant-agent",
+      "title": "执行一次 Agent 查询（工具型问答）",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 141,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "src/api/routers/agent.py:275-290",
+        "src/api/routers/agent.py:290",
+        "src/services/agent_tool_service.py:118-256",
+        "src/services/agent_tool_service.py:55-76",
+        "src/services/agent_tool_service.py:42-52",
+        "src/services/agent_tool_service.py:85-115",
+        "src/services/agent_tool_service.py:125-132",
+        "src/services/agent_tool_service.py:157-181",
+        "src/services/agent_tool_service.py:189-204",
+        "src/services/agent_tool_service.py:249",
+        "src/api/routers/agent.py:286-287",
+        "src/services/execution_log_service.py:28-36",
+        "src/services/agent_tool_service.py:118-267",
+        "src/services/execution_log_service.py:18-44"
+      ]
+    },
+    {
+      "requirement_id": "REQ-AGENT-007",
+      "module_id": "assistant-agent",
+      "title": "助手挂载 Agent 后的问答走向",
+      "doc_path": "requirements/modules/assistant-agent.md",
+      "doc_line": 162,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-ASSIST-EXEC"
+      ],
+      "source_anchors": [
+        "src/api/routers/assistant.py:66-75",
+        "src/api/routers/chat.py:125-128",
+        "src/services/rag_service.py:201",
+        "src/services/rag_service.py:204-220",
+        "src/services/rag_service.py:223-228",
+        "src/services/rag_service.py:196-228",
+        "src/api/routers/chat.py:125-142",
+        "src/api/routers/chat.py:138",
+        "src/services/rag_service.py:84-103",
+        "frontend/src/views/Agent.vue:383-385",
+        "src/services/execution_log_service.py:28-36",
+        "src/api/routers/agent.py:135-139",
+        "src/database/models.py:220",
+        "src/api/routers/assistant.py:24",
+        "frontend/src/views/Assistant.vue:302-311",
+        "src/api/routers/assistant.py:22",
+        "src/services/rag_service.py:91",
+        "src/agent/mcp_client.py:149-200",
+        "src/api/routers/assistant.py:14-26",
+        "src/api/routers/assistant.py:59-147",
+        "src/api/routers/assistant.py:156-212",
+        "src/api/routers/agent.py:16-118",
+        "src/api/routers/agent.py:176-290",
+        "src/services/agent_tool_service.py:28-256",
+        "src/services/execution_log_service.py:18-44",
+        "src/services/memory_service.py:18-76",
+        "src/database/models.py:169-264",
+        "frontend/src/views/Assistant.vue:55-94",
+        "frontend/src/views/Agent.vue:375-428"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-001",
+      "module_id": "storage-queue",
+      "title": "浏览我名下的对象",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 68,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Monitor.vue:11-31",
+        "src/api/routers/storage.py:43",
+        "src/api/routers/storage.py:18-20",
+        "src/services/storage.py:69-74",
+        "src/services/storage.py:77-83",
+        "src/services/storage.py:66-67",
+        "src/services/storage.py:56-58",
+        "frontend/src/views/Monitor.vue:285-304",
+        "src/api/routers/storage.py:23-40",
+        "src/api/routers/storage.py:18-60",
+        "src/services/storage.py:56-88"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-002",
+      "module_id": "storage-queue",
+      "title": "下载文件",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 82,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/storage.py:62",
+        "frontend/src/views/Monitor.vue:306-315",
+        "src/api/routers/storage.py:70-72",
+        "src/api/routers/storage.py:89-93",
+        "frontend/src/views/Monitor.vue:309-310",
+        "src/api/routers/storage.py:62-96",
+        "frontend/src/api/index.js:7-13"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-003",
+      "module_id": "storage-queue",
+      "title": "在线预览文件",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 96,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/storage.py:98",
+        "frontend/src/views/Monitor.vue:137",
+        "src/api/routers/storage.py:114-116",
+        "src/api/routers/storage.py:118-129",
+        "src/api/routers/storage.py:131",
+        "src/utils/preview_utils.py:56-183",
+        "src/utils/preview_utils.py:106-146",
+        "src/utils/preview_utils.py:19-53",
+        "src/utils/preview_utils.py:45",
+        "src/api/routers/storage.py:98-135",
+        "src/utils/preview_utils.py:12-183"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-004",
+      "module_id": "storage-queue",
+      "title": "上传文件到我的存储区",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 116,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/storage.py:137",
+        "src/api/routers/storage.py:149-151",
+        "src/api/routers/knowledge_base.py:143-148",
+        "src/api/routers/storage.py:163",
+        "src/services/storage.py:39-41",
+        "src/services/storage.py:54",
+        "src/settings.py:99",
+        "src/api/routers/storage.py:137-168",
+        "src/services/storage.py:39-54"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-005",
+      "module_id": "storage-queue",
+      "title": "批量删除对象与获取临时访问链接",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 130,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/storage.py:170",
+        "src/api/routers/storage.py:187",
+        "src/api/routers/storage.py:196",
+        "src/api/routers/storage.py:182",
+        "src/services/storage.py:100-111",
+        "src/services/storage.py:124-126",
+        "src/services/storage.py:131-132",
+        "src/api/routers/storage.py:170-197",
+        "src/services/storage.py:100-137"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-006",
+      "module_id": "storage-queue",
+      "title": "MinIO 缺席时系统仍可启动",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 144,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/services/storage.py:139",
+        "src/services/storage.py:10-13",
+        "src/services/storage.py:7-8",
+        "src/services/storage.py:28-37",
+        "src/services/storage.py:7-41",
+        "src/services/storage.py:124-139"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-007",
+      "module_id": "storage-queue",
+      "title": "知识库上传的 MinIO 备份是尽力而为",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 158,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:311",
+        "src/api/routers/knowledge_base.py:367-373",
+        "src/api/routers/knowledge_base.py:374-380",
+        "src/api/routers/knowledge_base.py:356-383",
+        "src/settings.py:15"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-008",
+      "module_id": "storage-queue",
+      "title": "查看队列中的文档处理任务",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 172,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Monitor.vue:11-71",
+        "src/api/routers/monitor.py:32",
+        "src/api/routers/monitor.py:41-46",
+        "src/api/routers/monitor.py:76-85",
+        "frontend/src/views/Monitor.vue:193-201",
+        "src/api/routers/monitor.py:14-103"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-009",
+      "module_id": "storage-queue",
+      "title": "删除队列任务",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 186,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "未标注"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "frontend/src/views/Monitor.vue:210-220",
+        "src/api/routers/monitor.py:108",
+        "src/api/routers/monitor.py:110",
+        "frontend/src/views/Monitor.vue:213",
+        "src/api/routers/monitor.py:105-163",
+        "frontend/src/views/Monitor.vue:210-233"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-010",
+      "module_id": "storage-queue",
+      "title": "查看 Celery worker 侧队列统计",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 200,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "frontend/src/router/index.js:16",
+        "frontend/src/views/QueueMonitor.vue:99",
+        "src/api/routers/health.py:19",
+        "src/api/routers/health.py:23-30",
+        "src/api/routers/health.py:37-50",
+        "frontend/src/views/QueueMonitor.vue:28-78",
+        "src/api/routers/health.py:24-25",
+        "frontend/src/views/QueueMonitor.vue:100-101",
+        "src/api/routers/health.py:19-52",
+        "frontend/src/views/QueueMonitor.vue:90-113"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-011",
+      "module_id": "storage-queue",
+      "title": "查看外部依赖健康状态",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 214,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/health.py:155",
+        "src/api/routers/health.py:161-170",
+        "src/api/routers/health.py:172-173",
+        "src/api/routers/health.py:59-67",
+        "src/api/routers/health.py:59-173"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STORE-012",
+      "module_id": "storage-queue",
+      "title": "Celery 与 broker 缺席时的降级",
+      "doc_path": "requirements/modules/storage-queue.md",
+      "doc_line": 228,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "是",
+        "verified": "否"
+      },
+      "flow_refs": [
+        "FLOW-STORE"
+      ],
+      "source_anchors": [
+        "src/api/routers/knowledge_base.py:131-141",
+        "src/worker/celery_app.py:23-24",
+        "src/api/routers/knowledge_base.py:29-41",
+        "src/worker/celery_app.py:15-25",
+        "src/worker/celery_app.py:6-25",
+        "frontend/src/views/Monitor.vue:309-310",
+        "src/api/routers/storage.py:62",
+        "frontend/src/api/index.js:7-13",
+        "frontend/src/views/Monitor.vue:213",
+        "src/api/routers/monitor.py:117-119",
+        "frontend/src/views/Monitor.vue:264-283",
+        "src/api/routers/health.py:24-25",
+        "frontend/src/views/QueueMonitor.vue:100-101",
+        "src/api/routers/storage.py:118-131",
+        "src/api/routers/monitor.py:130",
+        "src/settings.py:96-100",
+        "src/api/routers/storage.py:18-60",
+        "src/api/routers/storage.py:62-96",
+        "src/api/routers/storage.py:98-135",
+        "src/api/routers/storage.py:137-197",
+        "src/services/storage.py:7-13",
+        "src/services/storage.py:28-41",
+        "src/services/storage.py:56-139",
+        "src/api/routers/monitor.py:14-103",
+        "src/api/routers/monitor.py:105-167",
+        "src/api/routers/health.py:19-52",
+        "src/api/routers/health.py:59-173",
+        "src/api/routers/knowledge_base.py:356-383",
+        "src/utils/preview_utils.py:19-53",
+        "src/utils/preview_utils.py:56-183",
+        "frontend/src/views/Monitor.vue:11-71",
+        "frontend/src/views/QueueMonitor.vue:90-113"
+      ]
+    }
+  ]
+}
