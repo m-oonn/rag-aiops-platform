@@ -51,6 +51,9 @@ reports/
 /.demo_pids.json
 /.playwright-cli/
 /.pytest-tmp*/
+# pytest 的 basetemp 目录（由 tmp_path 夹具按用户名生成，实测曾累积 3.6 万文件 / 361MB）
+/pytest-of-*/
+/pytest-*/
 /.codex-finalizer-opening-defense/
 .coverage
 .coverage.*
