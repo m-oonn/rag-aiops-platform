@@ -44,6 +44,10 @@
           <el-icon><TrendCharts /></el-icon>
           <template #title><span>评测</span></template>
         </el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/users">
+          <el-icon><UserFilled /></el-icon>
+          <template #title><span>用户管理</span></template>
+        </el-menu-item>
       </el-menu>
       <!-- 退出登录不属于导航项：el-menu 的 router 模式会把带 index 的项当成路由跳转，
            故放在 menu 之外，避免误跳 /logout 并消除 "Missing required prop: index" 告警 -->
@@ -81,7 +85,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ChatDotRound,
@@ -96,11 +100,16 @@ import {
   SwitchButton,
   TrendCharts,
   User,
+  UserFilled,
 } from '@element-plus/icons-vue'
+import api from './api'
 
 const route = useRoute()
 const router = useRouter()
 const username = ref(localStorage.getItem('username') || '用户')
+// 角色以服务端 /auth/me 为准；localStorage 只做首屏乐观值，避免菜单闪烁
+const role = ref(localStorage.getItem('role') || 'user')
+const isAdmin = computed(() => role.value === 'admin')
 
 const isLoginPage = computed(() => route.path === '/login' || route.path === '/register')
 const isCollapse = ref(false)
@@ -111,12 +120,35 @@ const applyCollapse = (event) => {
   isCollapse.value = event.matches
 }
 
+// 角色决定"用户管理"入口是否出现；以前角色只存在数据库里，界面上无从得知。
+// 登录页跳走后 token 才出现，所以除了挂载时拉一次，还要在路由变化时补一次。
+let currentUserLoaded = false
+const loadCurrentUser = () => {
+  if (currentUserLoaded || !localStorage.getItem('token')) return
+  api.get('/auth/me')
+    .then(({ data }) => {
+      currentUserLoaded = true
+      role.value = data.role || 'user'
+      localStorage.setItem('role', role.value)
+      if (data.username) {
+        username.value = data.username
+        localStorage.setItem('username', data.username)
+      }
+    })
+    .catch(() => {})
+}
+
 onMounted(() => {
+  loadCurrentUser()
   // jsdom/老环境没有 matchMedia：此时保持默认展开，不阻断渲染
   if (typeof window.matchMedia !== 'function') return
   mediaQuery = window.matchMedia('(max-width: 1024px)')
   isCollapse.value = mediaQuery.matches
   mediaQuery.addEventListener?.('change', applyCollapse)
+})
+
+watch(() => route.path, () => {
+  loadCurrentUser()
 })
 
 onUnmounted(() => {
@@ -126,6 +158,9 @@ onUnmounted(() => {
 const logout = () => {
   localStorage.removeItem('token')
   localStorage.removeItem('username')
+  localStorage.removeItem('role')
+  role.value = 'user'
+  currentUserLoaded = false
   router.push('/login')
 }
 </script>

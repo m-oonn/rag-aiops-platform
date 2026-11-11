@@ -144,10 +144,17 @@ python mcp_servers/cls_server.py       # 日志服务 (127.0.0.1:8003)
 
 访问地址:
 
-- 前端页面: http://localhost:5173
-- API 文档: http://localhost:8000/docs
+- 前端页面: http://127.0.0.1:5273 (`vite` 默认端口,见 `frontend/vite.config.js`)
+- API 文档: http://127.0.0.1:8200/docs (端口取自 `src/main.py` 的 `uvicorn.run(..., port=8200)`;8200 是为避开 Windows 保留段 7911-8010)
+- 健康检查: http://127.0.0.1:8200/api/v1/health (旧地址 `/api/v1/health/health` 仍保留为兼容别名)
 - MinIO 控制台: http://localhost:9001
 - Flower 监控: http://localhost:5555
+
+角色与首个管理员:
+
+- 用户角色取值为 `user` / `auditor` / `admin`。`admin` 可在「用户管理」页(`/users`)给他人分配角色;`admin` 与 `auditor` 才能读取 AIOps 证据原文(`can_read_raw`)。
+- 系统不内置任何默认账号。首个管理员通过环境变量引导:`ADMIN_USERNAMES="alice,bob"`(`.env` 或进程环境变量),该用户下次登录时自动提升为 `admin`,幂等。之后其余角色调整都在「用户管理」页完成。
+- 为防止最后一个管理员被降级后无人可管,接口禁止修改自己的角色。
 
 HITL(人在回路)说明:
 

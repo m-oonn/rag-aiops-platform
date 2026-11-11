@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     SECRET_KEY: str = ""  # 必须从环境变量或 .env 填;留空则启动报错
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 安全最佳实践: 8 小时，平衡可用性与安全
 
+    # —— 用户角色 ——
+    # 角色取值: user（普通）、auditor（审计，可读证据原文）、admin（管理员，可改他人角色）。
+    # ADMIN_USERNAMES: 逗号分隔的用户名，登录时若命中则自动提为 admin。
+    # 这是首个管理员的引导口：系统不自建默认账号，避免"默认口令进后台"。
+    ADMIN_USERNAMES: str = ""
+
+    @property
+    def ADMIN_USERNAME_SET(self) -> set[str]:
+        return {name.strip() for name in self.ADMIN_USERNAMES.split(",") if name.strip()}
+
     # —— CORS / Host 白名单(生产环境安全)——
     # 逗号分隔的显式来源/域名列表。生产环境 main.py 从这里读取,不允许通配 "*".
     # 例:ALLOWED_ORIGINS="https://app.example.com,https://admin.example.com"

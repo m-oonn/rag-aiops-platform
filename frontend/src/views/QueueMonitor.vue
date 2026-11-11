@@ -7,18 +7,23 @@
     </PageHeader>
 
     <div v-if="error" class="error-msg">
-      <el-alert :title="error" type="error" show-icon />
+      <el-alert :title="error" type="error" show-icon :closable="false" />
+      <div v-if="errorDetail" class="error-detail">{{ errorDetail }}</div>
+    </div>
+
+    <div v-if="warning" class="error-msg">
+      <el-alert :title="warning" type="warning" show-icon :closable="false" />
     </div>
 
     <EmptyState
-      v-if="loaded && !stats && !error"
+      v-if="loaded && !stats && !error && !warning"
       title="暂无队列数据"
       description="队列统计暂不可用，或当前队列为空"
     />
 
     <div v-if="stats" class="stats-container">
       <el-row :gutter="20">
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -29,7 +34,7 @@
             <div class="stat-desc">当前正在执行</div>
           </el-card>
         </el-col>
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -40,7 +45,7 @@
             <div class="stat-desc">已被 Worker 预取</div>
           </el-card>
         </el-col>
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-card shadow="always">
             <template #header>
               <div class="card-header">
@@ -49,6 +54,17 @@
             </template>
             <div class="stat-value">{{ stats.summary.scheduled_tasks }}</div>
             <div class="stat-desc">延迟/重试中</div>
+          </el-card>
+        </el-col>
+        <el-col :xs="24" :sm="6">
+          <el-card shadow="always">
+            <template #header>
+              <div class="card-header">
+                <span>在线 Worker</span>
+              </div>
+            </template>
+            <div class="stat-value">{{ stats.summary.workers ?? 0 }}</div>
+            <div class="stat-desc">正在消费队列</div>
           </el-card>
         </el-col>
       </el-row>
@@ -91,19 +107,33 @@ const stats = ref(null)
 const loading = ref(false)
 const loaded = ref(false)
 const error = ref(null)
+const errorDetail = ref(null)
+const warning = ref(null)
 
 const fetchStats = async () => {
   loading.value = true
   error.value = null
+  errorDetail.value = null
+  warning.value = null
   try {
     const res = await api.get('/health/queues')
-    if (res.data.status === 'error') {
-        error.value = res.data.message
+    const data = res.data || {}
+    // 后端区分三态：unavailable=中间件连不上，degraded=没有在线 Worker，ok=正常。
+    // 以前这里只在 status==='error' 时提示，其余一律当成功，导致"服务挂了"画成三个 0。
+    if (data.status === 'unavailable' || data.status === 'error') {
+      stats.value = null
+      error.value = data.message || '获取队列统计失败'
+      errorDetail.value = data.detail || null
+    } else if (data.status === 'degraded') {
+      stats.value = null
+      warning.value = data.message
     } else {
-        stats.value = res.data
+      stats.value = data
     }
   } catch (e) {
-    error.value = '获取队列统计失败'
+    stats.value = null
+    error.value = e?.response?.data?.detail || '获取队列统计失败'
+    errorDetail.value = e?.message || null
   } finally {
     loading.value = false
     loaded.value = true
@@ -134,6 +164,15 @@ onMounted(() => {
 .stat-desc {
   text-align: center;
   color: #909399;
+}
+.error-msg {
+  margin-bottom: 16px;
+}
+.error-detail {
+  margin-top: 6px;
+  color: var(--app-text-secondary, #909399);
+  font-size: 12px;
+  word-break: break-all;
 }
 .worker-card {
   margin-top: 20px;

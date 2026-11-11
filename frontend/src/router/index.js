@@ -14,6 +14,9 @@ const routes = [
   { path: '/aiops', component: () => import('../views/AIOps.vue'), meta: { requiresAuth: true } },
   { path: '/monitor', component: () => import('../views/Monitor.vue'), meta: { requiresAuth: true } },
   { path: '/queue-monitor', component: () => import('../views/QueueMonitor.vue'), meta: { requiresAuth: true } },
+  // 用户管理：仅管理员可改他人角色。前端守卫只挡"未登录"，
+  // 真正的权限判定在后端 /auth/users（403），避免把安全边界放在浏览器里。
+  { path: '/users', component: () => import('../views/Users.vue'), meta: { requiresAuth: true, requiresAdmin: true } },
 ]
 
 const router = createRouter({
