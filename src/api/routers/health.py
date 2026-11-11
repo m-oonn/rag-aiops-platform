@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import aiohttp
 from fastapi import APIRouter, Depends
@@ -9,6 +10,11 @@ from src.api.dependencies import get_current_user
 from src.database.models import User
 
 router = APIRouter()
+
+# 依赖探活的短缓存。仪表盘会在每次进入页面时整表刷新，而每一项探活都要建连接；
+# 5 秒内复用上一次结果，既不让状态面板反复等，也不至于把恢复中的服务长期报成旧状态。
+_DEPS_CACHE: dict = {"at": 0.0, "payload": None}
+_DEPS_TTL_SECONDS = 5.0
 
 
 @router.get("")
@@ -230,7 +236,14 @@ async def check_dependencies(current_user: User = Depends(get_current_user)):
     `PROBE_ENABLED` 打开时额外返回 `probe` 一项：没有它，诊断链路拿不到主机侧
     现场证据（进程/端口/日志/配置快照），结论只能停在"已定位/待核实"。前端据此
     在**花钱之前**提示用户，而不是等诊断跑完才发现没有现场证据。
+
+    结果是 5 秒内的缓存：状态面板不该为同一批连接反复等待，但也不能长期显示旧状态。
     """
+    now = time.monotonic()
+    cached = _DEPS_CACHE["payload"]
+    if cached is not None and now - _DEPS_CACHE["at"] < _DEPS_TTL_SECONDS:
+        return cached
+
     checks = [
         _check_http("mcp_monitor", settings.MCP_MONITOR_URL.replace("/mcp", "/health")),
         _check_http("mcp_cls", settings.MCP_CLS_URL.replace("/mcp", "/health")),
@@ -247,7 +260,10 @@ async def check_dependencies(current_user: User = Depends(get_current_user)):
     results = await asyncio.gather(*checks)
     services = dict(zip(names, results))
     overall = "ok" if all(s["status"] == "ok" for s in services.values()) else "degraded"
-    return {"services": services, "overall": overall}
+    payload = {"services": services, "overall": overall}
+    _DEPS_CACHE["at"] = now
+    _DEPS_CACHE["payload"] = payload
+    return payload
 
 
 @router.get("/models")

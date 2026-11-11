@@ -28,6 +28,8 @@ def patched_checks(monkeypatch):
     monkeypatch.setattr(health, "_check_minio", _ok)
     monkeypatch.setattr(health, "_check_llm", _ok)
     monkeypatch.setattr(health, "_check_probe", _ok)
+    # 每个用例都从"没有缓存"开始，否则上一个用例的结果会被 TTL 缓存带过来
+    monkeypatch.setattr(health, "_DEPS_CACHE", {"at": 0.0, "payload": None})
     return monkeypatch
 
 
@@ -62,6 +64,34 @@ async def test_unreachable_probe_makes_overall_degraded(patched_checks):
 
     assert data["services"]["probe"]["status"] == "unavailable"
     assert data["overall"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_repeated_check_within_ttl_reuses_the_last_result(patched_checks):
+    """状态面板整表刷新时不重复建连接：TTL 内直接复用上一次结果。"""
+    patched_checks.setattr(health.settings, "PROBE_ENABLED", False)
+    first = await health.check_dependencies(current_user=object())
+
+    # 第二次调用前把底层探活改成"全挂"，若仍在 TTL 内，结果不应改变
+    patched_checks.setattr(health, "_check_redis", _down)
+    second = await health.check_dependencies(current_user=object())
+
+    assert second == first
+    assert second["services"]["redis"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_expired_cache_reruns_the_checks(patched_checks):
+    """过了 TTL 必须重探，否则恢复/新增的故障最多要等一个 TTL 才被看见。"""
+    patched_checks.setattr(health.settings, "PROBE_ENABLED", False)
+    await health.check_dependencies(current_user=object())
+
+    health._DEPS_CACHE["at"] = health.time.monotonic() - (health._DEPS_TTL_SECONDS + 1)
+    patched_checks.setattr(health, "_check_redis", _down)
+
+    data = await health.check_dependencies(current_user=object())
+
+    assert data["services"]["redis"]["status"] == "unavailable"
 
 
 @pytest.mark.asyncio
