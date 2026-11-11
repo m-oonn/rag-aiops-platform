@@ -75,7 +75,7 @@
 
 - [贡献指南](CONTRIBUTING.md)、[静态展示站](site/index.html)。
 
-- [架构](architecture.md)、[API](api.md)。
+- [API](api.md)。架构与调用链说明以源码为准（`src/main.py`、`src/agent/aiops/graph.py`、`src/agent/aiops/strategies/investigation.py`）。
 - [调查事件](aiops-events.md)、[运行记录存储](aiops-run-store.md)。
 - [Windows Probe](windows-probe.md)、[配置样例](windows-probe-config.example.toml)、[故障验收说明](windows-probe-fault-acceptance.md)。
 - [TermCP 接入](termcp-aiops.md)。
@@ -100,19 +100,17 @@
 - [GitHub AIOps 项目调研](research/github-aiops-reference-review-20261018.md)。
 - [Pi-agent 架构与 GitHub 调研](research/pi-agent-architecture-and-github-review-20261020.md)。
 
-## 论文与历史草稿
+## 论文材料与审核记录
 
-- 当前入口：[方法与实验草稿](thesis/当前方法与实验草稿-20261025.md)、[源码与草稿核对记录](thesis-method-experiment-audit-20261025.md)、[材料来源与结论边界](thesis-material-lineage-20261025.md)。当前稿区分工程核验与待执行自主实验，不代表论文已完成。
+论文口径以导师版开题报告为准（题目《基于 LangGraph 的 AIOps 根因诊断 Agent 设计与实现》，五章结构与 36 条文献）。旧口径（旁开式动态分类／1B-2A-3C 三策略、含对数几率信念、孵化复活、两级裁判、双轨报告、本地降级证据源的一组草稿）已于 2026-11-11 从本仓库移除，不再作为写作依据，也不代表当前实现。
 
-以下材料需要结合当前路线、源码与真实实验重新核实，不据此认定论文已完成或效果成立。保留旧版本供比较，不自动覆盖正文。
-
-- [章节提纲](thesis/论文章节提纲.md)、[研究方案大纲](thesis/研究方案大纲.md)、[绪论写作指引](thesis/绪论写作指引.md)。
-- 引言草稿：[原稿](thesis/引言.md)、[第二版](thesis/引言-第二版.md)、[第三版](thesis/引言-第三版.md)。
-- [第二至四章草稿](thesis/论文正文-第二至四章.md)、[历史评审](thesis/毕设评审报告.md)。
+- [工程验证与演示材料](thesis/工程验证与演示材料-20261026.md)：免费演示的选定源码、产物与可复现实例清单。
+- [材料来源与结论边界](thesis-material-lineage-20261025.md)：审核包与历史观测的来源对应，不得相加为独立实验。
+- 人工语义审核底稿：[历史报告逐条审核](thesis/历史报告逐条审核-20261027.md)、[G11 完整场语义审读](thesis/G11完整场语义审读-20261029.md)、[本次真实 G11 调查语义审核](thesis/本次真实G11调查语义审核-20261029.md)。三份均为待审底稿，人工三维维度仍 pending，不代表诊断正确率。
 
 ## 本机材料与清理边界
 
 - 可再生缓存可删除；源码、测试、测试夹具、依赖锁文件、现用配置、数据库和实验原始记录需要保留。
 - `logs/` 接收服务和运行脚本日志；`logs/legacy/` 保存从根目录归类的旧日志。后续运行可能重新生成缓存。
 - 2026-10-23 的个人材料与一次性产物已分类保存在项目外的 `D:/ragPdfSystem++agent-archive/2026-10-23/`；各次迁移清单保存在对应归档目录中。此路径是本机位置，不是其他开发者的运行依赖。
-- `local/` 保存被历史评审引用的本机 Code Wiki 与选题材料；此目录不进入 Git 提交，不能视为新验证结果。
+- `local/` 保存被历史评审引用的本机 Code Wiki（`CODE_WIKI.md`）；此目录不进入 Git 提交，不能视为新验证结果。此处的选题材料 `毕设选题说明.md`（旧旁开式动态分类口径）已于 2026-11-11 随旧论文口径清理本机删除，论文口径改以导师版开题报告为准。

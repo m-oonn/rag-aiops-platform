@@ -1,6 +1,6 @@
 """可解释性实验：A 组可审计性 / B 组置信度校准 / C 组结果稳定性。
 
-对齐 `docs/architecture.md` 附录「可解释性实验结果」的口径与输出格式，
+对齐历史上 `docs/architecture.md` 附录「可解释性实验结果」的口径与输出格式（该附录已随 2026-11-11 旧口径清理移除，口径以本脚本为准），
 产出 `runtime/explainability_report.md` 与 `runtime/explainability_report.json`。
 
 场景源：`mcp_servers/mock_scenario.py` 的 `SCENARIO_SERVICES`（9 个剧本），
@@ -107,7 +107,7 @@ SCENARIO_SYMPTOM: Dict[str, str] = {
     "service_api": "部分接口响应变慢且偶发失败，接口可用性下降",
 }
 
-# ── ECE 分箱（与 architecture.md 附录 B 组一致）──────────────────────
+# ── ECE 分箱（沿用旧附录 B 组的 10 分箱口径）──────────────────────
 ECE_BINS: List[Tuple[float, float]] = [
     (0.50, 0.65),
     (0.65, 0.80),

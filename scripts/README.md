@@ -49,7 +49,7 @@
 
 - `probes/probe_*.py`：模型、接口、站点或真实后端探针。执行前检查网络、费用与目标，不批量运行；例如 `python scripts/probes/probe_site.py --help`。
 - `try_aiops.py`、`try_mcp_client.py`、`mini_agent_pne.py`、`run_demo_diagnosis.py`：既有探索与示例入口。
-- `_assemble_thesis.py`：读取 `docs/thesis/` 草稿；还需要原有论文分册目录。个人材料归档后需另行核对输出位置，不能直接视为可用的论文流水线。
+- 原 `_assemble_thesis.py` 论文装配脚本已于 2026-11-11 随旧论文口径清理删除；论文材料按导师版开题报告重新组织，不再从这些草稿装配。
 
 ## 产物位置
 

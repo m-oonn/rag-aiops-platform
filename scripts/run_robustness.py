@@ -2,7 +2,7 @@
 
 重建说明
 --------
-原始采集脚本 ``scripts/verify_scenarios.py`` 属**论文侧**且从未随本仓库入库（见
+原始采集脚本 ``scripts/verify_scenarios.py`` 属**论文侧**且从未随本仓库入库（原说明见已移除的
 ``docs/architecture.md`` 附录「脚本交付说明」）。本脚本按 ``docs/history/修复工作总结报告.md``
 §3.1 的口径**重新实现**，口径对齐如下目标值：
 
