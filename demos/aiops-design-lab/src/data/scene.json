@@ -1,0 +1,627 @@
+{
+  "date": "2026-11-14",
+  "kind": "localized_fault",
+  "status": "completed",
+  "leadingId": "h-c4075d90bed5014a",
+  "candidates": [
+    {
+      "id": "h-b541e2fe50bb140e",
+      "code": "H1",
+      "title": "downstream 进程未被发现",
+      "status": "supported",
+      "statusLabel": "现场支持",
+      "type": "现场条件",
+      "relation": "support",
+      "direct": [
+        "ev-c20df7c3dc6b434c8a2c7e104547a6df"
+      ],
+      "related": [
+        "ev-c20df7c3dc6b434c8a2c7e104547a6df",
+        "ev-e8f0da4b17494540b643ef42a37394ba"
+      ],
+      "note": "本次进程快照没有匹配项，退出原因仍需结合日志判断。",
+      "question": "downstream 是收到停止请求后正常退出（downstream_stopped_after_request），还是从未启动/启动失败，或进程存在但未绑定 4634？",
+      "explanation": "processes/downstream: process_present == false"
+    },
+    {
+      "id": "h-7c2669bb76d10b52",
+      "code": "H2",
+      "title": "localapp 下游端点配置错配",
+      "status": "unresolved",
+      "statusLabel": "待验证",
+      "type": "原因解释",
+      "relation": "neutral",
+      "direct": [],
+      "related": [
+        "ev-0c333c1efbf4425d818a9b8a19461194",
+        "ev-f234fa8648d542069925587899f880ec"
+      ],
+      "note": "配置端口为 4634，加载哈希与快照一致；最终记录仍保留未决状态。",
+      "question": "localapp 实际加载的 downstream_port 是否为 4634",
+      "explanation": "localapp 加载的下游端口配置与登记端点 4634 不一致（配置值被应用接受但指向错误端口），导致连接失败"
+    },
+    {
+      "id": "h-f89df200db7afe92",
+      "code": "H3",
+      "title": "端口 4634 未监听",
+      "status": "supported",
+      "statusLabel": "现场支持",
+      "type": "现场条件",
+      "relation": "support",
+      "direct": [
+        "ev-4a639360df8e406384ae18a2bf2b438f"
+      ],
+      "related": [
+        "ev-4a639360df8e406384ae18a2bf2b438f"
+      ],
+      "note": "端口快照未发现监听记录，尚不能说明服务为何退出。",
+      "question": "",
+      "explanation": "ports/4634: listening == false"
+    },
+    {
+      "id": "h-bf0945377e1d94de",
+      "code": "H4",
+      "title": "到 localapp 的 TCP 链路故障",
+      "status": "excluded",
+      "statusLabel": "已排除",
+      "type": "现场条件",
+      "relation": "contradict",
+      "direct": [
+        "ev-e3d7eabde2df46848f39f5859a8dc2e9"
+      ],
+      "related": [
+        "ev-e3d7eabde2df46848f39f5859a8dc2e9"
+      ],
+      "note": "本次 TCP 探测成功，localapp 返回 HTTP 503。",
+      "question": "edge 到 localapp 的链路是否本身故障（与 downstream 无关）？",
+      "explanation": "dependency_probe/localapp: tcp == \"failed\""
+    },
+    {
+      "id": "h-a0fc99d99b13a394",
+      "code": "H5",
+      "title": "连接建立后的内部处理错误",
+      "status": "unresolved",
+      "statusLabel": "待验证",
+      "type": "原因解释",
+      "relation": "neutral",
+      "direct": [],
+      "related": [
+        "ev-f234fa8648d542069925587899f880ec"
+      ],
+      "note": "该请求在连接建立前超时，尚无连接建立后出错的证据。",
+      "question": "",
+      "explanation": "连接已建立后 localapp 内部错误或下游响应传播问题（非连接阶段失败）"
+    },
+    {
+      "id": "h-c4075d90bed5014a",
+      "code": "H6",
+      "title": "downstream 停止引发请求失败",
+      "status": "unresolved",
+      "statusLabel": "待验证",
+      "type": "原因解释",
+      "relation": "neutral",
+      "direct": [],
+      "related": [
+        "ev-e8f0da4b17494540b643ef42a37394ba"
+      ],
+      "note": "日志记录了停止与退出，但停止发起者及完整异常传播关系尚未确认。",
+      "question": "downstream 是收到停止请求后正常退出，还是启动失败或异常崩溃退出？",
+      "explanation": "downstream 实例 5bd350547f6d4968b03a36c3acb46b31（PID 27136）在 01:03:53 启动并监听 4634 后收到 controlled_stop 停止请求并完成退出，导致 4634 无监听、localapp 连接 downstream 在 connect 阶段超时返回 503、edge /api/availability 失败"
+    },
+    {
+      "id": "h-3b7779d994e780c7",
+      "code": "H7",
+      "title": "downstream 从未成功启动",
+      "status": "unresolved",
+      "statusLabel": "待验证",
+      "type": "原因解释",
+      "relation": "neutral",
+      "direct": [],
+      "related": [
+        "ev-e8f0da4b17494540b643ef42a37394ba"
+      ],
+      "note": "日志已记录实例启动与退出，最终记录仍保留未决状态。",
+      "question": "",
+      "explanation": "downstream 从未启动或启动失败（而非收到停止请求后退出）"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-51b248286bbb46978ac7460337186f41",
+      "index": 0,
+      "code": "E01",
+      "kind": "inventory",
+      "kindLabel": "环境清单",
+      "subject": "受控测试环境",
+      "title": "已登记 3 个业务服务",
+      "time": "01:07:09",
+      "at": "2026-11-14T09:07:09.006703+08:00",
+      "fields": [
+        [
+          "系统",
+          "Windows"
+        ],
+        [
+          "版本",
+          "11"
+        ],
+        [
+          "Probe",
+          "1.0.1"
+        ],
+        [
+          "服务",
+          "edge / localapp / downstream"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "system": "Windows",
+        "release": "11",
+        "probe_version": "1.0.1",
+        "services": [
+          "edge",
+          "localapp",
+          "downstream"
+        ]
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-ae6ba81bbdc34e249f9104b5c216d0d4",
+      "index": 1,
+      "code": "E02",
+      "kind": "processes",
+      "kindLabel": "进程快照",
+      "subject": "edge",
+      "title": "2 条匹配进程",
+      "time": "01:07:13",
+      "at": "2026-11-14T09:07:13.048366+08:00",
+      "fields": [
+        [
+          "匹配进程",
+          "2"
+        ],
+        [
+          "已枚举进程",
+          "58"
+        ],
+        [
+          "跳过",
+          "0"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "service": "edge",
+        "matched_count": 2,
+        "inspected_count": 58,
+        "processes": [
+          {
+            "pid": 22588,
+            "name": "python.exe"
+          },
+          {
+            "pid": 27176,
+            "name": "python.exe"
+          }
+        ]
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-987649b289034dd19fd7de91f0e38fd3",
+      "index": 2,
+      "code": "E03",
+      "kind": "processes",
+      "kindLabel": "进程快照",
+      "subject": "localapp",
+      "title": "2 条匹配进程",
+      "time": "01:07:13",
+      "at": "2026-11-14T09:07:13.327371+08:00",
+      "fields": [
+        [
+          "匹配进程",
+          "2"
+        ],
+        [
+          "已枚举进程",
+          "58"
+        ],
+        [
+          "跳过",
+          "0"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "service": "localapp",
+        "matched_count": 2,
+        "inspected_count": 58,
+        "processes": [
+          {
+            "pid": 12056,
+            "name": "python.exe"
+          },
+          {
+            "pid": 11048,
+            "name": "python.exe"
+          }
+        ]
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-c20df7c3dc6b434c8a2c7e104547a6df",
+      "index": 3,
+      "code": "E04",
+      "kind": "processes",
+      "kindLabel": "进程快照",
+      "subject": "downstream",
+      "title": "未发现匹配进程",
+      "time": "01:07:13",
+      "at": "2026-11-14T09:07:13.521529+08:00",
+      "fields": [
+        [
+          "匹配进程",
+          "0"
+        ],
+        [
+          "已枚举进程",
+          "58"
+        ],
+        [
+          "跳过",
+          "0"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "service": "downstream",
+        "matched_count": 0,
+        "inspected_count": 58,
+        "processes": []
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-95aebc605dfd43f5ba248215352a1467",
+      "index": 4,
+      "code": "E05",
+      "kind": "ports",
+      "kindLabel": "端口快照",
+      "subject": "主机端口",
+      "title": "主机端口摘要不完整",
+      "time": "01:07:13",
+      "at": "2026-11-14T09:07:13.707582+08:00",
+      "fields": [
+        [
+          "保存状态",
+          "摘要已截断"
+        ],
+        [
+          "可用操作",
+          "查看后续的 4634 定向端口快照"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "note": "保存摘要被截断，未作为完整端口快照展示"
+      },
+      "complete": false
+    },
+    {
+      "id": "ev-f234fa8648d542069925587899f880ec",
+      "index": 5,
+      "code": "E06",
+      "kind": "text_logs",
+      "kindLabel": "应用日志",
+      "subject": "localapp",
+      "title": "连接阶段超时，业务请求返回 503",
+      "time": "01:07:27",
+      "at": "2026-11-14T09:07:27.965255+08:00",
+      "fields": [
+        [
+          "返回日志",
+          "2 条"
+        ],
+        [
+          "记录对象",
+          "localapp"
+        ],
+        [
+          "日志窗口",
+          "01:03:53.523 — 01:03:54.674 UTC"
+        ]
+      ],
+      "events": [
+        {
+          "at": "2026-11-14T01:03:53.523396+00:00",
+          "time": "01:03:53.523",
+          "label": "服务启动",
+          "code": "service_started",
+          "detail": "PID 12056 · 监听 4633"
+        },
+        {
+          "at": "2026-11-14T01:03:54.674587+00:00",
+          "time": "01:03:54.674",
+          "label": "业务请求结束",
+          "code": "request_completed",
+          "detail": "HTTP 503 · 512.308 ms · 连接未建立"
+        }
+      ],
+      "excerpt": {
+        "service": "localapp",
+        "lines": [
+          {
+            "at": "2026-11-14T01:03:53.523396+00:00",
+            "pid": 12056,
+            "event": "service_started",
+            "listen_port": 4633,
+            "configuration": {
+              "loading": "startup",
+              "source_sha256": "04f6f67e1cba5d4c9e5b5b3f2bb129caa5f1885110cce24b142487ba9a31d4e5"
+            }
+          },
+          {
+            "at": "2026-11-14T01:03:54.674587+00:00",
+            "pid": 12056,
+            "event": "request_completed",
+            "path": "/api/availability",
+            "status": 503,
+            "duration_ms": 512.308,
+            "upstream": {
+              "host": "127.0.0.1",
+              "port": 4634
+            },
+            "upstream_request": {
+              "timeout_seconds": 0.5,
+              "phase": "connect",
+              "connection_established": false
+            },
+            "error_type": "TimeoutError",
+            "configuration": {
+              "loading": "startup",
+              "source_sha256": "04f6f67e1cba5d4c9e5b5b3f2bb129caa5f1885110cce24b142487ba9a31d4e5"
+            }
+          }
+        ]
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-0c333c1efbf4425d818a9b8a19461194",
+      "index": 6,
+      "code": "E07",
+      "kind": "configuration",
+      "kindLabel": "配置快照",
+      "subject": "localapp",
+      "title": "下游端口 4634 · 超时 0.5 秒",
+      "time": "01:07:33",
+      "at": "2026-11-14T09:07:33.231716+08:00",
+      "fields": [
+        [
+          "下游端口",
+          "4634"
+        ],
+        [
+          "连接超时",
+          "0.5 秒"
+        ],
+        [
+          "加载校对",
+          "与应用日志中的配置哈希一致"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "service": "localapp",
+        "values": {
+          "downstream_port": 4634,
+          "upstream_timeout_seconds": 0.5
+        },
+        "source_sha256": "04f6f67e1cba5d4c9e5b5b3f2bb129caa5f1885110cce24b142487ba9a31d4e5"
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-4a639360df8e406384ae18a2bf2b438f",
+      "index": 7,
+      "code": "E08",
+      "kind": "ports",
+      "kindLabel": "端口快照",
+      "subject": "端口 4634",
+      "title": "端口 4634 无监听",
+      "time": "01:07:38",
+      "at": "2026-11-14T09:07:38.029295+08:00",
+      "fields": [
+        [
+          "目标端口",
+          "4634"
+        ],
+        [
+          "监听记录",
+          "0"
+        ],
+        [
+          "采集方式",
+          "定向端口快照"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "local_port": 4634,
+        "ports": [],
+        "matched_count": 0
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-e3d7eabde2df46848f39f5859a8dc2e9",
+      "index": 8,
+      "code": "E09",
+      "kind": "dependency_probe",
+      "kindLabel": "依赖探测",
+      "subject": "localapp",
+      "title": "TCP 可达 · HTTP 503",
+      "time": "01:07:43",
+      "at": "2026-11-14T09:07:43.785561+08:00",
+      "fields": [
+        [
+          "TCP",
+          "连接成功"
+        ],
+        [
+          "HTTP",
+          "503"
+        ],
+        [
+          "耗时",
+          "531.2 ms"
+        ],
+        [
+          "响应",
+          "temporarily unavailable"
+        ]
+      ],
+      "events": [],
+      "excerpt": {
+        "dependency": "localapp",
+        "port": 4633,
+        "tcp": "ok",
+        "http": {
+          "status": 503,
+          "body_prefix": "temporarily unavailable",
+          "truncated": false
+        },
+        "elapsed_ms": 531.2
+      },
+      "complete": true
+    },
+    {
+      "id": "ev-e8f0da4b17494540b643ef42a37394ba",
+      "index": 9,
+      "code": "E10",
+      "kind": "text_logs",
+      "kindLabel": "应用日志",
+      "subject": "downstream",
+      "title": "启动后收到停止请求，随后退出",
+      "time": "01:07:50",
+      "at": "2026-11-14T09:07:50.689873+08:00",
+      "fields": [
+        [
+          "返回日志",
+          "3 条"
+        ],
+        [
+          "记录对象",
+          "downstream"
+        ],
+        [
+          "日志窗口",
+          "01:03:53.178 — 01:03:53.803 UTC"
+        ]
+      ],
+      "events": [
+        {
+          "at": "2026-11-14T01:03:53.178051+00:00",
+          "time": "01:03:53.178",
+          "label": "服务启动",
+          "code": "service_started",
+          "detail": "PID 27136 · 监听 4634"
+        },
+        {
+          "at": "2026-11-14T01:03:53.733056+00:00",
+          "time": "01:03:53.733",
+          "label": "收到停止请求",
+          "code": "shutdown_requested",
+          "detail": "受控停止 · 发起者未知"
+        },
+        {
+          "at": "2026-11-14T01:03:53.803187+00:00",
+          "time": "01:03:53.803",
+          "label": "完成退出",
+          "code": "service_exited",
+          "detail": "停止流程完成"
+        }
+      ],
+      "excerpt": {
+        "service": "downstream",
+        "lines": [
+          {
+            "at": "2026-11-14T01:03:53.178051+00:00",
+            "pid": 27136,
+            "event": "service_started",
+            "listen_port": 4634,
+            "configuration": {
+              "loading": "startup",
+              "source_sha256": "c5023d8500dca17c5725976ef19319934c4fce1fa4db4c671a3f2625ac358063"
+            }
+          },
+          {
+            "at": "2026-11-14T01:03:53.733056+00:00",
+            "pid": 27136,
+            "event": "shutdown_requested",
+            "reason": "controlled_stop",
+            "stop_request": {
+              "channel": "file_presence",
+              "initiator": "unknown"
+            }
+          },
+          {
+            "at": "2026-11-14T01:03:53.803187+00:00",
+            "pid": 27136,
+            "event": "service_exited",
+            "reason": "shutdown_completed"
+          }
+        ]
+      },
+      "complete": true
+    }
+  ],
+  "findings": [
+    {
+      "code": "configured_process_not_observed",
+      "id": "ev-c20df7c3dc6b434c8a2c7e104547a6df"
+    },
+    {
+      "code": "expected_port_not_listening",
+      "id": "ev-4a639360df8e406384ae18a2bf2b438f"
+    },
+    {
+      "code": "dependency_http_failed",
+      "id": "ev-e3d7eabde2df46848f39f5859a8dc2e9"
+    }
+  ],
+  "checks": [
+    {
+      "question": "downstream 是收到停止请求后正常退出，还是启动失败或异常崩溃退出？",
+      "evidenceIds": [
+        "ev-e8f0da4b17494540b643ef42a37394ba"
+      ],
+      "status": "observed"
+    },
+    {
+      "question": "downstream 是收到停止请求后正常退出（downstream_stopped_after_request），还是从未启动/启动失败，或进程存在但未绑定 4634？",
+      "evidenceIds": [
+        "ev-e8f0da4b17494540b643ef42a37394ba"
+      ],
+      "status": "observed"
+    },
+    {
+      "question": "edge 到 localapp 的链路是否本身故障（与 downstream 无关）？",
+      "evidenceIds": [
+        "ev-e3d7eabde2df46848f39f5859a8dc2e9"
+      ],
+      "status": "observed"
+    },
+    {
+      "question": "localapp 实际加载的 downstream_port 是否为 4634",
+      "evidenceIds": [
+        "ev-0c333c1efbf4425d818a9b8a19461194"
+      ],
+      "status": "observed"
+    }
+  ],
+  "rawAvailable": false
+}

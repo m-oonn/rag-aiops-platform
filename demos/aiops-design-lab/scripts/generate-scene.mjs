@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {projectScene} from '../src/model.mjs';
+const root = new URL('../../../',import.meta.url);
+const run = JSON.parse(fs.readFileSync(new URL('runtime/aiops-visualization-run-read.json',root),'utf8'));
+const evidence = JSON.parse(fs.readFileSync(new URL('runtime/aiops-visualization-evidence-read.json',root),'utf8'));
+const output = new URL('../src/data/scene.json',import.meta.url);
+fs.mkdirSync(new URL('../src/data/',import.meta.url),{recursive:true});
+fs.writeFileSync(output,JSON.stringify(projectScene(run,evidence),null,2)+'\n','utf8');
+console.log(`已生成只读预览数据：${fileURLToPath(output)}`);

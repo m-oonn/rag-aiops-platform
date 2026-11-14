@@ -1,0 +1,21 @@
+{
+  "name": "aiops-design-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "data": "node scripts/generate-scene.mjs",
+    "dev": "vite --host 127.0.0.1 --port 5274 --strictPort",
+    "build": "vite build",
+    "test": "node --test tests/model.test.mjs"
+  },
+  "dependencies": {
+    "@vue-flow/core": "1.48.2",
+    "animejs": "4.5.0",
+    "vue": "3.5.30"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.4",
+    "vite": "5.4.21"
+  }
+}
