@@ -1,245 +1,118 @@
-<template>
-  <el-container class="layout-container">
-    <el-aside :width="asideWidth" v-if="!isLoginPage" class="app-aside">
-      <el-menu
-        router
-        :default-active="$route.path"
-        :collapse="isCollapse"
-        :collapse-transition="false"
-        class="app-menu"
-      >
-        <el-menu-item index="/dashboard">
-          <el-icon><Menu /></el-icon>
-          <template #title><span>仪表盘</span></template>
-        </el-menu-item>
-        <el-menu-item index="/chat">
-          <el-icon><ChatDotRound /></el-icon>
-          <template #title><span>会话</span></template>
-        </el-menu-item>
-        <el-menu-item index="/knowledge-bases">
-          <el-icon><Document /></el-icon>
-          <template #title><span>知识库</span></template>
-        </el-menu-item>
-        <el-menu-item index="/assistants">
-          <el-icon><User /></el-icon>
-          <template #title><span>助手</span></template>
-        </el-menu-item>
-        <el-menu-item index="/agents">
-          <el-icon><Cpu /></el-icon>
-          <template #title><span>Agents</span></template>
-        </el-menu-item>
-        <el-menu-item index="/aiops">
-          <el-icon><DataAnalysis /></el-icon>
-          <template #title><span>AIOps 诊断</span></template>
-        </el-menu-item>
-        <el-menu-item index="/monitor">
-          <el-icon><Monitor /></el-icon>
-          <template #title><span>监控</span></template>
-        </el-menu-item>
-        <el-menu-item index="/queue-monitor">
-          <el-icon><Odometer /></el-icon>
-          <template #title><span>队列监控</span></template>
-        </el-menu-item>
-        <el-menu-item index="/evaluation">
-          <el-icon><TrendCharts /></el-icon>
-          <template #title><span>评测</span></template>
-        </el-menu-item>
-        <el-menu-item v-if="isAdmin" index="/users">
-          <el-icon><UserFilled /></el-icon>
-          <template #title><span>用户管理</span></template>
-        </el-menu-item>
-      </el-menu>
-      <!-- 退出登录不属于导航项：el-menu 的 router 模式会把带 index 的项当成路由跳转，
-           故放在 menu 之外，避免误跳 /logout 并消除 "Missing required prop: index" 告警 -->
-      <div class="logout-item" @click="logout">
-        <el-icon><SwitchButton /></el-icon>
-        <span v-show="!isCollapse">退出登录</span>
-      </div>
-    </el-aside>
-    <el-container>
-      <el-header v-if="!isLoginPage" class="app-header">
-        <div class="header-content">
-          <div class="header-left">
-            <el-button
-              text
-              class="collapse-btn"
-              :title="isCollapse ? '展开导航' : '收起导航'"
-              @click="isCollapse = !isCollapse"
-            >
-              <el-icon :size="18"><Expand v-if="isCollapse" /><Fold v-else /></el-icon>
-            </el-button>
-            <h2 class="app-title">AIOps 智能体平台</h2>
-          </div>
-          <el-tooltip :content="username" placement="bottom">
-            <el-avatar>
-              <el-icon><User /></el-icon>
-            </el-avatar>
-          </el-tooltip>
-        </div>
-      </el-header>
-      <el-main class="app-main">
-        <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
-</template>
-
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import {
-  ChatDotRound,
-  Cpu,
-  DataAnalysis,
-  Document,
-  Expand,
-  Fold,
-  Menu,
-  Monitor,
-  Odometer,
-  SwitchButton,
-  TrendCharts,
-  User,
-  UserFilled,
-} from '@element-plus/icons-vue'
-import api from './api'
-
-const route = useRoute()
-const router = useRouter()
-const username = ref(localStorage.getItem('username') || '用户')
-// 角色以服务端 /auth/me 为准；localStorage 只做首屏乐观值，避免菜单闪烁
-const role = ref(localStorage.getItem('role') || 'user')
-const isAdmin = computed(() => role.value === 'admin')
-
-const isLoginPage = computed(() => route.path === '/login' || route.path === '/register')
-const isCollapse = ref(false)
-const asideWidth = computed(() => (isCollapse.value ? 'var(--app-sidebar-collapsed)' : 'var(--app-sidebar-width)'))
-
-let mediaQuery = null
-const applyCollapse = (event) => {
-  isCollapse.value = event.matches
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { navigation } from "./router";
+import { session } from "./lib/session";
+import Icon from "./components/Icon.vue";
+const route = useRoute(),
+  router = useRouter(),
+  mobileNav = ref(false);
+const groups = computed(() =>
+  navigation.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !item.admin || session.user?.role === "admin",
+    ),
+  })),
+);
+const active = (path) =>
+  path === "/aiops" ? route.path === path : route.path.startsWith(path);
+watch(
+  () => route.fullPath,
+  () => {
+    mobileNav.value = false;
+  },
+);
+function logout() {
+  session.logout();
+  router.replace("/login");
 }
-
-// 角色决定"用户管理"入口是否出现；以前角色只存在数据库里，界面上无从得知。
-// 登录页跳走后 token 才出现，所以除了挂载时拉一次，还要在路由变化时补一次。
-let currentUserLoaded = false
-const loadCurrentUser = () => {
-  if (currentUserLoaded || !localStorage.getItem('token')) return
-  api.get('/auth/me')
-    .then(({ data }) => {
-      currentUserLoaded = true
-      role.value = data.role || 'user'
-      localStorage.setItem('role', role.value)
-      if (data.username) {
-        username.value = data.username
-        localStorage.setItem('username', data.username)
-      }
-    })
-    .catch(() => {})
+function expired() {
+  session.user = null;
+  router.replace({ path: "/login", query: { redirect: route.fullPath } });
 }
-
-onMounted(() => {
-  loadCurrentUser()
-  // jsdom/老环境没有 matchMedia：此时保持默认展开，不阻断渲染
-  if (typeof window.matchMedia !== 'function') return
-  mediaQuery = window.matchMedia('(max-width: 1024px)')
-  isCollapse.value = mediaQuery.matches
-  mediaQuery.addEventListener?.('change', applyCollapse)
-})
-
-watch(() => route.path, () => {
-  loadCurrentUser()
-})
-
-onUnmounted(() => {
-  mediaQuery?.removeEventListener?.('change', applyCollapse)
-})
-
-const logout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
-  localStorage.removeItem('role')
-  role.value = 'user'
-  currentUserLoaded = false
-  router.push('/login')
-}
+onMounted(() => window.addEventListener("session-expired", expired));
+onUnmounted(() => window.removeEventListener("session-expired", expired));
 </script>
-
-<style>
-.layout-container {
-  height: 100vh;
-}
-.app-aside {
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border-right: 1px solid var(--app-border-subtle);
-  transition: width 0.2s ease;
-  overflow: hidden;
-}
-.app-menu {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  border-right: none;
-}
-.logout-item {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 56px;
-  padding: 0 12px;
-  cursor: pointer;
-  color: var(--app-text-primary);
-  border-top: 1px solid var(--app-border-subtle);
-  white-space: nowrap;
-}
-.logout-item:hover {
-  background-color: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-}
-.app-header {
-  height: 56px;
-  background: #fff;
-  border-bottom: 1px solid var(--app-border-subtle);
-}
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  height: 56px;
-}
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.collapse-btn {
-  padding: 4px;
-  color: var(--app-text-secondary);
-}
-.app-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--app-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.app-main {
-  padding: var(--app-gap-page);
-  overflow-y: auto;
-}
-@media (max-width: 640px) {
-  .app-main {
-    padding: var(--app-gap-inline);
-  }
-  .app-title {
-    display: none;
-  }
-}
-</style>
+<template>
+  <RouterView v-if="route.meta.public" />
+  <div v-else class="app-shell">
+    <a class="skip-link" href="#main">跳至主内容</a>
+    <aside class="sidebar">
+      <RouterLink to="/dashboard" class="brand"
+        ><span class="brand-symbol"><Icon name="pulse" :size="23" /></span
+        ><span
+          >AIOps<span class="brand-caption">运维工作空间</span></span
+        ></RouterLink
+      >
+      <nav aria-label="主导航">
+        <div v-for="group in groups" :key="group.label" class="nav-group">
+          <div class="nav-label">{{ group.label }}</div>
+          <RouterLink
+            v-for="item in group.items"
+            :key="item.path"
+            :to="item.path"
+            :class="['nav-link', { active: active(item.path) }]"
+            :aria-current="active(item.path) ? 'page' : undefined"
+            ><Icon :name="item.icon" :size="19" />{{ item.title }}</RouterLink
+          >
+        </div>
+      </nav>
+      <div class="sidebar-bottom">
+        <Icon name="shield" :size="16" /><span>{{
+          { admin: "管理员", auditor: "审计员", user: "成员" }[
+            session.user?.role
+          ] || "成员"
+        }}</span>
+      </div>
+    </aside>
+    <div class="app-body">
+      <header class="topbar">
+        <div class="actions">
+          <button
+            class="icon-button mobile-menu"
+            aria-label="打开导航"
+            @click="mobileNav = true"
+          >
+            <Icon name="menu" />
+          </button>
+        </div>
+        <div class="topbar-right">
+          <details class="account-menu">
+            <summary>
+              <span class="avatar">{{
+                session.user?.username?.slice(0, 1)?.toUpperCase() || "U"
+              }}</span
+              ><span>{{ session.user?.username }}</span
+              ><Icon name="down" :size="14" />
+            </summary>
+            <div class="account-popover">
+              <span class="muted">{{ session.user?.email }}</span
+              ><button class="text-button" @click="logout">
+                <Icon name="logout" :size="16" />退出登录
+              </button>
+            </div>
+          </details>
+        </div>
+      </header>
+      <main id="main" class="app-main" tabindex="-1">
+        <RouterView :key="route.path" />
+      </main>
+    </div>
+    <el-drawer v-model="mobileNav" title="导航" direction="ltr" size="280px"
+      ><nav aria-label="移动导航">
+        <div v-for="group in groups" :key="group.label" class="nav-group">
+          <div class="nav-label">{{ group.label }}</div>
+          <RouterLink
+            v-for="item in group.items"
+            :key="item.path"
+            :to="item.path"
+            :class="['nav-link', { active: active(item.path) }]"
+            :aria-current="active(item.path) ? 'page' : undefined"
+            ><Icon :name="item.icon" :size="19" />{{ item.title }}</RouterLink
+          >
+        </div>
+      </nav></el-drawer
+    >
+  </div>
+</template>

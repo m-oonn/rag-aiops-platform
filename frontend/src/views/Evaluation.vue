@@ -1,471 +1,545 @@
-<template>
-  <div class="evaluation-container">
-    <PageHeader title="评测" subtitle="量化问答与检索效果" />
-    
-    <el-tabs v-model="activeTab" type="border-card">
-      <!-- Configuration Tab -->
-      <el-tab-pane label="新建评测" name="config">
-        <el-form :model="form" label-width="150px" style="max-width: 800px;">
-          <el-form-item label="评测模式">
-            <el-radio-group v-model="form.mode">
-              <el-radio value="kb">知识库级别</el-radio>
-              <el-radio value="doc">文档级别</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          
-          <el-form-item label="自定义数据集">
-              <el-switch v-model="form.is_custom_upload" active-text="上传文件" inactive-text="自动生成" />
-          </el-form-item>
-          
-          <div v-if="form.is_custom_upload">
-              <el-form-item label="上传文件">
-                  <el-upload
-                    class="upload-demo"
-                    action="#"
-                    :auto-upload="false"
-                    :on-change="handleFileChange"
-                    :limit="1"
-                    accept=".json,.csv,.xlsx"
-                  >
-                    <template #trigger>
-                      <el-button type="primary">选择文件</el-button>
-                    </template>
-                    <template #tip>
-                      <div class="el-upload__tip">
-                        支持 JSON/CSV/Excel。格式：question、answer（或 ground_truth）、type（可选）
-                      </div>
-                    </template>
-                  </el-upload>
-              </el-form-item>
-          </div>
-          <div v-else>
-              <el-form-item label="知识库">
-                <el-select v-model="form.kb_id" placeholder="选择知识库" @change="onKBChange" style="width: 100%;">
-                  <el-option
-                    v-for="item in kbs"
-                    :key="item.id"
-                    :label="item.name"
-                    :value="item.id"
-                  />
-                </el-select>
-              </el-form-item>
-              
-              <el-form-item label="文档" v-if="form.mode === 'doc'">
-                <el-select v-model="form.doc_ids" multiple placeholder="选择文档" style="width: 100%;">
-                  <el-option
-                    v-for="doc in documents"
-                    :key="doc.id"
-                    :label="doc.filename"
-                    :value="doc.id"
-                  />
-                </el-select>
-              </el-form-item>
-              
-              <el-form-item label="采样文档数（N）" v-if="form.mode === 'kb'">
-                <el-input-number v-model="form.num_docs" :min="1" :max="50" />
-                <span class="hint">从知识库中随机选择 N 篇文档</span>
-              </el-form-item>
-              
-              <el-form-item label="总题数（M）">
-                <el-input-number v-model="form.num_questions" :min="5" :max="2000" :step="10" />
-              </el-form-item>
-              
-              <el-divider content-position="left">题型分布比例</el-divider>
-              
-              <el-form-item label="单跳">
-                 <el-slider v-model="form.ratios.single_hop" :min="0" :max="1" :step="0.1" show-input />
-              </el-form-item>
-              <el-form-item label="多跳">
-                 <el-slider v-model="form.ratios.multi_hop" :min="0" :max="1" :step="0.1" show-input />
-              </el-form-item>
-              <el-form-item label="错误/否定">
-                 <el-slider v-model="form.ratios.error" :min="0" :max="1" :step="0.1" show-input />
-              </el-form-item>
-              
-              <el-alert
-                v-if="totalRatio !== 1"
-                title="警告：比例之和应为 1.0"
-                type="warning"
-                show-icon
-                :closable="false"
-                style="margin-bottom: 20px;"
-              />
-          </div>
-          
-          <el-form-item>
-            <el-button type="primary" @click="startGeneration" :loading="loading" :disabled="!isFormValid">
-                {{ form.is_custom_upload ? '上传并创建任务' : '生成数据集' }}
-            </el-button>
-          </el-form-item>
-        </el-form>
-      </el-tab-pane>
-      
-      <!-- History Tab -->
-      <el-tab-pane label="历史与报告" name="history">
-        <div style="margin-bottom: 10px; display: flex;">
-            <el-button @click="fetchTasks" icon="Refresh" circle></el-button>
-            <div style="flex: 1"></div>
-            <el-button type="danger" @click="batchDeleteTasks" :disabled="!selectedTasks.length">批量删除</el-button>
-        </div>
-        <el-table :data="tasks" stripe style="width: 100%" @selection-change="handleSelectionChange" row-key="id">
-            <el-table-column type="selection" width="55" :reserve-selection="true" />
-            <el-table-column prop="id" label="ID" width="80" />
-            <el-table-column prop="name" label="任务名称" min-width="180" />
-            <el-table-column label="类型" width="100">
-                <template #default="scope">
-                    <el-tag v-if="scope.row.is_custom_dataset" type="info">自定义</el-tag>
-                    <el-tag v-else>自动</el-tag>
-                </template>
-            </el-table-column>
-            <el-table-column label="进度" width="200">
-                <template #default="scope">
-                    <div v-if="scope.row.status === 4">
-                        <el-tag type="success">数据集就绪</el-tag>
-                        <small style="margin-left: 5px;">{{ scope.row.total_count }} 条</small>
-                    </div>
-                    <div v-else-if="scope.row.status === 1 || scope.row.status === 2">
-                        <el-progress :percentage="calculateProgress(scope.row)" :format="progressFormat" />
-                        <small v-if="scope.row.total_count > 0">{{ scope.row.completed_count }} / {{ scope.row.total_count }}</small>
-                    </div>
-                    <div v-else>
-                         <el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
-                    </div>
-                </template>
-            </el-table-column>
-            <el-table-column prop="created_at" label="创建时间" width="180">
-                <template #default="scope">
-                    {{ formatDate(scope.row.created_at) }}
-                </template>
-            </el-table-column>
-            <el-table-column label="操作" width="250" fixed="right">
-                <template #default="scope">
-                    <el-button size="small" @click="viewDataset(scope.row)">数据集</el-button>
-                    <el-button size="small" type="success" v-if="scope.row.status === 4" @click="runEvaluation(scope.row)">运行</el-button>
-                    <el-button size="small" type="primary" v-if="scope.row.status === 2 || scope.row.status === 3" @click="viewReport(scope.row)">报告</el-button>
-                </template>
-            </el-table-column>
-        </el-table>
-      </el-tab-pane>
-    </el-tabs>
-
-    <!-- Dataset Dialog -->
-    <el-dialog v-model="datasetVisible" title="评测数据集" width="80%">
-        <el-table :data="datasetItems" border style="width: 100%" max-height="500">
-            <el-table-column prop="question" label="问题">
-                <template #default="scope">
-                    <el-input v-if="editingRow === scope.row.id" v-model="editingData.question" type="textarea" />
-                    <span v-else>{{ scope.row.question }}</span>
-                </template>
-            </el-table-column>
-            <el-table-column prop="ground_truth" label="标准答案">
-                <template #default="scope">
-                    <el-input v-if="editingRow === scope.row.id" v-model="editingData.ground_truth" type="textarea" />
-                    <span v-else>{{ scope.row.ground_truth }}</span>
-                </template>
-            </el-table-column>
-            <el-table-column prop="qa_type" label="类型" width="120">
-                <template #default="scope">
-                    <el-select v-if="editingRow === scope.row.id" v-model="editingData.qa_type">
-                        <el-option label="单跳" value="single_hop" />
-                        <el-option label="多跳" value="multi_hop" />
-                        <el-option label="错误" value="error" />
-                    </el-select>
-                    <el-tag v-else>{{ scope.row.qa_type }}</el-tag>
-                </template>
-            </el-table-column>
-            <el-table-column label="操作" width="150">
-                <template #default="scope">
-                    <div v-if="editingRow === scope.row.id">
-                        <el-button size="small" type="success" @click="saveEdit(scope.row)">保存</el-button>
-                        <el-button size="small" @click="cancelEdit">取消</el-button>
-                    </div>
-                    <div v-else>
-                        <el-button size="small" type="primary" @click="startEdit(scope.row)" :disabled="currentTaskStatus !== 4">编辑</el-button>
-                        <el-button size="small" type="danger" @click="deleteItem(scope.row)" :disabled="currentTaskStatus !== 4">删除</el-button>
-                    </div>
-                </template>
-            </el-table-column>
-        </el-table>
-        <template #footer>
-            <el-button @click="datasetVisible = false">关闭</el-button>
-            <el-button type="primary" v-if="currentTaskStatus === 4" @click="confirmAndRun">确认并运行评测</el-button>
-        </template>
-    </el-dialog>
-
-    <!-- Report Dialog -->
-    <el-dialog v-model="reportVisible" title="评测报告" width="70%" top="5vh">
-        <div class="report-content">
-            <pre>{{ reportContent }}</pre>
-        </div>
-        <template #footer>
-            <el-button @click="reportVisible = false">关闭</el-button>
-            <el-button type="primary" @click="downloadReport">下载报告</el-button>
-        </template>
-    </el-dialog>
-  </div>
-</template>
-
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import api from '../api'
-import { ElMessage } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
-import { Refresh } from '@element-plus/icons-vue'
-import { getNumericStatusType, getEvalStatusText } from '../utils/status'
-import { formatDate } from '../utils/format'
-import { usePolling, POLL_SLOW } from '../composables/usePolling'
-import { confirmAction } from '../utils/confirm'
+import { computed, reactive, ref, watch } from "vue";
+import { request, downloadBlob } from "../lib/api";
+import {
+  confirmAction,
+  evalStatus,
+  fail,
+  notify,
+  tone,
+  useLoad,
+  dateTime,
+} from "../lib/ui";
+import PageHeader from "../components/PageHeader.vue";
+import Feedback from "../components/Feedback.vue";
+import DataTable from "../components/DataTable.vue";
+import Markdown from "../components/Markdown.vue";
+import Modal from "../components/Modal.vue";
+import Icon from "../components/Icon.vue";
 
-const activeTab = ref('config')
-const kbs = ref([])
-const documents = ref([])
-const tasks = ref([])
-const loading = ref(false)
-const reportVisible = ref(false)
-const reportContent = ref('')
-const currentTaskId = ref(null)
-
-// Dataset Dialog
-    const datasetVisible = ref(false)
-    const datasetItems = ref([])
-    const currentTask = ref(null)
-    const currentTaskStatus = ref(0)
-    const editingRow = ref(null)
-    const editingData = reactive({ question: '', ground_truth: '', qa_type: '' })
-    const selectedTasks = ref([])
-    const fileList = ref([]) // For upload
+const rows = ref([]);
+const kbs = ref([]);
+const documents = ref([]);
+const selected = ref([]);
+const filter = ref("");
+const task = ref(null);
+const items = ref([]);
+const report = ref("");
+const upload = ref(null);
+const uploadExisting = ref(false);
+const busy = ref(false);
+const createOpen = ref(false);
+const datasetOpen = ref(false);
+const reportOpen = ref(false);
+const editorOpen = ref(false);
+const editingItem = ref(null);
 
 const form = reactive({
-    mode: 'kb',
-    kb_id: null,
-    doc_ids: [],
-    num_docs: 5,
+  kb_id: "",
+  num_questions: 10,
+  mode: "kb",
+  num_docs: 5,
+  doc_ids: [],
+  is_custom_upload: false,
+});
+const editForm = reactive({
+  question: "",
+  ground_truth: "",
+  qa_type: "single_hop",
+});
+const visible = computed(() =>
+  rows.value.filter((row) =>
+    row.name.toLowerCase().includes(filter.value.toLowerCase()),
+  ),
+);
+const dialogTitle = computed(() =>
+  uploadExisting.value
+    ? `上传数据集 · ${task.value?.name || ""}`
+    : "新建评测任务",
+);
+
+watch(createOpen, (open) => {
+  if (!open && uploadExisting.value) {
+    uploadExisting.value = false;
+    openDataset(task.value);
+  }
+});
+
+const { loading, error, refresh } = useLoad(async () => {
+  const result = await Promise.allSettled([
+    request("/evaluations/tasks"),
+    request("/knowledge-bases/"),
+  ]);
+  if (result[0].status === "rejected") throw result[0].reason;
+  rows.value = result[0].value;
+  kbs.value = result[1].status === "fulfilled" ? result[1].value : [];
+});
+
+function newTask() {
+  task.value = null;
+  uploadExisting.value = false;
+  upload.value = null;
+  Object.assign(form, {
+    kb_id: "",
     num_questions: 10,
-    ratios: {
-        single_hop: 0.7,
-        multi_hop: 0.2,
-        error: 0.1
-    },
-    is_custom_upload: false
-})
-
-const totalRatio = computed(() => {
-    return parseFloat((form.ratios.single_hop + form.ratios.multi_hop + form.ratios.error).toFixed(1))
-})
-
-const isFormValid = computed(() => {
-    if (form.is_custom_upload) return fileList.value.length > 0
-    if (!form.kb_id) return false
-    if (form.mode === 'doc' && form.doc_ids.length === 0) return false
-    return true
-})
-
-const handleFileChange = (file) => {
-    fileList.value = [file]
+    mode: "kb",
+    num_docs: 5,
+    doc_ids: [],
+    is_custom_upload: false,
+  });
+  createOpen.value = true;
 }
 
-const handleSelectionChange = (val) => {
-    selectedTasks.value = val
+async function loadDocs() {
+  form.doc_ids = [];
+  if (!form.kb_id) {
+    documents.value = [];
+    return;
+  }
+  try {
+    documents.value = await request(`/knowledge-bases/${form.kb_id}/documents`);
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const startGeneration = async () => {
-    loading.value = true
+async function saveDatasetFile(target) {
+  if (!upload.value) throw new Error("请选择数据集文件");
+  const body = new FormData();
+  body.append("file", upload.value);
+  await request(`/evaluations/${target.id}/upload-dataset`, {
+    method: "POST",
+    body,
+  });
+  upload.value = null;
+}
+
+async function create() {
+  if (uploadExisting.value) {
+    if (
+      !(await confirmAction(
+        "上传评测数据集",
+        `将数据集加入“${task.value.name}”？`,
+        "上传",
+      ))
+    )
+      return;
+    busy.value = true;
     try {
-        if (form.is_custom_upload) {
-            // Create task first
-            const res = await api.post('/evaluations/generate', form)
-            const task = res.data
-            // Upload file
-            const formData = new FormData()
-            formData.append('file', fileList.value[0].raw)
-            await api.post(`/evaluations/${task.id}/upload-dataset`, formData)
-            ElMessage.success('自定义数据集已上传，可预览并运行评测')
-            fetchTasks()
-        } else {
-            await api.post('/evaluations/generate', form)
-            ElMessage.success('数据集生成已开始，请稍候...')
-            fetchTasks()
-        }
-        activeTab.value = 'history'
-    } catch (e) {
-        ElMessage.error(e.response?.data?.detail || '启动生成失败')
+      await saveDatasetFile(task.value);
+      createOpen.value = false;
+      uploadExisting.value = false;
+      await openDataset(task.value);
+      await refresh();
+      task.value =
+        rows.value.find((row) => row.id === task.value.id) || task.value;
+      notify("数据集已上传");
+    } catch (error) {
+      fail(error);
     } finally {
-        loading.value = false
+      busy.value = false;
     }
+    return;
+  }
+
+  busy.value = true;
+  try {
+    if (!form.is_custom_upload && !form.kb_id) throw new Error("请选择知识库");
+    if (form.is_custom_upload && !upload.value)
+      throw new Error("请选择数据集文件");
+    if (form.mode === "doc" && !form.doc_ids.length)
+      throw new Error("请选择至少一份文档");
+    const config = {
+      kb_id: form.kb_id ? Number(form.kb_id) : null,
+      num_questions: Number(form.num_questions),
+      mode: form.mode,
+      num_docs: Number(form.num_docs),
+      doc_ids: form.doc_ids.length ? form.doc_ids.map(Number) : null,
+      is_custom_upload: form.is_custom_upload,
+    };
+    const created = await request("/evaluations/generate", {
+      method: "POST",
+      body: config,
+    });
+    if (form.is_custom_upload) await saveDatasetFile(created);
+    createOpen.value = false;
+    await refresh();
+    if (form.is_custom_upload) await openDataset(created);
+    notify("评测任务已创建");
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
+  }
 }
 
-const viewDataset = async (task) => {
-    currentTask.value = task
-    currentTaskStatus.value = task.status
-    try {
-        const res = await api.get(`/evaluations/${task.id}/dataset`)
-        datasetItems.value = res.data
-        datasetVisible.value = true
-    } catch (e) {
-        ElMessage.error('加载数据集失败')
-    }
+function openDatasetUpload(row) {
+  task.value = row;
+  datasetOpen.value = false;
+  upload.value = null;
+  uploadExisting.value = true;
+  form.is_custom_upload = true;
+  createOpen.value = true;
 }
 
-const startEdit = (row) => {
-    editingRow.value = row.id
-    editingData.question = row.question
-    editingData.ground_truth = row.ground_truth
-    editingData.qa_type = row.qa_type
+async function openDataset(row) {
+  task.value = row;
+  datasetOpen.value = true;
+  items.value = [];
+  try {
+    items.value = await request(`/evaluations/${row.id}/dataset`);
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const cancelEdit = () => {
-    editingRow.value = null
+function editItem(row) {
+  editingItem.value = row;
+  Object.assign(editForm, {
+    question: row.question,
+    ground_truth: row.ground_truth,
+    qa_type: row.qa_type,
+  });
+  datasetOpen.value = false;
+  editorOpen.value = true;
 }
 
-const saveEdit = async (row) => {
-    try {
-        await api.put(`/evaluations/dataset-items/${row.id}`, editingData)
-        row.question = editingData.question
-        row.ground_truth = editingData.ground_truth
-        row.qa_type = editingData.qa_type
-        editingRow.value = null
-        ElMessage.success('更新成功')
-    } catch (e) {
-        ElMessage.error('更新失败')
-    }
+async function saveItem() {
+  if (!editForm.question.trim() || !editForm.ground_truth.trim())
+    return fail(new Error("问题和参考答案不能为空"));
+  busy.value = true;
+  try {
+    await request(`/evaluations/dataset-items/${editingItem.value.id}`, {
+      method: "PUT",
+      body: { ...editForm },
+    });
+    editorOpen.value = false;
+    await openDataset(task.value);
+    notify("评测样本已保存");
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
+  }
 }
 
-const deleteItem = async (row) => {
-    if (!(await confirmAction('确定删除该条数据吗？'))) return
-    try {
-        await api.delete(`/evaluations/dataset-items/${row.id}`)
-        datasetItems.value = datasetItems.value.filter(i => i.id !== row.id)
-        ElMessage.success('删除成功')
-    } catch (e) {
-        ElMessage.error('删除失败')
-    }
+async function removeItem(row) {
+  if (!(await confirmAction("删除评测样本", "此操作无法撤销。", "删除", true)))
+    return;
+  try {
+    await request(`/evaluations/dataset-items/${row.id}`, { method: "DELETE" });
+    await openDataset(task.value);
+    notify("评测样本已删除");
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const confirmAndRun = async () => {
-    if (!currentTask.value) return
-    runEvaluation(currentTask.value)
-    datasetVisible.value = false
+async function run(row) {
+  if (!row || row.status !== 4) return;
+  if (
+    !(await confirmAction(
+      "开始评测",
+      `使用“${row.name}”开始评测？`,
+      "开始评测",
+    ))
+  )
+    return;
+  try {
+    await request(`/evaluations/${row.id}/run`, { method: "POST" });
+    notify("评测已开始");
+    await refresh();
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const runEvaluation = async (task) => {
-    try {
-        await api.post(`/evaluations/${task.id}/run`)
-        ElMessage.success('评测已开始')
-        fetchTasks()
-    } catch (e) {
-        ElMessage.error('启动评测失败')
-    }
+async function showReport(row) {
+  task.value = row;
+  try {
+    const result = await request(`/evaluations/${row.id}/report`);
+    report.value = result.content || JSON.stringify(result, null, 2);
+    reportOpen.value = true;
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const batchDeleteTasks = async () => {
-    if (!(await confirmAction(`确定删除 ${selectedTasks.value.length} 个任务吗？`, '警告'))) return
-    try {
-        const ids = selectedTasks.value.map(t => t.id)
-        await api.delete('/evaluations/tasks/batch-delete', { data: ids })
-        ElMessage.success('任务已删除')
-        fetchTasks()
-        selectedTasks.value = []
-    } catch (e) {
-        ElMessage.error('删除任务失败：' + (e.response?.data?.detail || e.message))
-    }
+async function removeSelected() {
+  if (
+    !selected.value.length ||
+    !(await confirmAction(
+      "删除评测任务",
+      `删除 ${selected.value.length} 个任务？`,
+      "删除",
+      true,
+    ))
+  )
+    return;
+  try {
+    await request("/evaluations/tasks/batch-delete", {
+      method: "DELETE",
+      body: selected.value,
+    });
+    selected.value = [];
+    await refresh();
+    notify("评测任务已删除");
+  } catch (error) {
+    fail(error);
+  }
 }
 
-const fetchKBs = async () => {
-    try {
-        const res = await api.get('/knowledge-bases/')
-        kbs.value = res.data
-    } catch (e) {
-        ElMessage.error('加载知识库失败')
-    }
+function downloadReport() {
+  downloadBlob(
+    new Blob([report.value], { type: "text/markdown" }),
+    `${task.value?.name || "evaluation-report"}.md`,
+  );
 }
-
-const onKBChange = async () => {
-    form.doc_ids = []
-    documents.value = []
-    if (form.kb_id) {
-        try {
-            const res = await api.get(`/knowledge-bases/${form.kb_id}/documents`)
-            documents.value = res.data
-        } catch (e) {
-            ElMessage.error('加载文档失败')
-        }
-    }
-}
-
-const fetchTasks = async () => {
-    // Assuming we have an endpoint to list tasks, otherwise we might need to add one or mock it
-    // The current router in evaluation.py doesn't seem to have a list endpoint!
-    // I need to add one. For now let's assume I will add it.
-    try {
-        const res = await api.get('/evaluations/tasks')
-        tasks.value = res.data
-    } catch (e) {
-        console.warn('加载任务列表失败:', e)
-    }
-}
-
-const viewReport = async (task) => {
-    currentTaskId.value = task.id
-    try {
-        const res = await api.get(`/evaluations/${task.id}/report`)
-        reportContent.value = res.data.content
-        reportVisible.value = true
-    } catch (e) {
-        ElMessage.error('加载报告失败')
-    }
-}
-
-const downloadReport = () => {
-    const blob = new Blob([reportContent.value], { type: 'text/markdown' })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `report_${currentTaskId.value}.md`
-    link.click()
-    window.URL.revokeObjectURL(url)
-}
-
-const calculateProgress = (row) => {
-    if (!row.total_count || row.total_count === 0) return 0
-    return Math.round((row.completed_count / row.total_count) * 100)
-}
-
-const progressFormat = (percentage) => {
-    return `${percentage}%`
-}
-
-const statusText = getEvalStatusText
-const statusType = getNumericStatusType
-
-
-const { start: startPolling } = usePolling(() => {
-    if (activeTab.value === 'history') {
-        fetchTasks()
-    }
-}, POLL_SLOW)
-
-onMounted(() => {
-    fetchKBs()
-    fetchTasks()
-    startPolling()
-})
 </script>
 
-<style scoped>
-.hint {
-    font-size: 12px;
-    color: #999;
-    margin-left: 10px;
-}
-.report-content {
-    background: #f5f7fa;
-    padding: 15px;
-    border-radius: 4px;
-    max-height: 60vh;
-    overflow-y: auto;
-}
-.report-content pre {
-    white-space: pre-wrap;
-    font-family: monospace;
-}
-</style>
+<template>
+  <div class="page">
+    <PageHeader title="效果评测">
+      <button class="button" :disabled="loading" @click="refresh()">
+        <Icon name="refresh" :size="16" />刷新
+      </button>
+      <button class="button primary" @click="newTask">
+        <Icon name="plus" :size="16" />新建评测
+      </button>
+    </PageHeader>
+
+    <div class="toolbar">
+      <label class="search-input"
+        ><Icon name="search" /><input
+          v-model="filter"
+          type="search"
+          placeholder="搜索评测"
+          aria-label="搜索评测"
+      /></label>
+      <button
+        v-if="selected.length"
+        class="button danger"
+        @click="removeSelected"
+      >
+        删除 {{ selected.length }} 项
+      </button>
+    </div>
+    <Feedback
+      :loading="loading"
+      :error="error"
+      :empty="!visible.length && !loading"
+      text="暂无评测任务"
+      @retry="refresh()"
+    />
+    <DataTable
+      v-if="visible.length"
+      v-model="selected"
+      :rows="visible"
+      selectable
+      :columns="[
+        { key: 'name', label: '任务', width: '35%' },
+        { key: 'status', label: '状态' },
+        { key: 'progress', label: '进度' },
+        { key: 'created_at', label: '创建时间' },
+        { key: 'actions', label: '' },
+      ]"
+    >
+      <template #name="{ row }"
+        ><div class="cell-title">
+          <Icon name="chart" /><strong>{{ row.name }}</strong>
+        </div></template
+      >
+      <template #status="{ row }"
+        ><span :class="['status', tone(row.status)]">{{
+          evalStatus(row.status)
+        }}</span></template
+      >
+      <template #progress="{ row }"
+        >{{ row.completed_count || 0 }} / {{ row.total_count || 0 }}</template
+      >
+      <template #created_at="{ row }">{{ dateTime(row.created_at) }}</template>
+      <template #actions="{ row }"
+        ><div class="actions">
+          <button class="text-button" @click="openDataset(row)">数据集</button
+          ><button
+            class="text-button"
+            :disabled="row.status !== 4"
+            @click="run(row)"
+          >
+            开始评测</button
+          ><button
+            class="text-button"
+            :disabled="row.status !== 2"
+            @click="showReport(row)"
+          >
+            查看报告
+          </button>
+        </div></template
+      >
+    </DataTable>
+
+    <Modal v-model="createOpen" :title="dialogTitle">
+      <form @submit.prevent="create">
+        <label v-if="!uploadExisting" class="field"
+          >数据来源<select
+            v-model="form.is_custom_upload"
+            @change="upload = null"
+          >
+            <option :value="false">知识库</option>
+            <option :value="true">上传数据集</option>
+          </select></label
+        >
+        <template v-if="!form.is_custom_upload">
+          <label class="field"
+            >知识库<select v-model="form.kb_id" required @change="loadDocs">
+              <option value="" disabled>选择知识库</option>
+              <option v-for="kb in kbs" :key="kb.id" :value="kb.id">
+                {{ kb.name }}
+              </option>
+            </select></label
+          >
+          <label class="field"
+            >采样方式<select v-model="form.mode">
+              <option value="kb">知识库采样</option>
+              <option value="doc">指定文档</option>
+            </select></label
+          >
+          <div v-if="form.mode === 'doc'" class="check-list">
+            <label
+              v-for="doc in documents.filter((row) => row.status === 2)"
+              :key="doc.id"
+              class="check-label"
+              ><input
+                v-model="form.doc_ids"
+                type="checkbox"
+                :value="doc.id"
+              />{{ doc.filename }}</label
+            ><span
+              v-if="!documents.some((doc) => doc.status === 2)"
+              class="muted"
+              >暂无已处理文档</span
+            >
+          </div>
+          <label v-else class="field"
+            >抽取文档数量<input
+              v-model.number="form.num_docs"
+              type="number"
+              min="1"
+              required
+          /></label>
+          <label class="field"
+            >生成题数<input
+              v-model.number="form.num_questions"
+              type="number"
+              min="1"
+              max="200"
+              required
+          /></label>
+        </template>
+        <label v-else class="field"
+          >数据集文件<input
+            type="file"
+            accept=".json,.csv,.xlsx"
+            required
+            @change="upload = $event.target.files?.[0] || null"
+        /></label>
+        <div class="form-actions">
+          <button type="button" class="button" @click="createOpen = false">
+            取消</button
+          ><button class="button primary" :disabled="busy">
+            {{
+              busy
+                ? "处理中…"
+                : uploadExisting
+                  ? "上传数据集"
+                  : form.is_custom_upload
+                    ? "上传并创建"
+                    : "创建任务"
+            }}
+          </button>
+        </div>
+      </form>
+    </Modal>
+
+    <Modal v-model="datasetOpen" :title="`数据集 · ${task?.name || ''}`" wide>
+      <div class="toolbar">
+        <span class="muted">{{ items.length }} 条样本</span
+        ><button class="button" @click="openDatasetUpload(task)">
+          <Icon name="upload" :size="15" />上传数据集
+        </button>
+      </div>
+      <Feedback :empty="!items.length" text="暂无评测样本" />
+      <DataTable
+        v-if="items.length"
+        :rows="items"
+        :columns="[
+          { key: 'question', label: '问题', width: '39%' },
+          { key: 'ground_truth', label: '参考答案', width: '41%' },
+          { key: 'qa_type', label: '类型' },
+          { key: 'actions', label: '' },
+        ]"
+      >
+        <template #question="{ row }"
+          ><span class="truncate">{{ row.question }}</span></template
+        >
+        <template #ground_truth="{ row }"
+          ><span class="truncate">{{ row.ground_truth }}</span></template
+        >
+        <template #actions="{ row }"
+          ><div class="actions">
+            <button class="text-button" @click="editItem(row)">编辑</button
+            ><button class="text-button danger" @click="removeItem(row)">
+              删除
+            </button>
+          </div></template
+        >
+      </DataTable>
+      <div class="form-actions">
+        <button class="button" @click="datasetOpen = false">关闭</button
+        ><button
+          class="button primary"
+          :disabled="task?.status !== 4"
+          @click="run(task)"
+        >
+          开始评测
+        </button>
+      </div>
+    </Modal>
+
+    <Modal v-model="editorOpen" title="编辑评测样本">
+      <form @submit.prevent="saveItem">
+        <label class="field"
+          >问题<input v-model.trim="editForm.question" required
+        /></label>
+        <label class="field"
+          >参考答案<textarea
+            v-model.trim="editForm.ground_truth"
+            required
+            rows="6"
+          />
+        </label>
+        <label class="field"
+          >类型<select v-model="editForm.qa_type">
+            <option value="single_hop">单跳</option>
+            <option value="multi_hop">多跳</option>
+            <option value="error">错误样例</option>
+          </select></label
+        >
+        <div class="form-actions">
+          <button type="button" class="button" @click="editorOpen = false">
+            取消</button
+          ><button class="button primary" :disabled="busy">保存</button>
+        </div>
+      </form>
+    </Modal>
+
+    <Modal v-model="reportOpen" :title="`评测报告 · ${task?.name || ''}`" wide>
+      <Markdown :content="report" />
+      <div class="form-actions">
+        <button class="button primary" @click="downloadReport">
+          <Icon name="download" :size="16" />下载报告
+        </button>
+      </div>
+    </Modal>
+  </div>
+</template>

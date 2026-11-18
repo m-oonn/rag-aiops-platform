@@ -1,135 +1,145 @@
+<script setup>
+import { computed, ref } from "vue";
+import { request } from "../lib/api";
+import { fail, notify, useLoad } from "../lib/ui";
+import { session } from "../lib/session";
+import PageHeader from "../components/PageHeader.vue";
+import Feedback from "../components/Feedback.vue";
+import DataTable from "../components/DataTable.vue";
+import Modal from "../components/Modal.vue";
+import Icon from "../components/Icon.vue";
+const rows = ref([]),
+  search = ref(""),
+  createOpen = ref(false),
+  busy = ref(false),
+  form = ref({ username: "", email: "", password: "" }),
+  errorText = ref("");
+const visible = computed(() =>
+  rows.value.filter((row) =>
+    `${row.username} ${row.email}`
+      .toLowerCase()
+      .includes(search.value.toLowerCase()),
+  ),
+);
+const { loading, error, refresh } = useLoad(async () => {
+  rows.value = await request("/auth/users");
+});
+async function role(row, value) {
+  try {
+    await request(`/auth/users/${row.id}/role`, {
+      method: "PATCH",
+      body: { role: value },
+    });
+    row.role = value;
+    notify("角色已更新");
+  } catch (e) {
+    fail(e);
+    await refresh();
+  }
+}
+async function create() {
+  busy.value = true;
+  errorText.value = "";
+  try {
+    await request("/auth/register", { method: "POST", body: form.value });
+    createOpen.value = false;
+    form.value = { username: "", email: "", password: "" };
+    await refresh();
+    notify("用户已创建");
+  } catch (e) {
+    errorText.value = e.message;
+  } finally {
+    busy.value = false;
+  }
+}
+</script>
 <template>
-  <div>
-    <PageHeader title="用户管理" subtitle="分配管理员与审计角色：审计角色可查看 AIOps 证据原文" />
-
-    <el-alert
-      v-if="error"
-      :title="error"
-      type="error"
-      show-icon
-      :closable="false"
-      style="margin-bottom: 16px"
-    />
-
-    <div class="filter-bar">
-      <el-input
-        v-model="keyword"
-        placeholder="按用户名或邮箱过滤"
-        clearable
-        style="max-width: 260px"
-      />
-      <div style="flex: 1"></div>
-      <el-button icon="Refresh" @click="fetchUsers">刷新</el-button>
-    </div>
-
-    <el-table :data="filteredUsers" style="width: 100%" v-loading="loading">
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="username" label="用户名">
-        <template #default="scope">
-          <span>{{ scope.row.username }}</span>
-          <el-tag v-if="scope.row.id === currentUserId" size="small" style="margin-left: 8px">当前账号</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="email" label="邮箱" />
-      <el-table-column prop="is_active" label="状态" width="100">
-        <template #default="scope">
-          <el-tag :type="scope.row.is_active ? 'success' : 'info'">
-            {{ scope.row.is_active ? '启用' : '停用' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="角色" width="180">
-        <template #default="scope">
-          <el-select
-            v-model="scope.row.role"
-            size="small"
-            :disabled="scope.row.id === currentUserId"
-            @change="(value) => changeRole(scope.row, value)"
-          >
-            <el-option label="普通用户" value="user" />
-            <el-option label="审计" value="auditor" />
-            <el-option label="管理员" value="admin" />
-          </el-select>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-top: 16px"
-      title="角色说明"
+  <div class="page">
+    <PageHeader title="用户管理"
+      ><button class="button" :disabled="loading" @click="refresh()">
+        <Icon name="refresh" :size="16" />刷新</button
+      ><button class="button primary" @click="createOpen = true">
+        <Icon name="plus" :size="16" />新建用户
+      </button></PageHeader
     >
-      <div>普通用户：使用问答、知识库、诊断等常规功能。</div>
-      <div>审计：在普通用户之上，可读取 AIOps 诊断证据的原文片段（can_read_raw）。</div>
-      <div>管理员：在审计之上，可在此页调整他人角色。不能修改自己的角色，避免最后一个管理员被降级后无人可管。</div>
-    </el-alert>
+    <div class="toolbar">
+      <label class="search-input"
+        ><Icon name="search" /><input
+          v-model="search"
+          placeholder="搜索用户名或邮箱"
+          aria-label="搜索用户" /></label
+      ><span class="muted">{{ visible.length }} 个用户</span>
+    </div>
+    <Feedback
+      :loading="loading"
+      :error="error"
+      :empty="!visible.length && !loading"
+      text="暂无用户"
+      @retry="refresh()"
+    /><DataTable
+      v-if="visible.length"
+      :rows="visible"
+      :columns="[
+        { key: 'username', label: '用户名', width: '28%' },
+        { key: 'email', label: '邮箱', width: '35%' },
+        { key: 'role', label: '角色' },
+        { key: 'is_active', label: '状态' },
+      ]"
+      ><template #username="{ row }"
+        ><div class="cell-title">
+          <span class="avatar">{{
+            row.username.slice(0, 1).toUpperCase()
+          }}</span
+          ><strong>{{ row.username }}</strong
+          ><span v-if="row.id === session.user?.id" class="tag">当前账号</span>
+        </div></template
+      ><template #email="{ row }">{{ row.email }}</template
+      ><template #role="{ row }"
+        ><select
+          :value="row.role || 'user'"
+          :disabled="row.id === session.user?.id"
+          :aria-label="`${row.username}角色`"
+          class="filter-select"
+          @change="role(row, $event.target.value)"
+        >
+          <option value="user">成员</option>
+          <option value="auditor">审计员</option>
+          <option value="admin">管理员</option>
+        </select></template
+      ><template #is_active="{ row }"
+        ><span :class="['status', row.is_active ? 'success' : 'muted']">{{
+          row.is_active ? "正常" : "已停用"
+        }}</span></template
+      ></DataTable
+    ><Modal v-model="createOpen" title="新建用户"
+      ><form @submit.prevent="create">
+        <label class="field"
+          >用户名<input
+            v-model.trim="form.username"
+            autocomplete="username"
+            required
+            maxlength="120" /></label
+        ><label class="field"
+          >邮箱<input
+            v-model.trim="form.email"
+            type="email"
+            autocomplete="email"
+            required /></label
+        ><label class="field"
+          >初始密码<input
+            v-model="form.password"
+            type="password"
+            autocomplete="new-password"
+            minlength="6"
+            required
+        /></label>
+        <p v-if="errorText" role="alert" class="field-error">{{ errorText }}</p>
+        <div class="form-actions">
+          <button type="button" class="button" @click="createOpen = false">
+            取消</button
+          ><button class="button primary" :disabled="busy">创建账号</button>
+        </div>
+      </form></Modal
+    >
   </div>
 </template>
-
-<script setup>
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import api from '../api'
-import PageHeader from '../components/PageHeader.vue'
-
-const users = ref([])
-const loading = ref(false)
-const error = ref('')
-const keyword = ref('')
-const currentUserId = ref(null)
-
-const filteredUsers = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
-  if (!q) return users.value
-  return users.value.filter(
-    (u) => u.username?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q)
-  )
-})
-
-const fetchUsers = async () => {
-  loading.value = true
-  error.value = ''
-  try {
-    const { data } = await api.get('/auth/users')
-    users.value = data
-  } catch (e) {
-    const status = e?.response?.status
-    error.value = status === 403
-      ? '需要管理员权限才能查看用户列表'
-      : (e?.response?.data?.detail || '获取用户列表失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-const fetchCurrentUser = async () => {
-  try {
-    const { data } = await api.get('/auth/me')
-    currentUserId.value = data.id
-    localStorage.setItem('role', data.role || 'user')
-  } catch {
-    // 角色读取失败不影响列表本身的功能
-  }
-}
-
-const changeRole = async (row, role) => {
-  try {
-    const { data } = await api.patch(`/auth/users/${row.id}/role`, { role })
-    Object.assign(row, data)
-    ElMessage.success(`已把 ${data.username} 设为 ${roleLabel(data.role)}`)
-  } catch (e) {
-    // 失败时不猜服务端状态，直接重拉列表
-    ElMessage.error(e?.response?.data?.detail || '修改角色失败')
-    await fetchUsers()
-  }
-}
-
-const roleLabel = (role) => ({ user: '普通用户', auditor: '审计', admin: '管理员' }[role] || role)
-
-onMounted(() => {
-  fetchCurrentUser()
-  fetchUsers()
-})
-</script>
