@@ -1,13 +1,13 @@
 # aiops-diagnosis · AIOps 诊断链路（需求正文）
 
 - 模块：`aiops-diagnosis`（AIOps 诊断链路），需求前缀 `DIAG`
-- 基线提交：`bf789d9e4fff51b7a2c0b661046f9e5c72b6e483`（`main`，2026-11-11）
+- 本轮核实提交：`737f17d4d1e975a640e0e3472b9e052646a0ce1c`（2026-11-11 16:54 +08:00）；本文件只增量复核 AIOps 诊断范围。
 - 上游：`requirements/project-card.md`（D1/D2/D3/D9 决定、对象模型、场景 B）、`requirements/overview.md`（模块职责表、五条链路状态）、`requirements/_conventions.md`
 - 本模块**只**负责：用户提交故障现象 → Plan-Execute-Replan 图执行 → SSE 事件推送 → 生成带证据引用的诊断报告，以及图内的策略收束、报告校验、工具加载与降级、受控终端与人工复核这两处挂起。
 - **不负责**（见 `requirements/modules/aiops-audit.md`）：运行记录的读接口、证据台账与原始引用权限、步级快照、探针注册状态。
 - 三态（已实现 / 已启用 / 已验证）逐条标注。本模块最容易混淆的两处先说清：
   1. **诊断链路已实现且默认可用**，但"运行记录、跨重启恢复、人工复核、受控终端、Windows 探针"五类能力**默认全部关闭**，只有把 `ENABLE_HITL` / `TERMCP_ENABLED` / `PROBE_ENABLED` 任一打开才进入"受管运行"（`src/agent/aiops/graph.py:348`）。默认配置下诊断**不可跨重启恢复**（`src/agent/aiops/graph.py:106`）。
-  2. **"已实现"不等于"已验证"**：唯一真实运行证据是 15 轮付费诊断，10 轮通过 / 5 轮未通过，且官方文档明确"修复后可稳定复现**不成立**"（`docs/aiops-goal-handover-20261108.md:159-163`）。
+  2. **"已实现"不等于"已验证"**：2026-11-08 的 15 轮是独立历史验收组（10 轮通过 / 5 轮未通过）；2026-11-11 另有 12 场受控故障运行（8 场完成人工语义审核，另 4 场分别属于工具可用性与延迟条件对照）。两组目标和夹具不同，不合并计算总通过率；稳定复现仍未成立。来源：`SRC-DOC-HANDOVER`、`SRC-DOC-FAULT-PAIR-20261110`、`SRC-DOC-TOOL-AVAILABILITY-20261111`、`SRC-DOC-LATENCY-20261111`。
 
 ---
 
@@ -572,6 +572,25 @@ stateDiagram-v2
 
 ---
 
+### REQ-DIAG-014 Probe 不可用时，开始付费诊断前提示并要求知情确认
+
+**用户预期（尚未确认）**：现场取证能力不足时，用户应在开始可能产生模型费用的诊断前看见限制并作出确认；是否必须阻止未确认用户、以及依赖探测失败是否应阻止，尚无独立产品决定（Q-42）。
+
+**已观察实现**
+- AIOps 页面加载时读取 `GET /api/v1/health/dependencies`。若 `probe.status == "ok"`，不显示提示；否则显示现场取证受限说明，并要求勾选“我已知晓：本次仍会调用付费模型，但结论可能只到「已定位」或「待核实」”。当 `mcp_monitor` 与 `mcp_cls` 也都不可用时显示更强的“现场取证工具当前全部不可用”说明。
+- 有提示且未确认时，“开始诊断”按钮禁用；输入非空并确认后按钮可用，`runDiagnose` 还有一次提交前守卫。该交互不替代后端授权或诊断结果校验。
+- 依赖请求非 2xx 或抛错时保持沉默，不设置提示，因此不因探测失败而阻止开始；Probe 状态可用时也不要求确认。
+
+**版本与运行证据**：基线源码 `frontend/src/views/AIOps.vue` 及 `frontend/src/views/AIOps.evidencePrecondition.test.js`；`docs/ui-review-fixes-20261111.md` §1 记载真实浏览器检查，配套 4 条前端测试覆盖 Probe 不可用、全部工具不可用、Probe 可用和依赖探测失败。该材料与测试说明当前实现及验证范围，不构成独立产品目标批准。
+
+**部署适用范围**：依赖 `/api/v1/health/dependencies` 返回的 `services.probe`、`services.mcp_monitor`、`services.mcp_cls` 状态；只适用于该 AIOps Web 页面路径。未据此推断 API/CLI 客户端有相同保护。
+
+**三态**：已实现；部署状态随依赖返回变化；已验证（本地真实浏览器记录及四条组件测试，非本轮重跑）。
+
+**basis**：`observed`　**锚点**：`frontend/src/views/AIOps.vue:28-38,62-65,418-420,814-848`、`frontend/src/views/AIOps.evidencePrecondition.test.js:1-99`、`docs/ui-review-fixes-20261111.md:7-27,58-67`
+
+---
+
 ## 4. 三态汇总（本模块）
 
 | 能力 | 已实现 | 已启用 | 已验证 |
@@ -644,3 +663,28 @@ stateDiagram-v2
 - 运行记录（写入侧）：`src/agent/aiops/run_store.py:3,25-31,75-111,151-169,223-242`、`src/database/models.py:267-282,299-311,346-363`
 - 前端：`frontend/src/views/AIOps.vue:13-78,392-415,454,512-516,622-686,715-890`
 - 验收现状与门禁：`docs/aiops-goal-handover-20261108.md:9-22,48-107,114-180,186-200,202-257`、`.github/workflows/tests.yml:46-47`、`tests/test_recorded_round_replay.py:1`
+
+## 7. 2026-11-11 增量证据与产品差距
+
+本节补充今天新完成的受控故障证据；不改变早期真实验收的分母，也不把运行记录提升为产品正确性承诺。
+
+| 证据范围 | 已观察结果 | 资料可支持的结论 | 不支持的结论 |
+|---|---|---|---|
+| 8 场、配置错误与下游停机两类故障、四组条件对照 | 人工审核三维度各 8/8 达到审核标准；配置错误 4 场均定位到 localapp 配置，下游 4 场定位到 downstream；部分场次仍只有 `localized_fault` | 这是审核人对本批输出的判断；引用支持与建议适用性也分别记录 | 系统自动判对、总体诊断正确率、统计外推；`capability_passed` 仍为 false。见 `SRC-DOC-FAULT-PAIR-20261110` |
+| 工具可用性 2 场 | 知识参考资料/工具可用与停用两场都为 `confirmed_cause`；知识 MCP 实际调用 0 次。完成事件记录来源可用性，报告没有显式写出知识源缺席 | 仅能描述本夹具两场的可用性条件和报告差异 | 知识工具已被使用、工具停用无影响、机制有效或无效。见 `SRC-DOC-TOOL-AVAILABILITY-20261111` |
+| 下游延迟 2 场 | 连接已建立，失败在 `receive_headers`，`TimeoutError`；两场均为 `localized_fault`，未产出直接原因码 | 夹具能区分“连接失败”与“连接后响应超时”；当前结果停在故障层 | 慢依赖已被诊断为直接原因、样本可外推。见 `SRC-DOC-LATENCY-20261111` |
+
+### 用户预期、实现与适用范围
+
+- `confirmed` 的项目阶段纪律仍以 `requirements/project-card.md` 与 `docs/aiops-goal-handover-20261108.md` 为准：真实验收逐场授权、保存失败、按受控场景验证；不能因代码实现而扩大目标。
+- `observed`：本次 12 场属于本地三服务夹具下的真实模型运行；延迟通过夹具脚本在下游响应前 sleep 1200ms 注入，应用超时设为 0.5 秒。不是网络层延迟或生产负载实验（`SRC-DOC-LATENCY-20261111`）。
+- 部署适用范围：现有结果只适用于登记的三服务 Windows 本地夹具和当次工具/模型配置；不证明其它平台、生产部署或任意依赖的行为。
+- 未覆盖入口：本轮未复核 `aiops-audit` 的读接口、审批/恢复边界，也未复核其他八个模块；不据此更新其实现状态。
+
+### 仍未形成产品决定的差距
+
+1. 2026-11-11 两场工具对照在完成事件记录 `evidence_source_availability`，但报告正文没有显式说明知识源不可用。现有材料未找到“报告必须逐项列出缺席证据源”的明确产品决定；实现差距已观察，需求强度仍 `unresolved`，不新增 confirmed 要求。
+2. 延迟场模型能在 `limitations` 中保留“特定请求可能响应慢”，但当前检查集合缺少“该依赖对本次请求的响应时间是否超过应用超时阈值”的可判定谓词；重复读取同一日志仍受去重守卫约束。是否新增取证能力及其阈值语义尚无产品决定，保持未决。
+3. 8 场人工语义审核是作者本人对 8 个输出的人工断言，非独立盲审；不能改写机械 `capability_passed`，也不能与其它批次合并成诊断正确率。
+
+**basis**：本节运行证据为 `observed`；两项差距的产品目标为 `unresolved`。不得仅凭报告、测试夹具或模型文字将其升级为 `confirmed`。

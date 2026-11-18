@@ -1,14 +1,14 @@
 {
   "schema": "requirements/sources/index.json",
   "schema_version": 1,
-  "generated_at": "2026-11-11T09:35:00+08:00",
+  "generated_at": "2026-11-11T21:00:00+08:00",
   "baseline": {
     "kind": "git_commit",
-    "commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+    "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
     "branch": "main",
-    "commit_time": "2026-11-11T09:10:00+08:00",
-    "working_tree": "clean_tracked; 3 untracked entries excluded (cleanup-flash-fix.ps1, pelican-bicycle.html, pytest-of-Administrator/)",
-    "note": "所有 file:line 锚点以此提交为基线；不写 'main 当前'。未提交差异见 baseline.untracked_only。"
+    "commit_time": "2026-11-11T16:54:00+08:00",
+    "working_tree": "clean",
+    "note": "本轮资料复核基于明确提交 737f17d4d1e975a640e0e3472b9e052646a0ce1c；只覆盖已读取的 AIOps 诊断范围，其他模块未复核。"
   },
   "read_policy": {
     "business_code": "read_only",
@@ -16,7 +16,7 @@
     "model_calls": 0,
     "network_calls": 0,
     "secrets_printed": false,
-    "note": "本任务边界：只读业务源码与资料；未运行任何产品用例、未触发模型、未联网核实外部服务在线状态。"
+    "note": "本任务边界：只读业务源码与资料；未运行产品用例/服务、未触发模型或网络调用、未核实外部服务在线状态。"
   },
   "sources": [
     {
@@ -262,17 +262,18 @@
       "type": "code",
       "location": "frontend/src/views/AIOps.vue",
       "availability": "available",
-      "collected_at": "2026-11-11T09:26:00+08:00",
-      "commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
-      "content_sha256": "1d281acabb5b149a4f27cb980ff12637cf2e2c0a4d2a7cd86bc7165d12bd6fe1",
-      "bytes": 49927,
+      "collected_at": "2026-11-11T21:00:00+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "e9ba6010055d48a336da3b8ae6e52390ffbc176ef712c90722f3ec086394c370",
+      "bytes": 52367,
       "related": [
         {"location": "frontend/src/views/AIOps.test.js", "bytes": 26214},
         {"location": "frontend/src/views/AIOps.matching503.test.js", "bytes": 5120},
+        {"location": "frontend/src/views/AIOps.evidencePrecondition.test.js", "bytes": 3625},
         {"location": "frontend/src/views/__fixtures__/matching503-api-20261024.json", "bytes": 337182}
       ],
-      "summary": "全站最大页面（48.8KB），承载诊断提交、SSE 事件消费、计划/步骤展示、报告渲染与匹配 503 场景；配套 329KB 真实 API 回放 fixture。",
-      "material_path": "requirements/modules/console.md",
+      "summary": "AIOps 页面承载诊断提交、SSE 事件消费、进度与报告展示；新增依赖现场证据状态提示及知情确认门槛，依赖请求失败时保持沉默。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
       "basis": "observed"
     },
     {
@@ -315,6 +316,90 @@
       "summary": "唯一权威现状文档：036–050 共 15 轮真实付费诊断、10 通过/5 未通过（3 次判定缺陷已修、2 次模型侧失误不修）、五项'别宣称'、三处系统缺陷的修法与教训、零成本回放门禁入口、真实一轮执行流程、以及'修复后可稳定复现不成立'的分阶段口径。",
       "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md",
       "basis": "confirmed"
+    },
+    {
+      "source_id": "SRC-USER-PROMPT-20261111",
+      "type": "instruction_template",
+      "location": "C:\\Users\\Administrator\\.codex\\attachments\\ad412209-33ff-401c-a2f8-59362062fb05\\Pasted text.txt",
+      "availability": "available",
+      "collected_at": "2026-11-11T20:38:21+08:00",
+      "version": "94 lines",
+      "content_sha256": "6db42bbfe15c23ded96e679fa0475193805065fe78ae6d691c21cedc0d60c221",
+      "bytes": 12260,
+      "lines": 94,
+      "summary": "用户提供的资料维护任务规范：只读业务源码、维护可追溯需求/规格/用例，分离用户预期、实现、部署范围与实测，按 basis/readiness/evaluation_mode 建模，限制本轮不得运行产品用例或模型。",
+      "material_path": "requirements/project-card.md; requirements/sources/index.json; requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
+      "basis": "confirmed"
+    },
+    {
+      "source_id": "SRC-DOC-LATENCY-20261111",
+      "type": "doc",
+      "location": "docs/latency-fault-20261111.md",
+      "availability": "available",
+      "collected_at": "2026-11-11T20:38:21+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "253f192536a030fcdf3420ecaf1e641e943a6aba2243ce9e1eed664d6c7f9d8e",
+      "bytes": 11206,
+      "lines": 119,
+      "summary": "downstream_slow 受控夹具与两场真实运行：慢响应连接已建立、receive_headers 超时、两场 localized_fault；未提供直接原因码，缺少可判定的依赖响应超时谓词，重复日志受既有守卫阻止。结果层与夹具条件可核；不代表统计结论或人工诊断正确性。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
+      "basis": "observed"
+    },
+    {
+      "source_id": "SRC-DOC-TOOL-AVAILABILITY-20261111",
+      "type": "doc",
+      "location": "docs/tool-availability-control-20261111.md",
+      "availability": "available",
+      "collected_at": "2026-11-11T20:38:21+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "b0278e4db8e2727c9f5bf1c008fc224172a0e0dcf7446659e07abc69d9332a23",
+      "bytes": 8238,
+      "lines": 81,
+      "summary": "规划参考资料与知识检索工具可用/停用两场对照：均 confirmed_cause，但知识 MCP 调用均为 0；complete 事件含 evidence_source_availability，报告未显式列出缺席知识源。每格两场，不支持工具有效/无效结论。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
+      "basis": "observed"
+    },
+    {
+      "source_id": "SRC-DOC-UI-REVIEW-FIXES-20261111",
+      "type": "doc",
+      "location": "docs/ui-review-fixes-20261111.md",
+      "availability": "available",
+      "collected_at": "2026-11-11T21:00:00+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "57a2a6b56130f655ffbe9789037009dfab5166d644c5e8e6a8bf7e82673937ae",
+      "bytes": 4647,
+      "lines": 67,
+      "summary": "记录 AIOps 在 Probe 不可用时的提示与知情确认交互、依赖探测失败时的处理，以及真实浏览器截图和相关回归结果；作为实现/验证材料，不视为独立产品决定。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json; specs/questions.md Q-42",
+      "basis": "observed"
+    },
+    {
+      "source_id": "SRC-TEST-FRONTEND-AIOPS-PRECONDITION",
+      "type": "test",
+      "location": "frontend/src/views/AIOps.evidencePrecondition.test.js",
+      "availability": "available",
+      "collected_at": "2026-11-11T21:00:00+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "be8b3a8f8cf19e445cfd6efde73770bb98a4a9aa66e6921e3344a1138274e181",
+      "bytes": 3625,
+      "lines": 99,
+      "summary": "四条前端组件测试分别覆盖 Probe 不可用时提示和确认门槛、所有现场工具不可用时强化提示、Probe 可用时不提示、依赖探测失败不误报；本轮未运行测试。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
+      "basis": "observed"
+    },
+    {
+      "source_id": "SRC-DOC-FAULT-PAIR-20261110",
+      "type": "doc",
+      "location": "docs/fault-pair-preexperiment-result-20261110.md",
+      "availability": "available",
+      "collected_at": "2026-11-11T20:38:21+08:00",
+      "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+      "content_sha256": "fe228024cd2e7433b2d90509596ec38306c7b9b0a11cd1e9639280b4a2c10f52",
+      "bytes": 23532,
+      "lines": 146,
+      "summary": "八场两类故障四组对照的人工语义审核：诊断定位、引用支持、建议适用性各维度均 8/8 达到人工判定标准；作者自审，非自动正确性验证，不支持统计外推，机械 capability_passed 未改写。",
+      "material_path": "requirements/modules/aiops-diagnosis.md; specs/modules/aiops-diagnosis.md; cases/aiops-diagnosis.json",
+      "basis": "observed"
     },
     {
       "source_id": "SRC-DOC-RUN-STORE",

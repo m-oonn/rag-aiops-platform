@@ -1,6 +1,6 @@
 # SRC-CODE-AIOPS-ROUTER
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -50,13 +50,13 @@ get_probe_target_status
 - `cases/aiops-diagnosis.json`：L37, L45, L81, L88, L125, L126, L173, L180, L395, L468, L470, L473 …共 17 处
 - `cases/auth-console.json`：L597, L598, L605
 - `requirements/_conventions.md`：L5
-- `requirements/index.json`：L644, L645, L646, L737, L738, L1470, L1472, L1473, L1474, L1475, L1478, L1482 …共 40 处
+- `requirements/index.json`：L645, L646, L647, L738, L739, L1471, L1473, L1474, L1475, L1476, L1479, L1483 …共 40 处
 - `requirements/modules/aiops-audit.md`：L109, L113, L149, L150, L157, L169, L175, L185, L188, L194, L204, L206 …共 19 处
 - `requirements/modules/aiops-diagnosis.md`：L63, L64, L65, L143, L144, L150, L151, L152, L160, L164, L174, L201 …共 29 处
 - `requirements/modules/auth-console.md`：L219, L221, L233, L350, L351
-- `requirements/overview.md`：L52
-- `requirements/project-card.md`：L32, L95
-- `specs/feature-index.json`：L378, L962, L1165, L1191, L1219, L1244, L1269, L1296
+- `requirements/overview.md`：L53
+- `requirements/project-card.md`：L32, L96
+- `specs/feature-index.json`：L378, L962, L1165, L1240, L1268, L1293, L1318, L1345
 - `specs/modules/aiops-audit.md`：L23, L29, L37, L58, L59, L60, L61, L62, L63, L71, L72, L73 …共 24 处
 - `specs/modules/aiops-diagnosis.md`：L18, L20, L21, L22, L27, L32, L35, L37, L47, L48, L49, L50 …共 28 处
 - `specs/modules/auth-console.md`：L55, L223, L231

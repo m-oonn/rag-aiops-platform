@@ -1,10 +1,10 @@
 {
   "schema": "requirements/index.json",
   "schema_version": 1,
-  "generated_at": "2026-11-11T10:10:32+08:00",
+  "generated_at": "2026-11-11T21:01:35+08:00",
   "baseline": {
     "kind": "git_commit",
-    "commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+    "commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
     "branch": "main",
     "note": "所有 doc_path/doc_line 均以此提交为基线；未提交差异见 requirements/sources/index.json 的 baseline。"
   },
@@ -15,13 +15,13 @@
     "proposed": "AI 建议，不得升格为 confirmed"
   },
   "counts": {
-    "requirements": 88,
+    "requirements": 89,
     "by_module": {
       "platform": 8,
       "auth-console": 8,
       "kb-ingest": 10,
       "rag-qa": 10,
-      "aiops-diagnosis": 13,
+      "aiops-diagnosis": 14,
       "aiops-audit": 10,
       "evaluation": 10,
       "assistant-agent": 7,
@@ -29,7 +29,7 @@
     },
     "by_basis": {
       "confirmed": 0,
-      "observed": 88,
+      "observed": 89,
       "unresolved": 0,
       "proposed": 0
     }
@@ -123,7 +123,8 @@
         "REQ-DIAG-010",
         "REQ-DIAG-011",
         "REQ-DIAG-012",
-        "REQ-DIAG-013"
+        "REQ-DIAG-013",
+        "REQ-DIAG-014"
       ],
       "flow_refs": [
         "FLOW-DIAG",
@@ -1892,7 +1893,30 @@
         "src/utils/token_meter.py:23-29",
         "docs/aiops-goal-handover-20261108.md:166-168",
         "docs/aiops-goal-handover-20261108.md:26-39",
-        "src/api/routers/aiops.py:103-118",
+        "src/api/routers/aiops.py:103-118"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DIAG-014",
+      "module_id": "aiops-diagnosis",
+      "title": "Probe 不可用时，开始付费诊断前提示并要求知情确认",
+      "doc_path": "requirements/modules/aiops-diagnosis.md",
+      "doc_line": 575,
+      "basis": "observed",
+      "decision_status": "no_explicit_decision",
+      "implementation_status": {
+        "implemented": "是",
+        "enabled": "未标注",
+        "verified": "是"
+      },
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "source_anchors": [
+        "frontend/src/views/AIOps.vue:28-38",
+        "frontend/src/views/AIOps.evidencePrecondition.test.js:1-99",
+        "docs/ui-review-fixes-20261111.md:7-27",
         "src/settings.py:189",
         "src/api/routers/aiops.py:157-158",
         "src/agent/aiops/run_store.py:114-131",
@@ -1905,7 +1929,9 @@
         "src/agent/aiops/graph.py:348",
         "src/agent/aiops/graph.py:106",
         "src/api/routers/aiops.py:156",
+        "frontend/src/views/AIOps.vue:715-792",
         "docs/aiops-goal-handover-20261108.md:161-163",
+        "docs/aiops-goal-handover-20261108.md:166-168",
         "docs/aiops-goal-handover-20261108.md:171-172",
         "src/settings.py:184-185",
         "src/main.py:255-265",

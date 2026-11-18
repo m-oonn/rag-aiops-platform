@@ -1,6 +1,6 @@
 # SRC-CODE-MAIN
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -44,7 +44,7 @@ lifespan
 
 - `requirements/modules/platform.md`
 
-## 6. 反向引用（22 份资料、194 处提及）
+## 6. 反向引用（22 份资料、195 处提及）
 
 - `cases/assistant-agent.json`：L18
 - `cases/auth-console.json`：L343, L349
@@ -53,15 +53,15 @@ lifespan
 - `cases/platform.json`：L36, L37, L38, L44, L66, L78, L79, L85, L120, L121, L128, L163 …共 32 处
 - `cases/rag-qa.json`：L669
 - `cases/storage-queue.json`：L18
-- `requirements/index.json`：L230, L234, L235, L236, L237, L239, L241, L242, L244, L268, L269, L270 …共 40 处
-- `requirements/modules/aiops-diagnosis.md`：L143, L621, L629
+- `requirements/index.json`：L231, L235, L236, L237, L238, L240, L242, L243, L245, L269, L270, L271 …共 40 处
+- `requirements/modules/aiops-diagnosis.md`：L143, L640, L648
 - `requirements/modules/auth-console.md`：L320
 - `requirements/modules/evaluation.md`：L61, L88, L389
 - `requirements/modules/kb-ingest.md`：L67, L136
 - `requirements/modules/platform.md`：L54, L64, L70, L72, L75, L76, L77, L78, L86, L97, L98, L99 …共 40 处
 - `requirements/modules/rag-qa.md`：L288
-- `requirements/overview.md`：L116, L121, L142, L228
-- `requirements/project-card.md`：L98, L100, L112, L113, L114, L120
+- `requirements/overview.md`：L117, L122, L143, L229
+- `requirements/project-card.md`：L99, L101, L113, L114, L115, L121, L205
 - `specs/feature-index.json`：L58, L85, L131, L154, L181, L205
 - `specs/modules/auth-console.md`：L120, L303
 - `specs/modules/evaluation.md`：L31

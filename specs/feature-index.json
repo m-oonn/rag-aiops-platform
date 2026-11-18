@@ -1,17 +1,17 @@
 {
   "schema": "specs/feature-index.json",
   "schema_version": 1,
-  "generated_at": "2026-11-11T10:10:32+08:00",
-  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T21:01:35+08:00",
+  "baseline_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
   "note": "功能单元来自 specs/modules/<module>.md 的『功能单元』表；每个 FEAT 都带源码锚点。case_refs 由 cases/<module>.json 反查得到。",
   "counts": {
-    "features": 74,
+    "features": 76,
     "by_module": {
       "platform": 8,
       "auth-console": 10,
       "kb-ingest": 10,
       "rag-qa": 10,
-      "aiops-diagnosis": 9,
+      "aiops-diagnosis": 11,
       "aiops-audit": 8,
       "evaluation": 6,
       "assistant-agent": 7,
@@ -1166,6 +1166,55 @@
       ],
       "case_refs": [
         "CASE-DIAG-004"
+      ],
+      "case_count": 1
+    },
+    {
+      "feature_id": "FEAT-DIAG-010",
+      "module_id": "aiops-diagnosis",
+      "name": "受控故障场记录证据条件与结论层级，不越过证据",
+      "entry": "测试夹具 + AIOps SSE `complete`",
+      "requirement_refs": [
+        "REQ-DIAG-004",
+        "REQ-DIAG-006",
+        "REQ-DIAG-009"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 70,
+      "source_anchors": [],
+      "case_refs": [
+        "CASE-DIAG-017",
+        "CASE-DIAG-018"
+      ],
+      "case_count": 2
+    },
+    {
+      "feature_id": "FEAT-DIAG-011",
+      "module_id": "aiops-diagnosis",
+      "name": "Probe 不可用时先提示现场证据限制并要求用户知情确认",
+      "entry": "`/aiops` 页面进入与开始诊断按钮",
+      "requirement_refs": [
+        "REQ-DIAG-014"
+      ],
+      "flow_refs": [
+        "FLOW-DIAG",
+        "FLOW-DIAG-RESUME"
+      ],
+      "doc_status": "observed",
+      "implementation_status": "implemented_unverified",
+      "spec_path": "specs/modules/aiops-diagnosis.md",
+      "spec_line": 71,
+      "source_anchors": [
+        "frontend/src/views/AIOps.vue:28-38"
+      ],
+      "case_refs": [
+        "CASE-DIAG-019"
       ],
       "case_count": 1
     },

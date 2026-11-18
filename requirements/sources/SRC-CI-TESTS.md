@@ -1,6 +1,6 @@
 # SRC-CI-TESTS
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -34,13 +34,13 @@ offline-tests workflow：ubuntu+py3.12；用 sk-ci-placeholder 假凭据跑离�
 
 - `cases/aiops-diagnosis.json`：L695, L701, L707, L714
 - `cases/platform.json`：L556, L558, L574, L575, L576, L583
-- `requirements/index.json`：L434, L435, L436, L437, L438, L439, L443, L1682, L1939
-- `requirements/modules/aiops-diagnosis.md`：L375, L379, L646
+- `requirements/index.json`：L435, L436, L437, L438, L439, L440, L444, L1683, L1965
+- `requirements/modules/aiops-diagnosis.md`：L375, L379, L665
 - `requirements/modules/platform.md`：L244, L247, L248, L249, L262, L319
-- `requirements/overview.md`：L54
-- `requirements/project-card.md`：L97, L104
+- `requirements/overview.md`：L55
+- `requirements/project-card.md`：L98, L105
 - `specs/feature-index.json`：L227
-- `specs/modules/aiops-diagnosis.md`：L197, L198, L236
+- `specs/modules/aiops-diagnosis.md`：L199, L200, L263
 - `specs/modules/platform.md`：L67, L215, L216, L259
 
 > 说明：以上是**路径字符串在资料区被提及**的位置，用于反查影响面；提及不等于该处结论一定依赖本来源。

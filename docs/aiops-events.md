@@ -30,6 +30,12 @@ plan → step_complete ×N（中途可由 status 提示）→ report / draft
 > `src/api/routers/aiops.py` 追加推送 `{"type": "usage", ...}`（本次 LLM 调用次数 /
 > token 消耗 / 折算费用），前端可选择性展示。字段定义见 `src/utils/token_meter.py` 的 `as_dict()`。
 
+2026-11-15：`complete` 可选增加 `knowledge_references`，与拥有者访问
+`GET /api/v1/aiops/runs/{thread_id}` 的同名字段一致。它从已保存的 `raw_evidence`
+提取最近最多 6 个明确标记为知识库来源的片段，包含来源、页码、文档/知识库/片段编号、
+有界内容和截短标记。资料只供排查参考，不进入现场证据账本；原文仍通过知识库文档接口
+校验当前用户权限。旧运行没有该资料时返回空列表，不补造历史引用。
+
 ## 字段明细（JSON 示例）
 
 ```jsonc

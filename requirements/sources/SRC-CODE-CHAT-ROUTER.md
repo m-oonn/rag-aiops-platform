@@ -1,6 +1,6 @@
 # SRC-CODE-CHAT-ROUTER
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -48,11 +48,11 @@ batch_delete_sessions
 
 - `cases/assistant-agent.json`：L328
 - `cases/rag-qa.json`：L49, L50, L96, L134, L135, L271, L315, L316, L526, L527, L578
-- `requirements/index.json`：L1135, L1137, L1138, L1139, L1140, L1146, L1270, L1274, L1276, L1330, L1332, L1354 …共 29 处
+- `requirements/index.json`：L1136, L1138, L1139, L1140, L1141, L1147, L1271, L1275, L1277, L1331, L1333, L1355 …共 29 处
 - `requirements/modules/assistant-agent.md`：L97, L104, L114, L167, L174, L190
 - `requirements/modules/evaluation.md`：L386
 - `requirements/modules/rag-qa.md`：L84, L85, L87, L88, L95, L190, L198, L202, L228, L229, L235, L243 …共 25 处
-- `specs/feature-index.json`：L725, L890, L912, L935, L1695
+- `specs/feature-index.json`：L725, L890, L912, L935, L1744
 - `specs/modules/assistant-agent.md`：L53, L143
 - `specs/modules/rag-qa.md`：L18, L19, L23, L31, L41, L42, L43, L44, L45, L51, L58, L59 …共 21 处
 - `specs/questions.md`：L51

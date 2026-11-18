@@ -1,6 +1,6 @@
 # SRC-CODE-RETRIEVAL
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -38,7 +38,7 @@ BM25 与向量各取 top_k*2，RRF（常数 60）融合；BM25 用 2-gram 滑窗
 ## 6. 反向引用（7 份资料、33 处提及）
 
 - `cases/rag-qa.json`：L468, L469
-- `requirements/index.json`：L1194, L1197, L1199, L1201, L1202, L1203, L1206, L1209, L1214, L1423, L1424, L1437
+- `requirements/index.json`：L1195, L1198, L1200, L1202, L1203, L1204, L1207, L1210, L1215, L1424, L1425, L1438
 - `requirements/modules/rag-qa.md`：L132, L135, L139, L144, L145, L146, L148, L152, L158, L328, L345
 - `requirements/overview.md`：L27
 - `requirements/project-card.md`：L64

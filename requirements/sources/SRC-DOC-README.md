@@ -1,6 +1,6 @@
 # SRC-DOC-README
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -31,14 +31,13 @@
 
 - `specs/questions.md Q-01..Q-03`
 
-## 5. 反向引用（8 份资料、25 处提及）
+## 5. 反向引用（7 份资料、24 处提及）
 
 - `cases/platform.json`：L207
 - `requirements/_conventions.md`：L121
-- `requirements/index.json`：L343
 - `requirements/modules/platform.md`：L181, L183, L300
-- `requirements/overview.md`：L228, L229, L230, L231, L232, L233, L234
-- `requirements/project-card.md`：L22, L101, L139, L203, L263
+- `requirements/overview.md`：L229, L230, L231, L232, L233, L234, L235
+- `requirements/project-card.md`：L22, L102, L140, L204, L264
 - `specs/modules/platform.md`：L106, L107
 - `specs/questions.md`：L10, L17, L23, L36, L147
 

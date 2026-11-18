@@ -1,6 +1,6 @@
 # SRC-CODE-DEPS
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -40,10 +40,10 @@ get_current_active_user
 ## 6. 反向引用（7 份资料、32 处提及）
 
 - `cases/auth-console.json`：L552, L553, L554, L561
-- `requirements/index.json`：L585, L586, L587, L588, L589, L590, L594, L672, L728, L2234
+- `requirements/index.json`：L586, L587, L588, L589, L590, L591, L595, L673, L729, L2260
 - `requirements/modules/aiops-audit.md`：L347
 - `requirements/modules/auth-console.md`：L167, L169, L174, L175, L176, L184, L244, L256, L338
-- `requirements/overview.md`：L51
+- `requirements/overview.md`：L52
 - `specs/feature-index.json`：L330
 - `specs/modules/auth-console.md`：L40, L41, L53, L158, L165, L238
 

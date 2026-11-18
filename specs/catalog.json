@@ -1,19 +1,19 @@
 {
   "schema": "specs/catalog.json",
   "schema_version": 1,
-  "generated_at": "2026-11-11T10:10:32+08:00",
-  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+  "generated_at": "2026-11-11T21:01:35+08:00",
+  "baseline_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
   "status_legend": {
     "ready": "来源/步骤/预期/评价/执行条件清楚，模块整体无已知缺口",
     "partial": "已覆盖主体，但仍有未覆盖断言、无用例功能单元或未决条目",
     "draft": "仍有结构性缺口，不能作为验收依据"
   },
   "totals": {
-    "requirements": 88,
-    "features": 74,
-    "rules": 229,
-    "assertions": 226,
-    "cases": 121
+    "requirements": 89,
+    "features": 76,
+    "rules": 232,
+    "assertions": 230,
+    "cases": 124
   },
   "module_count": 9,
   "modules": [
@@ -21,7 +21,7 @@
       "module_id": "platform",
       "title": "平台启动、配置、安全与 CI",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/platform.md",
       "spec_path": "specs/modules/platform.md",
       "cases_path": "cases/platform.json",
@@ -70,7 +70,7 @@
       "module_id": "auth-console",
       "title": "注册登录、令牌与对象级权限、控制台骨架",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/auth-console.md",
       "spec_path": "specs/modules/auth-console.md",
       "cases_path": "cases/auth-console.json",
@@ -118,7 +118,7 @@
       "module_id": "kb-ingest",
       "title": "知识库与文档摄取",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/kb-ingest.md",
       "spec_path": "specs/modules/kb-ingest.md",
       "cases_path": "cases/kb-ingest.json",
@@ -167,7 +167,7 @@
       "module_id": "rag-qa",
       "title": "检索与问答",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/rag-qa.md",
       "spec_path": "specs/modules/rag-qa.md",
       "cases_path": "cases/rag-qa.json",
@@ -217,7 +217,7 @@
       "module_id": "aiops-diagnosis",
       "title": "AIOps 诊断主链路（Plan-Execute-Replan 图 + SSE）",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/aiops-diagnosis.md",
       "spec_path": "specs/modules/aiops-diagnosis.md",
       "cases_path": "cases/aiops-diagnosis.json",
@@ -226,48 +226,50 @@
         "FLOW-DIAG-RESUME"
       ],
       "counts": {
-        "requirements": 13,
-        "features": 9,
-        "rules": 20,
-        "assertions": 16,
-        "assertions_with_case": 16,
-        "assertion_coverage": 1.0
+        "requirements": 14,
+        "features": 11,
+        "rules": 23,
+        "assertions": 20,
+        "assertions_with_case": 19,
+        "assertion_coverage": 0.95
       },
       "case_stats": {
-        "total": 16,
+        "total": 19,
         "by_role": {
           "core-flow": 6,
-          "experience": 1,
+          "experience": 2,
           "functional": 7,
-          "product-details": 2
+          "performance": 1,
+          "product-details": 3
         },
         "by_execution_kind": {
-          "controlled_fixture": 5,
+          "controlled_fixture": 8,
           "live_api": 7,
           "live_cli": 1,
           "live_ui": 1,
           "static_review": 2
         },
         "by_readiness": {
-          "ready": 16
+          "ready": 19
         },
         "by_evaluation_mode": {
-          "binary": 16
+          "binary": 17,
+          "measurement": 2
         },
         "by_basis": {
           "confirmed": 1,
-          "observed": 15
+          "observed": 18
         }
       },
-      "completed_scope": "需求正文 13 条、功能单元 9 个、规则 20 条、断言 16 条、用例 16 条已落盘并交叉引用闭合；16/16 条断言有用例覆盖。",
-      "remaining_scope": "无用例功能单元 FEAT-DIAG-005；正文未决条目见该模块 requirements 文档的『未决』一节与 specs/questions.md。",
+      "completed_scope": "需求正文 14 条、功能单元 11 个、规则 23 条、断言 20 条、用例 19 条已落盘并交叉引用闭合；19/20 条断言有用例覆盖。",
+      "remaining_scope": "未覆盖断言 1 条；无用例功能单元 FEAT-DIAG-005；正文未决条目见该模块 requirements 文档的『未决』一节与 specs/questions.md。",
       "basis_policy": "存在 confirmed 级依据的断言。"
     },
     {
       "module_id": "aiops-audit",
       "title": "AIOps 运行记录、证据台账与审计面",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/aiops-audit.md",
       "spec_path": "specs/modules/aiops-audit.md",
       "cases_path": "cases/aiops-audit.json",
@@ -313,7 +315,7 @@
       "module_id": "evaluation",
       "title": "评测任务、数据集与报告",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/evaluation.md",
       "spec_path": "specs/modules/evaluation.md",
       "cases_path": "cases/evaluation.json",
@@ -359,7 +361,7 @@
       "module_id": "assistant-agent",
       "title": "助手配置、Agent 执行与其对问答的影响",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/assistant-agent.md",
       "spec_path": "specs/modules/assistant-agent.md",
       "cases_path": "cases/assistant-agent.json",
@@ -405,7 +407,7 @@
       "module_id": "storage-queue",
       "title": "对象存储、队列监控与依赖健康",
       "status": "partial",
-      "verified_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
+      "verified_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
       "requirements_path": "requirements/modules/storage-queue.md",
       "spec_path": "specs/modules/storage-queue.md",
       "cases_path": "cases/storage-queue.json",

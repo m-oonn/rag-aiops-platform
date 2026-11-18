@@ -1,6 +1,6 @@
 # SRC-CODE-AIOPS-INVESTIGATION
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -44,12 +44,13 @@ claim_type
 - `requirements/modules/aiops-diagnosis.md`
 - `specs/modules/aiops-diagnosis.md`
 
-## 6. 反向引用（4 份资料、26 处提及）
+## 6. 反向引用（5 份资料、27 处提及）
 
 - `cases/aiops-diagnosis.json`：L686
-- `requirements/index.json`：L1611, L1612, L1671, L1672, L1673, L1674, L1675, L1677, L1684, L1926
+- `requirements/index.json`：L1612, L1613, L1672, L1673, L1674, L1675, L1676, L1678, L1685, L1952
 - `requirements/modules/aiops-diagnosis.md`：L128, L129, L130, L304, L310, L360, L361, L362, L363, L365, L370, L379 …共 13 处
-- `specs/modules/aiops-diagnosis.md`：L195, L212
+- `requirements/project-card.md`：L205
+- `specs/modules/aiops-diagnosis.md`：L197, L214
 
 > 说明：以上是**路径字符串在资料区被提及**的位置，用于反查影响面；提及不等于该处结论一定依赖本来源。
 

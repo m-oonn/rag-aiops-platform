@@ -1,6 +1,6 @@
 # SRC-CODE-LLM-CLIENT
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -33,9 +33,9 @@ OpenAI 兼容客户端（deepseek 名走 ChatOpenAI+base_url，qwen 名走 ChatT
 ## 5. 反向引用（6 份资料、25 处提及）
 
 - `cases/rag-qa.json`：L581, L666, L667, L668
-- `requirements/index.json`：L1141, L1142, L1266, L1415, L1416, L1418
+- `requirements/index.json`：L1142, L1143, L1267, L1416, L1417, L1419
 - `requirements/modules/rag-qa.md`：L89, L186, L280, L282, L286, L292, L334, L347
-- `requirements/project-card.md`：L130, L176
+- `requirements/project-card.md`：L131, L177
 - `specs/feature-index.json`：L936
 - `specs/modules/rag-qa.md`：L60, L165, L221, L228
 

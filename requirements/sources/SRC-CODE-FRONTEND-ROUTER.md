@@ -1,6 +1,6 @@
 # SRC-CODE-FRONTEND-ROUTER
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -33,14 +33,14 @@
 ## 5. 反向引用（11 份资料、40 处提及）
 
 - `cases/auth-console.json`：L505, L507, L513
-- `requirements/index.json`：L615, L616, L697, L724, L739, L1389, L2269, L2575, L2597, L2599, L2721, L3078
+- `requirements/index.json`：L616, L617, L698, L725, L740, L1390, L2295, L2601, L2623, L2625, L2747, L3104
 - `requirements/modules/assistant-agent.md`：L61, L124
 - `requirements/modules/auth-console.md`：L192, L196, L206, L268, L284, L327, L354
 - `requirements/modules/evaluation.md`：L61, L388
 - `requirements/modules/rag-qa.md`：L268, L272
 - `requirements/modules/storage-queue.md`：L203
-- `requirements/overview.md`：L143
-- `requirements/project-card.md`：L111
+- `requirements/overview.md`：L144
+- `requirements/project-card.md`：L112
 - `specs/feature-index.json`：L354
 - `specs/modules/auth-console.md`：L23, L37, L38, L54, L172, L179, L252, L311
 

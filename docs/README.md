@@ -1,5 +1,12 @@
 # 项目文档导航
 
+- [项目流程逐项修复与验收](project-workflow-fixes-20261117.md)：监察身份/人工审核/页面工具账本/快照错误语义、HTTP 与桌面信号适配、经验候选审核发布及撤回；区分免费回归、本地真实 HTTP 和未完成的 mall/DSH 现场验收。
+
+- [DSH 排查经验、节点与工具参考](dsh-autonomous-investigation-reference-20261117.md)、[配置接线示例](dsh-autonomous-investigation-config.example.env)：按实际调查步骤整理工具、输入输出、失败换路、复现及恢复检查；区分已有配置和待实现接口，本轮仅文档与记录。
+- [项目流程梳理与批判](project-workflow-critique-20261117.md)：按现场确认、目标锁定、取证、鉴别、执行记录、判断更新、恢复复核和经验复用八个阶段审查交接契约；含免费复现、确定问题、能力边界和修复顺序。
+
+- [诊断四视图落地与真实报告读取验证](frontend-diagnosis-visuals-20261114.md)：正式前端的报告、采集回放、证据事件链与候选关系图；真实保存运行读取，未新增模型调用。
+
 - [真实前端诊断链路进度](aiops-product-goal-progress-20261106.md)：endpoint、stopped 已有通过场次；normal 未通过，目标暂停，保留各轮失败与费用未知项。
 
 - [诊断测试环境与启用方法](aiops-test-environment.md)：持续三服务场景、真实请求日志、正式页面与独立数据库；默认免费，真实模型单独显式开启。
@@ -76,6 +83,7 @@
 - [贡献指南](CONTRIBUTING.md)、[静态展示站](site/index.html)。
 
 - [API](api.md)。架构与调用链说明以源码为准（`src/main.py`、`src/agent/aiops/graph.py`、`src/agent/aiops/strategies/investigation.py`）。
+- [持续监察与接管说明](continuous-monitor.md)：Prometheus `up` 连续样本、故障事件、管理员只读接口、配置方式和当前覆盖边界。
 - [调查事件](aiops-events.md)、[运行记录存储](aiops-run-store.md)。
 - [Windows Probe](windows-probe.md)、[配置样例](windows-probe-config.example.toml)、[故障验收说明](windows-probe-fault-acceptance.md)。
 - [TermCP 接入](termcp-aiops.md)。

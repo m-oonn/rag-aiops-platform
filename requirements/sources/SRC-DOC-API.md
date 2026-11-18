@@ -1,6 +1,6 @@
 # SRC-DOC-API
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -34,9 +34,9 @@
 
 ## 5. 反向引用（3 份资料、8 处提及）
 
-- `requirements/overview.md`：L42
-- `requirements/project-card.md`：L87, L204, L264
-- `specs/questions.md`：L28, L29, L31, L264
+- `requirements/overview.md`：L43
+- `requirements/project-card.md`：L88, L205, L265
+- `specs/questions.md`：L28, L29, L31, L282
 
 > 说明：以上是**路径字符串在资料区被提及**的位置，用于反查影响面；提及不等于该处结论一定依赖本来源。
 

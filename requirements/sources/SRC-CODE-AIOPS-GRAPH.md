@@ -1,6 +1,6 @@
 # SRC-CODE-AIOPS-GRAPH
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -44,17 +44,18 @@ _thread_runs
 
 - `requirements/modules/aiops-diagnosis.md`
 
-## 6. 反向引用（10 份资料、134 处提及）
+## 6. 反向引用（11 份资料、135 处提及）
 
 - `cases/aiops-audit.json`：L37, L38, L45, L83, L84, L91, L210
 - `cases/aiops-diagnosis.json`：L38, L39, L128, L138, L393, L394, L401, L438, L439, L446, L529, L575
-- `requirements/index.json`：L1476, L1480, L1485, L1509, L1517, L1539, L1540, L1541, L1542, L1543, L1544, L1545 …共 40 处
+- `requirements/index.json`：L1477, L1481, L1486, L1510, L1518, L1540, L1541, L1542, L1543, L1544, L1545, L1546 …共 40 处
 - `requirements/modules/aiops-audit.md`：L105, L106, L107, L113, L126, L127, L130, L131, L151, L157, L167, L175
 - `requirements/modules/aiops-diagnosis.md`：L9, L66, L67, L107, L154, L161, L174, L202, L212, L216, L230, L231 …共 40 处
-- `requirements/overview.md`：L101, L203
-- `specs/feature-index.json`：L1089, L1139, L1220, L1321
+- `requirements/overview.md`：L102, L204
+- `requirements/project-card.md`：L205
+- `specs/feature-index.json`：L1089, L1139, L1269, L1370
 - `specs/modules/aiops-audit.md`：L38, L72, L76, L88, L109
-- `specs/modules/aiops-diagnosis.md`：L41, L66, L68, L79, L93, L135, L142, L191, L212
+- `specs/modules/aiops-diagnosis.md`：L41, L66, L68, L81, L95, L137, L144, L193, L214
 - `specs/questions.md`：L99, L200, L207
 
 > 说明：以上是**路径字符串在资料区被提及**的位置，用于反查影响面；提及不等于该处结论一定依赖本来源。

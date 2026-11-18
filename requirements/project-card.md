@@ -67,13 +67,14 @@
 
 ## 3. 本次任务目标 · 项目阶段 · 本期范围与后续目标
 
-### 3.1 本次任务目标（用户本次请求，m00002）
-用上面的模板建立本项目的**基础认知资料**：先读源码核实，再产出可追溯的需求/规格/用例资料，并把【项目资料卡】填实。
-**不包含**：改业务代码、跑产品用例、触发模型、付费、部署。
+### 3.1 本次任务目标（2026-11-11 增量维护）
+依据用户提供的资料维护规范，复核 AIOps 诊断模块在当前提交上的资料状态，登记新完成的工具可用性、延迟夹具和人工语义审核材料，更新需求正文/规格/用例及索引。
+**不包含**：修改业务源码、执行产品用例或服务、调用模型/网络、部署、批准其它环境任务。
 
 ### 3.2 项目阶段（事实与判断分开）
 - `observed`（事实）：仓库处于"持续真实验收迭代期"。`docs/aiops-goal-handover-20261108.md` 记录 036–050 共 15 轮真实付费诊断，10 轮通过、5 轮未通过（3 次判定逻辑缺陷已修 + 2 次模型侧失误故意不修）。
 - `observed`（事实）：`AGENTS.md` 2026-11-06 记录"目标已由用户暂停"，并载明 022 endpoint、033 stopped 产品链路通过，034 normal 未通过。
+- `observed`（新增材料，独立于上条 15 轮）：2026-11-11 已有 12 场本地三服务受控故障运行（8 场配置/停机四组对照、2 场工具可用性对照、2 场下游延迟）；其中 8 场作者人工语义审核三维度各 8/8 达到审核标准，非自动判定、非独立盲审。工具对照未实际调用知识 MCP；延迟两场停在 `localized_fault`。详见 `SRC-DOC-FAULT-PAIR-20261110`、`SRC-DOC-TOOL-AVAILABILITY-20261111`、`SRC-DOC-LATENCY-20261111`。
 - `observed`（事实）：`ENABLE_HITL=False`、`ENABLE_SUPERVISOR=False`、`ENABLE_STEP_SNAPSHOTS=False`、`ENABLE_DYNAMIC_CLASSIFICATION=False`、`ENABLE_LLM_EVIDENCE_JUDGE=False` 等大批能力开关**默认关闭**（`src/settings.py`）。
 - `unresolved`（判断）：项目性质（本科毕设 / 已转向产品化）只能从文档自述推断，用户未在本次任务中确认。资料中一律写"毕设项目 + 真实验收迭代"，不宣称产品已上线。
 
@@ -202,7 +203,7 @@ changes/current.md         ← 增量维护记录（原位追加，不建日期�
 | 约定 | `CLAUDE.md`、`docs/project-layout.md` | available | 行为准则与目录约定 |
 | 产品说明 | `README.md` | available（部分过期） | 端口/异步机制/测试矩阵三处与代码冲突，已列入 `specs/questions.md` |
 | 架构/接口 | `docs/api.md`(71 行，仅 4 组路由)；架构说明以源码为准（`src/main.py`、`src/agent/aiops/graph.py`、`src/agent/aiops/strategies/investigation.py`） | available（`api.md` 覆盖面严重不足） | 原 `docs/architecture.md`（旧旁开式动态分类口径）已于 2026-11-11 随旧标准清理移除，未替代为新文档；`api.md` 缺 aiops/agents/monitor/storage/health/upload |
-| 现状/验收 | `docs/aiops-goal-handover-20261108.md`（294 行） | available | 唯一权威现状：15 轮 10 通过、五项"别宣称"、复现入口 |
+| 现状/验收 | `docs/aiops-goal-handover-20261108.md`（294 行）及 2026-11-11 三份受控故障/审核结果 | available | 前者记录独立历史 15 轮；后者记录 12 场本地夹具轮次。批次目标不同，不合并通过率；来源与哈希见 `requirements/sources/index.json` |
 | 配置 | `docs/configuration-current-20261027.md`、`configuration-fields-20261027.md`（文档称 132 项） | available | 实测 `src/settings.py` **136 个字段**、`.env.example` **136 键**且两边完全一致；文档少 4 项，差值未逐项定位（见 `specs/questions.md` Q-23） |
 | 运行记录 | `docs/aiops-run-store.md`、`aiops-events.md` | available | 三张表 + `/steps` 未启用 |
 | 本机探针 | `docs/windows-probe.md`、`windows-probe-fault-acceptance.md`、`docs/termcp-aiops.md` | available | 本次未展开 |

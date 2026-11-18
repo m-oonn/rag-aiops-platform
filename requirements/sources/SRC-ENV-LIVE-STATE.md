@@ -1,6 +1,6 @@
 # SRC-ENV-LIVE-STATE
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -18,7 +18,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 基线提交 | `bf789d9e4fff51b7a2c0b661046f9e5c72b6e483` |
+| 基线提交 | `737f17d4d1e975a640e0e3472b9e052646a0ce1c` |
 | 正文 SHA-256 | `未计算` |
 
 ## 3. 摘要

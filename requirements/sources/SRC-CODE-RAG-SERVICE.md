@@ -1,6 +1,6 @@
 # SRC-CODE-RAG-SERVICE
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -49,12 +49,12 @@ _format_context
 
 - `cases/assistant-agent.json`：L308, L329, L330, L382, L435, L573, L595, L602
 - `cases/rag-qa.json`：L178, L179, L180, L181, L212, L229, L230, L231, L232, L365, L366, L369 …共 18 处
-- `requirements/index.json`：L1166, L1167, L1168, L1171, L1172, L1173, L1174, L1198, L1210, L1243, L1245, L1265 …共 40 处
+- `requirements/index.json`：L1167, L1168, L1169, L1172, L1173, L1174, L1175, L1199, L1211, L1244, L1246, L1266 …共 40 处
 - `requirements/modules/assistant-agent.md`：L97, L104, L111, L112, L119, L167, L171, L174, L190, L193, L196, L208 …共 13 处
 - `requirements/modules/evaluation.md`：L370, L386
 - `requirements/modules/rag-qa.md`：L103, L104, L105, L108, L120, L124, L137, L152, L170, L178, L186, L188 …共 24 处
-- `requirements/overview.md`：L27, L203
-- `specs/feature-index.json`：L751, L820, L845, L867, L1622, L1694
+- `requirements/overview.md`：L27, L204
+- `specs/feature-index.json`：L751, L820, L845, L867, L1671, L1743
 - `specs/modules/assistant-agent.md`：L50, L53, L143, L161, L170, L296, L305
 - `specs/modules/rag-qa.md`：L35, L52, L55, L56, L57, L91, L116, L158, L165, L172, L186, L193 …共 17 处
 - `specs/questions.md`：L45, L51, L57

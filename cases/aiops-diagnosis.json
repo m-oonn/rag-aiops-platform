@@ -1,7 +1,7 @@
 {
   "module_id": "aiops-diagnosis",
-  "baseline_commit": "bf789d9e4fff51b7a2c0b661046f9e5c72b6e483",
-  "generated_at": "2026-11-11T09:50:00+08:00",
+  "baseline_commit": "737f17d4d1e975a640e0e3472b9e052646a0ce1c",
+  "generated_at": "2026-11-11T20:38:21+08:00",
   "cases": [
     {
       "case_id": "CASE-DIAG-001",
@@ -716,6 +716,137 @@
       "timeout_seconds": 120,
       "readonly_retry_max": 1,
       "cleanup": "none"
+    },
+    {
+      "case_id": "CASE-DIAG-017",
+      "assertion_id": "ASRT-DIAG-018",
+      "feature_id": "FEAT-DIAG-010",
+      "role": "performance",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-004", "REQ-DIAG-007"],
+      "rule_refs": ["RULE-DIAG-022"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "仅用于 Windows 本地三服务夹具提供 downstream_slow 注入时；不是网络层延迟或生产负载测试。",
+      "preconditions": [
+        "具备隔离的三服务夹具与可读取的运行产物",
+        "执行真实模型诊断前，另行取得该轮明确授权并设置累计账本上限",
+        "本资料维护任务不执行此用例"
+      ],
+      "steps": [
+        "配置下游响应前延迟 1200ms，记录实际注入值与 localapp 的 upstream_timeout_seconds=0.5",
+        "运行该受控场景并保存业务入口、依赖进程/监听、请求级日志、SSE complete、报告及费用记录",
+        "核对连接状态、失败阶段、异常类型、结论层级与直接原因码；按样本报告观测，不按未确认产品门槛判 PASS/FAIL"
+      ],
+      "expected": [
+        "保存材料能区分连接未建立与连接已建立后 receive_headers 超时，并记录 TimeoutError/timeout_seconds",
+        "同时记录进程/端口状态、实际夹具延迟和应用超时条件，缺项时标明未观察",
+        "结论层级与直接原因码逐场记录；localized_fault 不改写为直接原因已确认",
+        "结果用单位、场次数和夹具条件描述，不计算总体正确率或外推"
+      ],
+      "evaluation_mode": "measurement",
+      "comparison_dimensions": ["连接状态", "失败阶段", "异常类型", "进程与端口状态", "结论层级", "直接原因码"],
+      "evidence": [
+        "docs/latency-fault-20261111.md:1-119",
+        "runtime/windows-local-faults-3f6f8bc54dee4fa6868b7b54e295d4fc/"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["配置并注入慢响应", "执行一次受控诊断", "归档并核对证据"],
+      "required_capabilities": ["可启动隔离三服务夹具", "可读取本轮报告/日志/计量", "经授权可调用真实模型"],
+      "resource_requirements": ["需要独立的真实模型调用授权与累计预算", "每场耗时受模型与夹具运行影响，无性能 SLA"],
+      "resource_refs": ["scripts/verify_windows_local_faults.py", "scripts/competing_hypothesis_fixture.py", "runtime/windows-local-faults-3f6f8bc54dee4fa6868b7b54e295d4fc/"],
+      "dependencies": ["Windows 本地故障夹具", "downstream_slow 场景", "适用模型和工具配置"],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "按夹具 runbook 恢复三服务、停止所属进程并确认端口释放；保留原始运行记录"
+    },
+    {
+      "case_id": "CASE-DIAG-018",
+      "assertion_id": "ASRT-DIAG-019",
+      "feature_id": "FEAT-DIAG-010",
+      "role": "product-details",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-008", "REQ-DIAG-009"],
+      "rule_refs": ["RULE-DIAG-021"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "知识参考资料与知识 MCP 工具的可用/停用对照；单独记录可用性、实际调用和报告呈现三个维度。",
+      "preconditions": [
+        "隔离夹具可分别配置知识 MCP 与规划参考资料可用/停用",
+        "执行真实模型诊断前，另行取得每场明确授权并设置累计账本上限",
+        "本资料维护任务不执行此用例"
+      ],
+      "steps": [
+        "在两种配置下分别运行同一受控故障，保存工具调用轨迹、complete 事件、报告与账本",
+        "逐场记录知识 MCP 实际调用数，不以工具列入可用清单代替实际调用",
+        "比对 evidence_source_availability 与报告正文是否显式说明缺席源，并记录结论层级"
+      ],
+      "expected": [
+        "每场均有可用/停用配置、知识 MCP 调用数、complete 来源状态和报告正文四项证据",
+        "调用数为 0 时只称可用性条件对照，不称知识使用效果对照",
+        "正文是否显式说明缺席源作为观测结果记录；未有产品决定时不判合格/不合格",
+        "两场样本只作个案描述，不推断工具有效性或无效性"
+      ],
+      "evaluation_mode": "measurement",
+      "comparison_dimensions": ["配置可用性", "实际知识调用数", "complete 来源状态", "报告缺席源呈现", "结论层级"],
+      "evidence": [
+        "docs/tool-availability-control-20261111.md:1-81",
+        "runtime/windows-local-faults-65e6e409ec494f28be77f3cb7173b0e2/"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["切换知识工具和参考资料可用性", "各运行一场", "保存与比对产物"],
+      "required_capabilities": ["可启动隔离夹具", "可读取工具轨迹/SSE/报告/费用记录", "经授权可调用真实模型"],
+      "resource_requirements": ["需要每场独立真实模型调用授权与累计预算", "样本数和条件需随结果报告"],
+      "resource_refs": ["scripts/verify_windows_local_faults.py", "runtime/windows-local-faults-65e6e409ec494f28be77f3cb7173b0e2/"],
+      "dependencies": ["Windows 本地三服务夹具", "知识 MCP 与参考资料配置", "适用模型配置"],
+      "timeout_seconds": 300,
+      "readonly_retry_max": 0,
+      "cleanup": "恢复夹具原工具配置、停止所属进程并确认端口释放；保留原始运行记录"
+    },
+    {
+      "case_id": "CASE-DIAG-019",
+      "assertion_id": "ASRT-DIAG-021",
+      "feature_id": "FEAT-DIAG-011",
+      "role": "experience",
+      "basis": "observed",
+      "readiness": "ready",
+      "requirement_refs": ["REQ-DIAG-014"],
+      "rule_refs": ["RULE-DIAG-023"],
+      "flow_refs": ["FLOW-DIAG"],
+      "applicability": "已部署 AIOps Web 页面；只核对依赖状态提示和提交按钮，不点击开始诊断、不触发模型调用。",
+      "preconditions": [
+        "可在浏览器打开 /aiops 并登录",
+        "可分别提供 Probe 正常/不可用、monitor 与 cls 可用性组合，以及依赖请求失败响应",
+        "在输入框填写非空故障描述"
+      ],
+      "steps": [
+        "分别设置 Probe 正常、Probe 不可用但 monitor 或 cls 至少一项正常、Probe 与 monitor/cls 全部不可用、依赖请求失败四种状态",
+        "每种状态加载 /aiops 页面后观察提示文案、知情确认框和“开始诊断”按钮状态",
+        "在 Probe 不可用的两种状态下先观察未确认状态，再勾选确认并观察按钮；不点击提交"
+      ],
+      "expected": [
+        "Probe 正常时不显示现场取证受限提示，不因依赖状态禁用开始按钮",
+        "Probe 不可用时显示对应警告和知情确认框，未勾选前开始按钮禁用，勾选后可用",
+        "monitor 与 cls 也均不可用时显示“现场取证工具当前全部不可用”这一更强提示",
+        "依赖请求失败时不显示该提示，且不因探测失败禁用开始按钮",
+        "所有状态仅观察交互，不提交诊断；结果记录为 OBSERVED，不据此判定产品目标正确性"
+      ],
+      "evaluation_mode": "binary",
+      "comparison_dimensions": [],
+      "evidence": [
+        "逐状态浏览器截图或录屏，包含告警、checkbox 与按钮状态",
+        "docs/ui-review-fixes-20261111.md:7-27,58-67",
+        "frontend/src/views/AIOps.evidencePrecondition.test.js:1-99"
+      ],
+      "execution_kind": "controlled_fixture",
+      "required_actions": ["打开 AIOps 页面", "观察各依赖状态交互", "不提交诊断"],
+      "required_capabilities": ["可登录的 AIOps Web 页面", "可控制或模拟依赖健康接口的返回状态"],
+      "resource_requirements": ["无需模型调用或费用；仅核对前端页面状态"],
+      "resource_refs": ["frontend/src/views/AIOps.vue", "frontend/src/views/AIOps.evidencePrecondition.test.js"],
+      "dependencies": ["GET /api/v1/health/dependencies 的响应状态"],
+      "timeout_seconds": 120,
+      "readonly_retry_max": 1,
+      "cleanup": "关闭页面；无需修改服务配置或业务数据"
     }
   ]
 }

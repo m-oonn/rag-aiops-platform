@@ -82,14 +82,22 @@ python requirements\_validate.py --strict
 
 ---
 
+## 2026-11-11 · AIOps 依赖前置条件资料增量
+
+- 基线：`737f17d4d1e975a640e0e3472b9e052646a0ce1c`；只读核对 `frontend/src/views/AIOps.vue`、配套前端测试与 `docs/ui-review-fixes-20261111.md`。
+- 新增 `REQ-DIAG-014` / `FEAT-DIAG-011` / `RULE-DIAG-023` / `ASRT-DIAG-021` / `CASE-DIAG-019`，描述 Probe 不可用时的告警、确认门槛、探测失败分支；用例仅观察页面并禁止提交诊断。
+- 新增 Q-42 保留“确认后继续”是否为产品目标的未决状态；UI 文档与 4 条前端测试只作为实现和验证证据，不视为产品批准。
+- 更新 AIOps 页面来源的基线、SHA-256 与大小；登记 UI 复核文档及组件测试。全程未改业务源码、未运行产品测试/服务、未调用模型或网络。
+- 纯文档生成器已刷新需求/功能/catalog/来源登记索引；`python requirements\_validate.py --strict` 通过（124 用例、89 需求、76 功能、232 规则、230 断言，ERROR 0）。本轮未提交或外部发布。
+
 ## 检查点（Checkpoint）
 
 | 字段 | 值 |
 |---|---|
-| `last_observed` | `2026-11-11T10:02+08:00`，基线提交 `bf789d9e4fff51b7a2c0b661046f9e5c72b6e483`（`main`）。已读：`src/` 全量、`frontend/src/` 全量、`mcp_servers/`、`docker/`、`.github/workflows/`、`docs/` 顶层文档、`tests/` 目录清单、`scripts/` 目录清单。 |
-| `pending_work` | ① `SRC-ENV-LIVE-STATE` 的在线状态核实（需授权联网 + 起服务，本轮明令禁止）；② `Q-*` 中 14 条 `open` 待产品决定，其中 Q-31（审批表无写入方）建议优先；③ 88 条模块内「执行条件型未决」需 controlled_fixture 或真实等待/付费授权；④ 13 个 `features_without_case` 待补用例；⑤ `docs/api.md` 覆盖面严重不足（Q-04），若上游补文档需回填 `specs/questions.md`。 |
+| `last_observed` | `2026-11-11T21:00+08:00`，本轮基线提交 `737f17d4d1e975a640e0e3472b9e052646a0ce1c`。增量复核 AIOps 诊断模块和 UI 依赖前置条件；核读 `AIOps.vue`、配套组件测试及 `docs/ui-review-fixes-20261111.md`，未复核其它模块/入口。 |
+| `pending_work` | ① Q-42 待确认 Probe 不可用时的产品目标；② `SRC-ENV-LIVE-STATE` 在线状态核实需联网/起服务，超出本轮范围；③ 其它模块、API/CLI 入口未在本轮复核；④ 现有模块未决项与缺覆盖断言按 catalog 保留；⑤ `docs/api.md` 覆盖问题 Q-04 仍待处理。 |
 | `last_published` | 资料建立那一轮未提交（零业务改动，仅工作区）。**2026-11-11 起业务改动开始进 Git**：问题 1/2/4 的修复与文档同步随本轮提交推送到 `origin/main`（提交号见 `git log` 顶部）。 |
-| `pending_delivery` | 交付待确认项：① 是否需要把 `requirements/`、`specs/`、`cases/`、`changes/` 纳入版本控制（涉及 `.gitignore` 决策）；② 是否需要同步发布到外部文档系统（如飞书文档/知识库）；③ 是否需要按 `AGENTS.md` 的协作习惯在每日流水里登记本次资料建立。 |
+| `pending_delivery` | 本轮资料差异尚未提交；未发布至外部文档系统。按任务边界不提交、不推送。 |
 
 ---
 

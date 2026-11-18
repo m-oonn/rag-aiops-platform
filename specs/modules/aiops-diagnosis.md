@@ -1,8 +1,8 @@
 # spec · aiops-diagnosis（AIOps 诊断链路）
 
 - 模块：`aiops-diagnosis`，规则前缀 `RULE-DIAG-`，断言前缀 `ASRT-DIAG-`，功能前缀 `FEAT-DIAG-`
-- 基线提交：`bf789d9e4fff51b7a2c0b661046f9e5c72b6e483`（`main`，2026-11-11）
-- 需求依据：`requirements/modules/aiops-diagnosis.md`（REQ-DIAG-001 ~ REQ-DIAG-013）
+- 本轮核实提交：`737f17d4d1e975a640e0e3472b9e052646a0ce1c`（2026-11-11 16:54 +08:00）
+- 需求依据：`requirements/modules/aiops-diagnosis.md`（REQ-DIAG-001 ~ REQ-DIAG-014；REQ-DIAG-014 记录 observed UI 契约，产品目标仍由 Q-42 待确认）
 - 所有 `source` 均为 `完整相对路径:行号`；`basis=observed` = 读源码核实。
 - **本模块只有 1 条 `confirmed` 级规则**：RULE-DIAG-018（改判定逻辑前必须过零成本回放门禁），依据是 `docs/aiops-goal-handover-20261108.md:186-200` 与 `requirements/project-card.md` 的 D3——都有写明理由与适用条件。其余规则全部 `observed`，**不得据此判正式 PASS/FAIL**。
 - 流程引用：`FLOW-DIAG`（提交→图执行→SSE→报告）、`FLOW-DIAG-RESUME`（终态挂起→审批校验→续跑）。
@@ -67,6 +67,8 @@
 | FEAT-DIAG-007 | 报告草稿先给我看一眼 | human_review 节点 | REQ-DIAG-011 | `src/agent/aiops/human_review.py:23-52` |
 | FEAT-DIAG-008 | 受控终端每条命令都要我批 | terminal_review 节点 + `/continue` | REQ-DIAG-012 | `src/agent/aiops/graph.py:165-228`、`src/agent/aiops/termcp_tools.py:43-83` |
 | FEAT-DIAG-009 | 知道这次诊断花了多少 | `usage` 帧 | REQ-DIAG-013 | `src/api/routers/aiops.py:103-118` |
+| FEAT-DIAG-010 | 受控故障场记录证据条件与结论层级，不越过证据 | 测试夹具 + AIOps SSE `complete` | REQ-DIAG-004, REQ-DIAG-006, REQ-DIAG-009 | `scripts/verify_windows_local_faults.py`、`src/agent/aiops/events.py`、`docs/latency-fault-20261111.md` |
+| FEAT-DIAG-011 | Probe 不可用时先提示现场证据限制并要求用户知情确认 | `/aiops` 页面进入与开始诊断按钮 | REQ-DIAG-014 | `frontend/src/views/AIOps.vue:28-38,62-65,814-848` |
 
 ---
 
@@ -212,6 +214,27 @@
 - **source**：`src/agent/aiops/graph.py:318-330,391`、`src/agent/aiops/strategies/investigation.py:3756-3799`、`docs/aiops-events.md:78`
 - **requirement_refs**：REQ-DIAG-005, REQ-DIAG-007　**basis**：observed
 
+### RULE-DIAG-021 受控对照只报告实际可观察的维度
+- **要求**：工具条件对照必须同时记录工具是否可用与是否实际调用；若 `knowledge_mcp_calls=0`，不得把结果描述为“使用知识 vs 不使用知识”。报告 `evidence_source_availability` 与用户可见报告正文分别取证，不以事件字段存在推断正文已说明缺席来源。
+- **适用条件**：`knowledge-control` 工具可用性对照及其它含可选证据源的诊断结果审核。
+- **可观察**：保存知识工具调用计数、可用性事件字段和报告正文；本轮两场调用数均为 0，完成事件记录来源状态，报告正文未出现“知识”或“降级”。
+- **source**：`docs/tool-availability-control-20261111.md:1-81`
+- **requirement_refs**：REQ-DIAG-008, REQ-DIAG-009　**basis**：observed
+
+### RULE-DIAG-022 延迟夹具按连接阶段和超时事实记录，不推断直接原因
+- **要求**：延迟类受控场景分别记录下游进程/监听状态、请求连接状态、失败阶段、超时配置与完成耗时；`localized_fault` 不得改写成已确认直接原因。该规则定义本资料的测量口径，不代表已确认产品需新增哪种诊断工具。
+- **适用条件**：`downstream_slow` 夹具及同类延迟结果审读。
+- **可观察**：本夹具响应延迟 1200ms，localapp 超时 0.5s；连接已建立且在 `receive_headers` 超时，两场结论均为 `localized_fault`，没有直接原因码。
+- **source**：`docs/latency-fault-20261111.md:1-119`
+- **requirement_refs**：REQ-DIAG-004, REQ-DIAG-007　**basis**：observed
+
+### RULE-DIAG-023 Probe 不可用提示只在页面可判状态时约束提交
+- **要求**：依赖清单中 `probe.status != "ok"` 时展示取证受限告警，并要求用户勾选知情确认后才允许提交；Probe 可用时不提示。只有当 monitor 与 cls 也都非 ok 时使用“现场取证工具当前全部不可用”告警。依赖请求失败或非成功响应时保持沉默且不因该失败禁用提交。
+- **适用条件**：AIOps Web 页面已加载依赖状态；输入非空且没有运行中诊断或待续审批。
+- **可观察**：告警文案、确认框与按钮禁用状态；前端 `runDiagnose` 的再次守卫；依赖请求失败、Probe 正常和 Probe 异常的分支。
+- **source**：`frontend/src/views/AIOps.vue:28-38,62-65,814-848`、`frontend/src/views/AIOps.evidencePrecondition.test.js:1-99`、`docs/ui-review-fixes-20261111.md:7-27,58-67`
+- **requirement_refs**：REQ-DIAG-014　**basis**：observed
+
 ---
 
 ## 3. 断言
@@ -233,6 +256,10 @@
 | ASRT-DIAG-013 | `TERMCP_ENABLED=true` 下命中终端命令 → 流内 `data.type=="pending_terminal_approval"` 且含 `request_id`/`command`/`expires_at`/`termcp_ui_url`；此时 `/continue`：Termcp 侧仍 pending → **409**「命令仍待 Termcp UI 审批」且 run 仍 `pending_terminal`；审批过期后 → **410**「审批未通过或已过期，诊断已停止」且 run 变 `failed` | RULE-DIAG-013 | REQ-DIAG-012 | observed | controlled_fixture（需伪造过期审批） |
 | ASRT-DIAG-014 | 停掉全部 MCP 服务后提交诊断 → 流正常走到 `complete`（无 `error`）；`complete` 帧 `evidence_source_availability` 中至少一项 `status != "callable"`；报告正文含「未取得真实数据」或「## 证据来源」段 | RULE-DIAG-015 | REQ-DIAG-008, REQ-DIAG-009 | observed | controlled_fixture（制造 MCP 缺席） |
 | ASRT-DIAG-016 | `PROBE_ENABLED=true` 重启后端后提交诊断，工具清单中不含 `check_website`/`check_ports`/`check_service_health`/`check_api_endpoint` 四个名字；关掉开关重启后这四个名字重新出现 | RULE-DIAG-016 | REQ-DIAG-008 | observed | static_review（对比两次工具清单输出即可，无需真实探测） |
+| ASRT-DIAG-018 | 在 `downstream_slow` 受控场景中记录 1200ms 下游延迟与 0.5s 应用超时；核对依赖仍监听、连接已建立、失败阶段为 `receive_headers` 且异常为 `TimeoutError`；另记录最终 `conclusion_level` 与直接原因码，不把层级结果转写成准确性结论 | RULE-DIAG-022 | REQ-DIAG-004, REQ-DIAG-007 | observed | controlled_fixture（需要故障注入与模型运行） |
+| ASRT-DIAG-019 | 在知识可用/停用对照中分别记录知识 MCP 实际调用数、`complete.evidence_source_availability` 与报告正文是否显式标注缺席知识源；若调用数为 0，不把对照称为知识使用效果比较 | RULE-DIAG-021 | REQ-DIAG-008, REQ-DIAG-009 | observed | controlled_fixture（需要两种工具配置与模型运行） |
+| ASRT-DIAG-020 | 只读核对已归档两场延迟结果：两场均为 `localized_fault`、直接原因码为空；将样本量、夹具延迟方式和人工审核状态作为解释限制一并记录，不输出总体正确率 | RULE-DIAG-022 | REQ-DIAG-007 | observed | static_review |
+| ASRT-DIAG-021 | 在 AIOps 页面分别提供 Probe 正常、Probe 不可用（monitor/cls 有任一可用）、现场工具全部不可用、依赖请求失败四种依赖响应；输入故障描述后核对告警档位、确认框及“开始诊断”按钮。未确认时保持禁用；告警存在且勾选后可用；Probe 正常或探测失败时不显示告警且不因该状态禁用。只检查按钮状态，不点击提交，不触发模型请求 | RULE-DIAG-023 | REQ-DIAG-014 | observed | controlled_fixture |
 | ASRT-DIAG-017 | `python -m pytest -q tests/test_recorded_round_replay.py` 退出码 0，输出中无 failed；整个过程零模型调用（耗时约 2 秒量级）；`.github/workflows/tests.yml` 存在名为 `Decision-rule gate (recorded paid rounds must not regress)` 的步骤 | RULE-DIAG-018 | REQ-DIAG-007 | `confirmed` | live_cli |
 
 > 断言编号不连续（001–014、016、017）是有意的：ASRT-DIAG-015 预留给"`evidence` 事件缺 `raw_hash`"这一待决口径（见 §4 第 2 条），在 `specs/questions.md` Q-17 定性前不写判据，避免用未定口径造断言。

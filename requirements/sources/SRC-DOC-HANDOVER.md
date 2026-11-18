@@ -1,6 +1,6 @@
 # SRC-DOC-HANDOVER
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -32,15 +32,15 @@
 - `requirements/modules/aiops-diagnosis.md`
 - `specs/modules/aiops-diagnosis.md`
 
-## 5. 反向引用（8 份资料、68 处提及）
+## 5. 反向引用（8 份资料、62 处提及）
 
 - `cases/aiops-diagnosis.json`：L134, L138, L225, L706
-- `requirements/index.json`：L1461, L1483, L1592, L1615, L1629, L1649, L1676, L1678, L1679, L1680, L1681, L1683 …共 27 处
+- `requirements/index.json`：L1484, L1616, L1650, L1677, L1679, L1680, L1681, L1682, L1684, L1686, L1789, L1894 …共 21 处
 - `requirements/modules/aiops-audit.md`：L111, L171, L192, L356
-- `requirements/modules/aiops-diagnosis.md`：L10, L172, L308, L344, L369, L370, L371, L373, L375, L377, L379, L472 …共 18 处
-- `requirements/overview.md`：L28, L31, L54
-- `requirements/project-card.md`：L33, L75, L97, L103, L205
-- `specs/modules/aiops-diagnosis.md`：L7, L198, L251, L252
+- `requirements/modules/aiops-diagnosis.md`：L172, L308, L344, L369, L370, L371, L373, L375, L377, L379, L472, L567 …共 18 处
+- `requirements/overview.md`：L28, L31, L55
+- `requirements/project-card.md`：L33, L75, L98, L104, L206
+- `specs/modules/aiops-diagnosis.md`：L7, L200, L278, L279
 - `specs/questions.md`：L37, L155, L159
 
 > 说明：以上是**路径字符串在资料区被提及**的位置，用于反查影响面；提及不等于该处结论一定依赖本来源。

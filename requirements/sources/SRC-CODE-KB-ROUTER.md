@@ -1,6 +1,6 @@
 # SRC-CODE-KB-ROUTER
 
-> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T10:04:18+08:00）。
+> 单来源登记（由 `runtime/docs-tools/build_sources.py` 从 `requirements/sources/index.json` 生成，生成时间 2026-11-11T21:01:35+08:00）。
 > 本文件只登记来源与引用关系，**不复制来源正文**；源码类来源仅登记提交、路径与符号。
 
 ## 1. 身份与可用性
@@ -53,11 +53,11 @@ preview_document
 - `cases/rag-qa.json`：L317
 - `cases/storage-queue.json`：L394
 - `requirements/_conventions.md`：L97
-- `requirements/index.json`：L767, L769, L770, L771, L772, L775, L778, L780, L781, L803, L804, L805 …共 40 处
+- `requirements/index.json`：L768, L770, L771, L772, L773, L776, L779, L781, L782, L804, L805, L806 …共 40 处
 - `requirements/modules/kb-ingest.md`：L67, L70, L71, L72, L75, L79, L81, L85, L93, L99, L100, L101 …共 40 处
 - `requirements/modules/storage-queue.md`：L120, L161, L162, L163, L170, L231, L232, L240, L286, L287
-- `requirements/overview.md`：L100, L203
-- `specs/feature-index.json`：L487, L510, L536, L610, L631, L655, L678, L700, L1796
+- `requirements/overview.md`：L101, L204
+- `specs/feature-index.json`：L487, L510, L536, L610, L631, L655, L678, L700, L1845
 - `specs/modules/kb-ingest.md`：L18, L19, L20, L21, L22, L24, L25, L26, L27, L28, L30, L31 …共 40 处
 - `specs/modules/storage-queue.md`：L58, L150, L195, L312
 - `specs/questions.md`：L23
