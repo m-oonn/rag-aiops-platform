@@ -5,6 +5,8 @@ import DiagnosisTopology from "./DiagnosisTopology.vue";
 import KnowledgeReferences from "./KnowledgeReferences.vue";
 import Markdown from "./Markdown.vue";
 import Icon from "./Icon.vue";
+import { readWorkspace, writeWorkspace } from "../lib/history";
+import { session } from "../lib/session";
 const props = defineProps({
   runId: String, report: String, diagnosis: Object, investigation: Object,
   evidence: { type: Array, default: () => [] }, hypotheses: { type: Array, default: () => [] },
@@ -14,6 +16,7 @@ const props = defineProps({
 defineEmits(["evidence"]);
 const tab = ref("report"), selectedNode = ref(""), selectedId = ref(""), selectedCandidateId = ref("");
 const cursor = ref(0), playing = ref(false);
+const followStatus = ref(true), restoreCursorId = ref("");
 let timer;
 const records = computed(() => evidenceRows(props.evidence, props.investigation));
 const graph = computed(() => topology(records.value, props.diagnosis?.asset_registration || { allowed_services: [] }));
@@ -66,17 +69,21 @@ const questions = computed(() => (props.diagnosis?.unresolved_questions || []).m
     reason: alternative?.critical === false ? alternative.noncritical_reason : "" };
 }));
 const selectedEvents = computed(() => logEvents(selectedRecord.value?.payload));
-function openEvidence(id) { selectedId.value = id; tab.value = "evidence"; }
+function selectTab(value) { followStatus.value = false; tab.value = value; }
+function openEvidence(id) { selectedId.value = id; selectTab("evidence"); }
+function selectCandidate(id) { followStatus.value = false; selectedCandidateId.value = id; }
+function selectNode(id) { followStatus.value = false; selectedNode.value = id; }
 function pause() { clearInterval(timer); timer = undefined; playing.value = false; }
-function seek(index) { pause(); cursor.value = Math.max(0, Math.min(records.value.length - 1, index)); }
+function seek(index) { pause(); restoreCursorId.value = ""; followStatus.value = false; cursor.value = Math.max(0, Math.min(records.value.length - 1, index)); }
 function selectReplayNode(name) {
-  selectedNode.value = name;
+  selectNode(name);
   const id = replayGraph.value.nodes.find(node => node.id === name)?.evidence.at(-1)?.id;
   if (id) seek(records.value.findIndex(row => row.id === id));
 }
 function play() {
   if (playing.value) return pause();
   if (records.value.length < 2) return;
+  restoreCursorId.value = ""; followStatus.value = false;
   if (cursor.value >= records.value.length - 1) cursor.value = 0;
   playing.value = true;
   timer = setInterval(() => {
@@ -95,12 +102,30 @@ function keyboardTabs(event) {
   if (next != null) { event.preventDefault(); buttons[next].click(); buttons[next].focus(); }
 }
 watch(tab, () => pause());
-watch(() => props.runId, () => { pause(); cursor.value = 0; selectedId.value = ""; selectedNode.value = ""; selectedCandidateId.value = ""; tab.value = props.status === "running" ? "process" : "report"; });
+watch([() => props.runId, () => session.user?.id], () => {
+  pause(); cursor.value = 0;
+  const saved = readWorkspace(session.user?.id, props.runId);
+  const text = key => typeof saved?.[key] === "string" ? saved[key] : "";
+  selectedId.value = text("evidenceId"); selectedNode.value = text("nodeId"); selectedCandidateId.value = text("candidateId");
+  restoreCursorId.value = text("cursorId"); followStatus.value = saved?.followStatus !== false;
+  tab.value = saved?.tab || (props.status === "running" ? "process" : "report");
+  const index = records.value.findIndex(row => row.id === restoreCursorId.value);
+  if (index >= 0) { cursor.value = index; restoreCursorId.value = ""; }
+}, { immediate: true });
 watch(() => props.status, (value) => {
+  if (!followStatus.value) return;
   if (value === "completed" || value === "pending_review") tab.value = "report";
   if (value === "running") tab.value = "process";
 });
-watch(() => records.value.length, (length) => { if (cursor.value >= length) seek(length - 1); });
+watch(() => records.value.map(row => row.id).join("|"), () => {
+  const index = records.value.findIndex(row => row.id === restoreCursorId.value);
+  if (index >= 0) { cursor.value = index; restoreCursorId.value = ""; }
+  if (cursor.value >= records.value.length) { pause(); cursor.value = Math.max(0, records.value.length - 1); }
+});
+watch([tab, selectedId, selectedNode, selectedCandidateId, cursor, followStatus], () => {
+  writeWorkspace(session.user?.id, props.runId, { tab: tab.value, evidenceId: selectedId.value, nodeId: selectedNode.value,
+    candidateId: selectedCandidateId.value, cursorId: restoreCursorId.value || current.value?.id || "", followStatus: followStatus.value });
+}, { flush: "post" });
 onUnmounted(pause);
 </script>
 
@@ -109,7 +134,7 @@ onUnmounted(pause);
     <nav class="workspace-tabs" role="tablist" aria-label="诊断内容" @keydown="keyboardTabs">
       <button v-for="item in tabs" :id="`diagnosis-tab-${item.id}`" :key="item.id" role="tab"
         :aria-controls="`diagnosis-panel-${item.id}`" :aria-selected="tab === item.id" :tabindex="tab === item.id ? 0 : -1"
-        :class="{ active: tab === item.id }" @click="tab = item.id">{{ item.name }}<span v-if="item.count != null">{{ item.count }}</span></button>
+        :class="{ active: tab === item.id }" @click="selectTab(item.id)">{{ item.name }}<span v-if="item.count != null">{{ item.count }}</span></button>
     </nav>
     <section :id="`diagnosis-panel-${tab}`" role="tabpanel" :aria-labelledby="`diagnosis-tab-${tab}`" class="workspace-panel">
       <template v-if="tab === 'report'">
@@ -137,7 +162,7 @@ onUnmounted(pause);
           </div>
           <section class="findings-summary"><h3>已排除的事项</h3><ul v-if="candidates.some(row => row.status === 'excluded')"><li v-for="candidate in candidates.filter(row => row.status === 'excluded')" :key="candidate.id">{{ candidate.text }}<button v-for="id in candidate.evidence.slice(0, 1)" :key="id" class="text-button" @click="openEvidence(id)">查看依据</button></li></ul><p v-else>尚无满足证据标准的排除结论。</p><h3>尚未查清的事</h3><ul v-if="questions.length"><li v-for="(question, index) in questions" :key="question.id || index">{{ question.text }}<details v-if="question.reason" class="question-boundary"><summary>对当前结论的影响（模型判断）</summary><p>以下理由仍未独立核验：{{ readableText(question.reason) }}</p></details></li></ul><p v-else>未覆盖的业务路径、时间及历史原因仍不能确定。</p><details v-if="diagnosis?.limitations?.length" class="evidence-limits"><summary>证据范围与校验限制（{{ diagnosis.limitations.length }} 项）</summary><p>以下限制影响结论范围，不能据此推断未测业务正常。</p><ul><li v-for="text in diagnosis.limitations" :key="text">{{ readableText(text) }}</li></ul></details></section>
           <div v-if="actions.length" class="next-actions"><h3>接下来怎么做<span>尚未执行</span></h3>
-            <details v-for="(action, index) in actions" :key="action.action" class="action-row">
+            <details v-for="(action, index) in actions" :key="JSON.stringify([action.action, action.scope])" class="action-row">
               <summary><span class="sequence">{{ String(index + 1).padStart(2, '0') }}</span><span>{{ actionTitle(action) }}</span><Icon name="down" :size="16" /></summary>
               <div class="action-content"><p v-if="actionTitle(action) !== action.action">{{ action.action }}</p><template v-for="section in [{ title: '操作前确认', rows: action.preconditions }, { title: '操作影响', rows: action.risks }, { title: '恢复后检查', rows: action.verification }]" :key="section.title">
                 <template v-if="section.rows.length"><h4>{{ section.title }}</h4><ul><li v-for="text in section.rows" :key="text">{{ text }}</li></ul></template>

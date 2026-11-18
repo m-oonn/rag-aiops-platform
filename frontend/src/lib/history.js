@@ -49,3 +49,16 @@ export function writeDraft(userId, draft) {
     else sessionStorage.removeItem(`aiops:draft:${userId}`);
   } catch { /* The form stays usable when browser storage is unavailable. */ }
 }
+
+export function readWorkspace(userId, runId) {
+  if (!userId || !validRunId(runId)) return null;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(`aiops:view:${userId}:${runId}`) || "null");
+    return saved && ["report", "process", "evidence", "causes"].includes(saved.tab) ? saved : null;
+  } catch { return null; }
+}
+export function writeWorkspace(userId, runId, view) {
+  if (!userId || !validRunId(runId)) return;
+  try { sessionStorage.setItem(`aiops:view:${userId}:${runId}`, JSON.stringify(view)); }
+  catch { /* Navigation stays available without session storage. */ }
+}

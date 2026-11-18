@@ -104,3 +104,18 @@ def test_raw_file_tampering_is_explicit_in_the_evidence_view(store):
     result = run_store.get_evidence("raw-tamper", eid, 1, include_raw=True)
     assert result["raw"] is None
     assert result["raw_status"] == "integrity_failed"
+
+
+def test_knowledge_reference_can_locate_a_chunk_after_the_first_page(client, auth_headers, db, test_user):
+    from src.database.models import KnowledgeBase, KnowledgeDocument, DocumentChunk
+    kb = KnowledgeBase(kb_uid="reference-kb", name="reference", owner_id=test_user.id)
+    db.add(kb)
+    db.flush()
+    doc = KnowledgeDocument(doc_uid="reference-doc", kb_id=kb.id, filename="reference.md", file_path="unused", file_type="md", status=2)
+    db.add(doc)
+    db.flush()
+    db.add_all([DocumentChunk(chunk_uid=f"reference-{i}", doc_id=doc.id, content=f"段落{i}", vector_id="") for i in range(101)])
+    db.commit()
+    result = client.get(f"/api/v1/knowledge-bases/documents/{doc.id}/chunks?chunk_uid=reference-100&limit=1", headers=auth_headers)
+    assert result.status_code == 200
+    assert [row["chunk_uid"] for row in result.json()] == ["reference-100"]

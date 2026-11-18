@@ -18,6 +18,7 @@ const button = (text) => wrapper.findAll("button").find(node => node.text() === 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
   mocks.route = reactive({ query: { run: "saved-run" } });
   mocks.replace.mockImplementation(async location => {
     mocks.route.query = typeof location === "string"
@@ -358,4 +359,14 @@ it("does not mark the saved history running again after a final usage event", as
   await flushPromises();
   const rows = JSON.parse(localStorage.getItem("aiops:runs:v2:7"));
   expect(rows.find(row => row.thread_id === "new-run").status).toBe("completed");
+});
+
+it("does not transfer an unsent diagnosis to another identity", async () => {
+  mocks.route.query = { new: "1" };
+  await mountView();
+  await wrapper.get("textarea").setValue("账号7的私有输入");
+  session.user = { id: 8, role: "user" };
+  await flushPromises();
+  expect(wrapper.get("textarea").element.value).toBe("");
+  expect(sessionStorage.getItem("aiops:draft:8") || "").not.toContain("账号7的私有输入");
 });

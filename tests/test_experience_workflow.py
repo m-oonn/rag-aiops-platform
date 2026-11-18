@@ -171,3 +171,18 @@ def test_publication_state_read_failure_does_not_return_cached_sql_content(prepa
     sql_result = SearchResult(id="sql", text="cached", score=1, metadata={"doc_id": 1})
     external = SearchResult(id="external", text="local runbook", score=1, metadata={})
     assert filter_published_results([sql_result, external]) == [external]
+
+
+def test_orphaned_file_from_interrupted_publish_does_not_block_retry(prepared, client, auth_headers, test_user, db):
+    admin(db, test_user)
+    uid = client.get(ROOT, headers=auth_headers).json()["experience"]["id"]
+    root = Path(settings.UPLOAD_DIR) / "aiops-experience"
+    root.mkdir(parents=True)
+    orphan = root / (uid + ".md")
+    orphan.write_text("上一次中断留下的材料", encoding="utf-8")
+    result = client.post(ROOT + "/review", headers=auth_headers,
+        json={"action": "publish", "kb_id": 901, "note": "重新审核"})
+    assert result.status_code == 200
+    assert orphan.read_text(encoding="utf-8") == "上一次中断留下的材料"
+    doc = db.get(KnowledgeDocument, result.json()["experience"]["document_id"])
+    assert Path(doc.file_path) != orphan

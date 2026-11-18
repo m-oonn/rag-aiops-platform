@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { clockTime, logEvents, evidenceRows, reportActions } from '../frontend/src/lib/diagnosisVisuals.js';
 import { getHistory, rememberRun, forgetRun, validRunId, readDraft, writeDraft } from '../frontend/src/lib/history.js';
+import * as history from '../frontend/src/lib/history.js';
+import { snapshotSteps } from '../frontend/src/lib/diagnosis.js';
 
 const storage = () => {
   const values = new Map();
@@ -58,4 +60,26 @@ test('same action for different targets stays separately actionable', () => {
 });
 test('damaged recommendation entries do not hide intact actions', () => {
   assert.equal(reportActions({recommendations:[null, {action:'检查入口'}]}).length, 1);
+});
+test('workspace navigation is stored by user and run with validated tabs', () => {
+  globalThis.sessionStorage = storage();
+  history.writeWorkspace(1, 'run', {tab:'evidence', evidenceId:'e-one', cursorId:'e-two'});
+  assert.equal(history.readWorkspace(1, 'run').evidenceId, 'e-one');
+  assert.equal(history.readWorkspace(2, 'run'), null);
+  assert.equal(history.readWorkspace(1, 'other'), null);
+  sessionStorage.setItem('aiops:view:1:bad', '{"tab":"invalid"}');
+  assert.equal(history.readWorkspace(1, 'bad'), null);
+});
+test('repeated executed checks remain distinct in restored progress', () => {
+  const steps = snapshotSteps([
+    {node:'planner', payload:{plan:['检查日志', '检查依赖']}},
+    {node:'executor', payload:{last_step:'检查日志', result_digest:'首次为空'}},
+    {node:'replanner', payload:{remaining_plan:['检查依赖', '检查日志']}},
+    {node:'executor', payload:{last_step:'检查依赖', result_digest:'连接失败'}},
+    {node:'replanner', payload:{remaining_plan:['检查日志']}},
+    {node:'executor', payload:{last_step:'检查日志', result_digest:'补查取得日志'}},
+  ]);
+  assert.equal(steps.length, 3);
+  assert.deepEqual(steps.filter(row => row.text === '检查日志').map(row => row.result), ['首次为空', '补查取得日志']);
+  assert.equal(steps.filter(row => row.done).length, 3);
 });
