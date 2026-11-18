@@ -1,0 +1,5616 @@
+{
+  "date": "2026-11-13",
+  "method": "static AST + manual semantic review; no app import, requests, database or models",
+  "api_prefix_default": "/api/v1",
+  "mounted_modules": {
+    "health": "/api/v1/health",
+    "auth": "/api/v1/auth",
+    "knowledge_base": "/api/v1/knowledge-bases",
+    "assistant": "/api/v1/assistants",
+    "agent": "/api/v1/agents",
+    "monitor": "/api/v1/monitor",
+    "storage": "/api/v1/storage",
+    "chat": "/api/v1/chat",
+    "aiops": "/api/v1/aiops",
+    "evaluation": "/api/v1/evaluations",
+    "loadfile": "/api/v1/upload"
+  },
+  "counts": {
+    "agent": 6,
+    "aiops": 7,
+    "assistant": 7,
+    "auth": 5,
+    "chat": 7,
+    "evaluation": 10,
+    "health": 5,
+    "knowledge_base": 20,
+    "loadfile": 1,
+    "monitor": 4,
+    "storage": 6
+  },
+  "route_count": 78,
+  "routes": [
+    {
+      "module": "agent",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/agents/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "create_agent",
+      "purpose": "创建通用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "agent_in",
+          "type": "AgentCreate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AgentOut",
+      "return_annotation": null,
+      "responses": [
+        "agent"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 177,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {
+        "response_model": "AgentOut"
+      }
+    },
+    {
+      "module": "agent",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/agents/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "list_agents",
+      "purpose": "列出通用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[AgentOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(Agent).filter(Agent.user_id == current_user.id).all()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 207,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {
+        "response_model": "List[AgentOut]"
+      }
+    },
+    {
+      "module": "agent",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/agents/{agent_id}",
+      "local_path": "/{agent_id}",
+      "mounted": true,
+      "function": "get_agent",
+      "purpose": "读取通用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "agent_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AgentOut",
+      "return_annotation": null,
+      "responses": [
+        "agent"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Agent not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 215,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {
+        "response_model": "AgentOut"
+      }
+    },
+    {
+      "module": "agent",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/api/v1/agents/{agent_id}",
+      "local_path": "/{agent_id}",
+      "mounted": true,
+      "function": "update_agent",
+      "purpose": "更新通用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "agent_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "agent_in",
+          "type": "AgentUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AgentOut",
+      "return_annotation": null,
+      "responses": [
+        "agent"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Agent not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 229,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {
+        "response_model": "AgentOut"
+      }
+    },
+    {
+      "module": "agent",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/agents/{agent_id}",
+      "local_path": "/{agent_id}",
+      "mounted": true,
+      "function": "delete_agent",
+      "purpose": "删除通用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "agent_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Agent deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Agent not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 259,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "agent",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/agents/{agent_id}/execute",
+      "local_path": "/{agent_id}/execute",
+      "mounted": true,
+      "function": "execute_agent",
+      "purpose": "执行通用工具调用 Agent",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "agent_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "payload",
+          "type": "AgentExecute",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "result"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Agent not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 276,
+      "source": "src/api/routers/agent.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/aiops",
+      "local_path": "",
+      "mounted": true,
+      "function": "diagnose_stream",
+      "purpose": "启动 AIOps 诊断；POST 返回 SSE",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "AIOpsRequest",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "EventSourceResponse(event_generator())"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=503, detail='受控终端诊断尚未启用')"
+      ],
+      "stream": true,
+      "ownership_check": true,
+      "line": 41,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/aiops/runs/{thread_id}",
+      "local_path": "/runs/{thread_id}",
+      "mounted": true,
+      "function": "get_run_status",
+      "purpose": "按 thread_id 恢复诊断与结构化结果",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "thread_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'thread_id': run.thread_id, 'status': run.status, 'report': run.report, 'terminal_approval': approval, 'termcp_ui_url': settings.TERMCP_UI_URL if approval else None, **await aiops_service.run_details(thread_id)}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 133,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/aiops/runs/{thread_id}/continue",
+      "local_path": "/runs/{thread_id}/continue",
+      "mounted": true,
+      "function": "continue_run",
+      "purpose": "核验 Termcp 审批后续跑；不是任意诊断重试",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "thread_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "EventSourceResponse(event_generator())"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=409, detail='此诊断等待的不是 Termcp 命令审批')",
+        "HTTPException(status_code=409, detail='诊断当前不处于可续跑状态')",
+        "HTTPException(status_code=exc.status_code, detail=str(exc))"
+      ],
+      "stream": true,
+      "ownership_check": true,
+      "line": 147,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/aiops/runs/{thread_id}/steps",
+      "local_path": "/runs/{thread_id}/steps",
+      "mounted": true,
+      "function": "get_run_steps",
+      "purpose": "可选步快照；关闭时允许为空",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "thread_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'thread_id': thread_id, 'total': len(steps), 'steps': steps}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 170,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/aiops/runs/{thread_id}/evidence",
+      "local_path": "/runs/{thread_id}/evidence",
+      "mounted": true,
+      "function": "get_run_evidence",
+      "purpose": "当前诊断证据台账（脱敏）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "thread_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'thread_id': thread_id, 'total': len(rows), 'evidence': rows, 'can_read_raw': getattr(current_user, 'role', 'user') in {'admin', 'auditor'}}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 185,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/aiops/runs/{thread_id}/evidence/{evidence_id}",
+      "local_path": "/runs/{thread_id}/evidence/{evidence_id}",
+      "mounted": true,
+      "function": "get_run_evidence_item",
+      "purpose": "证据详情（原始字段按角色控制）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "thread_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "evidence_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "row"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='evidence_id 非法')",
+        "HTTPException(status_code=404, detail='证据不存在')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 194,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "aiops",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/aiops/targets/{target_id}/status",
+      "local_path": "/targets/{target_id}/status",
+      "mounted": true,
+      "function": "get_probe_target_status",
+      "purpose": "读取唯一配置目标的 Probe 登记状态",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "target_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "status"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='target_id 非法')",
+        "HTTPException(status_code=404, detail='目标不存在')",
+        "HTTPException(status_code=404, detail='目标尚未注册')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 210,
+      "source": "src/api/routers/aiops.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/assistants/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "create_assistant",
+      "purpose": "创建通用会话助手",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_in",
+          "type": "AssistantCreate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AssistantOut",
+      "return_annotation": null,
+      "responses": [
+        "assistant"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Invalid KB IDs: some knowledge bases do not exist or do not belong to you')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 60,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {
+        "response_model": "AssistantOut"
+      }
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/assistants/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "list_assistants",
+      "purpose": "列出通用助手",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[AssistantOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(Assistant).filter(Assistant.user_id == current_user.id).all()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 97,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {
+        "response_model": "List[AssistantOut]"
+      }
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/assistants/{assistant_id}",
+      "local_path": "/{assistant_id}",
+      "mounted": true,
+      "function": "get_assistant",
+      "purpose": "读取助手",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AssistantOut",
+      "return_annotation": null,
+      "responses": [
+        "assistant"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 104,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {
+        "response_model": "AssistantOut"
+      }
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/api/v1/assistants/{assistant_id}",
+      "local_path": "/{assistant_id}",
+      "mounted": true,
+      "function": "update_assistant",
+      "purpose": "更新助手",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "assistant_in",
+          "type": "AssistantUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "AssistantOut",
+      "return_annotation": null,
+      "responses": [
+        "assistant"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Invalid KB IDs: some knowledge bases do not exist or do not belong to you')",
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 117,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {
+        "response_model": "AssistantOut"
+      }
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/assistants/{assistant_id}",
+      "local_path": "/{assistant_id}",
+      "mounted": true,
+      "function": "delete_assistant",
+      "purpose": "删除助手",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Assistant deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 157,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/assistants/{assistant_id}/versions",
+      "local_path": "/{assistant_id}/versions",
+      "mounted": true,
+      "function": "create_assistant_version",
+      "purpose": "保存助手版本",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "version_data",
+          "type": "dict",
+          "default": "Body(...)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Version saved'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 173,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "assistant",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/assistants/{assistant_id}/versions",
+      "local_path": "/{assistant_id}/versions",
+      "mounted": true,
+      "function": "list_assistant_versions",
+      "purpose": "列出助手版本",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "assistant_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[AssistantVersionOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(AssistantVersion).filter(AssistantVersion.assistant_id == assistant_id).order_by(AssistantVersion.created_at.desc()).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 196,
+      "source": "src/api/routers/assistant.py",
+      "decorator_options": {
+        "response_model": "List[AssistantVersionOut]"
+      }
+    },
+    {
+      "module": "auth",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/auth/register",
+      "local_path": "/register",
+      "mounted": true,
+      "function": "register",
+      "purpose": "注册账号",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "user_in",
+          "type": "UserCreate",
+          "default": null
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "UserOut",
+      "return_annotation": null,
+      "responses": [
+        "user"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=409, detail='用户名或邮箱已被注册')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 51,
+      "source": "src/api/routers/auth.py",
+      "decorator_options": {
+        "response_model": "UserOut",
+        "status_code": "status.HTTP_201_CREATED"
+      }
+    },
+    {
+      "module": "auth",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/auth/login/access-token",
+      "local_path": "/login/access-token",
+      "mounted": true,
+      "function": "login_access_token",
+      "purpose": "登录并签发 JWT",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "Request",
+          "default": null
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        },
+        {
+          "name": "form_data",
+          "type": "OAuth2PasswordRequestForm",
+          "default": "Depends()"
+        }
+      ],
+      "response_model": "Token",
+      "return_annotation": "Any",
+      "responses": [
+        "{'access_token': create_access_token(user.id), 'token_type': 'bearer'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Inactive user')",
+        "HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Incorrect email or password')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 73,
+      "source": "src/api/routers/auth.py",
+      "decorator_options": {
+        "response_model": "Token"
+      }
+    },
+    {
+      "module": "auth",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/auth/me",
+      "local_path": "/me",
+      "mounted": true,
+      "function": "read_current_user",
+      "purpose": "读取当前身份与角色",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": "UserOut",
+      "return_annotation": null,
+      "responses": [
+        "current_user"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 96,
+      "source": "src/api/routers/auth.py",
+      "decorator_options": {
+        "response_model": "UserOut"
+      }
+    },
+    {
+      "module": "auth",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/auth/users",
+      "local_path": "/users",
+      "mounted": true,
+      "function": "list_users",
+      "purpose": "管理员列出用户",
+      "auth": "管理员",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(require_admin)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[UserOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(User).order_by(User.id).all()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 105,
+      "source": "src/api/routers/auth.py",
+      "decorator_options": {
+        "response_model": "List[UserOut]"
+      }
+    },
+    {
+      "module": "auth",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/api/v1/auth/users/{user_id}/role",
+      "local_path": "/users/{user_id}/role",
+      "mounted": true,
+      "function": "update_user_role",
+      "purpose": "管理员修改他人角色",
+      "auth": "管理员",
+      "parameters": [
+        {
+          "name": "user_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "payload",
+          "type": "RoleUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(require_admin)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "UserOut",
+      "return_annotation": null,
+      "responses": [
+        "user"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='不能修改自己的角色')",
+        "HTTPException(status_code=404, detail='用户不存在')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 113,
+      "source": "src/api/routers/auth.py",
+      "decorator_options": {
+        "response_model": "UserOut"
+      }
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/chat/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "chat",
+      "purpose": "同步知识问答",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "ChatRequest",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "ChatResponse",
+      "return_annotation": null,
+      "responses": [
+        "ChatResponse(session_id=session_uid, query=request.query, answer=result['answer'], source_documents=result.get('source_documents', []))"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized for this assistant')",
+        "HTTPException(status_code=403, detail='Not authorized to access this session')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 65,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {
+        "response_model": "ChatResponse"
+      }
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/chat/stream",
+      "local_path": "/stream",
+      "mounted": true,
+      "function": "chat_stream",
+      "purpose": "纯聊天流（不支持带知识库/助手的 RAG）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "ChatRequest",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "EventSourceResponse(event_generator())"
+      ],
+      "http_errors": [],
+      "stream": true,
+      "ownership_check": false,
+      "line": 211,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/chat/sessions",
+      "local_path": "/sessions",
+      "mounted": true,
+      "function": "create_session",
+      "purpose": "预建通用会话",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "payload",
+          "type": "SessionCreate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "SessionOut",
+      "return_annotation": null,
+      "responses": [
+        "chat_session"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized for this assistant')",
+        "HTTPException(status_code=404, detail='Assistant not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 284,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {
+        "response_model": "SessionOut"
+      }
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/chat/sessions",
+      "local_path": "/sessions",
+      "mounted": true,
+      "function": "list_sessions",
+      "purpose": "列出聊天会话（不是诊断记录）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[SessionOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(ChatSession).filter(ChatSession.user_id == current_user.id).order_by(ChatSession.created_at.desc()).all()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 313,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {
+        "response_model": "List[SessionOut]"
+      }
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/chat/sessions/{session_id}/messages",
+      "local_path": "/sessions/{session_id}/messages",
+      "mounted": true,
+      "function": "get_session_messages",
+      "purpose": "读取聊天记录",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "session_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[MessageOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(ChatInteraction).filter(ChatInteraction.session_id == chat_session.id).order_by(ChatInteraction.created_at.asc()).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Session not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 320,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {
+        "response_model": "List[MessageOut]"
+      }
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/chat/sessions/{session_id}",
+      "local_path": "/sessions/{session_id}",
+      "mounted": true,
+      "function": "delete_session",
+      "purpose": "删除聊天会话",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "session_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Session deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Session not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 334,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "chat",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/chat/sessions",
+      "local_path": "/sessions",
+      "mounted": true,
+      "function": "batch_delete_sessions",
+      "purpose": "批量删除聊天会话",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "session_ids",
+          "type": "List[str]",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Deleted {deleted_count} sessions'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 359,
+      "source": "src/api/routers/chat.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/evaluations/generate",
+      "local_path": "/generate",
+      "mounted": true,
+      "function": "generate_evaluation_dataset",
+      "purpose": "创建知识问答评测任务并按配置生成题集",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "config",
+          "type": "EvalConfig",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "EvalTaskOut",
+      "return_annotation": null,
+      "responses": [
+        "task"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='知识库为空或文档尚未处理完成，请先上传文档并等待处理完成')",
+        "HTTPException(status_code=403, detail='无权操作该知识库')",
+        "HTTPException(status_code=404, detail='知识库不存在')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 284,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {
+        "response_model": "EvalTaskOut"
+      }
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/evaluations/{task_id}/upload-dataset",
+      "local_path": "/{task_id}/upload-dataset",
+      "mounted": true,
+      "function": "upload_evaluation_dataset",
+      "purpose": "上传 JSON/CSV/XLSX 问答题集",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "file",
+          "type": "UploadFile",
+          "default": "File(...)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Uploaded {len(items)} items'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail=f'Invalid file: {e}')",
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 338,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/evaluations/{task_id}/run",
+      "local_path": "/{task_id}/run",
+      "mounted": true,
+      "function": "run_evaluation",
+      "purpose": "运行 RAG 问答评测",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Evaluation started'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Dataset not ready')",
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 388,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/evaluations/{task_id}/dataset",
+      "local_path": "/{task_id}/dataset",
+      "mounted": true,
+      "function": "get_dataset_items",
+      "purpose": "读取评测题集",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[DatasetItemOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(EvaluationDatasetItem).filter(EvaluationDatasetItem.task_id == task_id).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 406,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {
+        "response_model": "List[DatasetItemOut]"
+      }
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/api/v1/evaluations/dataset-items/{item_id}",
+      "local_path": "/dataset-items/{item_id}",
+      "mounted": true,
+      "function": "update_dataset_item",
+      "purpose": "更新评测题目",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "item_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "item_in",
+          "type": "DatasetItemUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "item"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404)",
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 418,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/evaluations/dataset-items/{item_id}",
+      "local_path": "/dataset-items/{item_id}",
+      "mounted": true,
+      "function": "delete_dataset_item",
+      "purpose": "删除评测题目",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "item_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404)",
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 439,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/evaluations/tasks/batch-delete",
+      "local_path": "/tasks/batch-delete",
+      "mounted": true,
+      "function": "batch_delete_tasks",
+      "purpose": "批量删除任务（所在模块分别为文档/评测）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_ids",
+          "type": "List[int]",
+          "default": "Body(...)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Deleted {count} tasks'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 461,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/evaluations/tasks",
+      "local_path": "/tasks",
+      "mounted": true,
+      "function": "list_evaluation_tasks",
+      "purpose": "列出知识问答评测任务",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[EvalTaskOut]",
+      "return_annotation": null,
+      "responses": [
+        "tasks"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 485,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {
+        "response_model": "List[EvalTaskOut]"
+      }
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/evaluations/{task_id}",
+      "local_path": "/{task_id}",
+      "mounted": true,
+      "function": "get_evaluation_status",
+      "purpose": "读取问答评测任务状态",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "EvalTaskOut",
+      "return_annotation": null,
+      "responses": [
+        "task"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 502,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {
+        "response_model": "EvalTaskOut"
+      }
+    },
+    {
+      "module": "evaluation",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/evaluations/{task_id}/report",
+      "local_path": "/{task_id}/report",
+      "mounted": true,
+      "function": "get_evaluation_report",
+      "purpose": "读取问答评测报告（不是 AIOps 实验结果）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'content': content}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='Report not found')",
+        "HTTPException(status_code=404, detail='Task not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 515,
+      "source": "src/api/routers/evaluation.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "health",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health",
+      "local_path": "",
+      "mounted": true,
+      "function": "health_check",
+      "purpose": "应用存活检查",
+      "auth": "无路由级用户鉴权",
+      "parameters": [],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'status': 'ok', 'version': '1.0.0'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 21,
+      "source": "src/api/routers/health.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "health",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health/health",
+      "local_path": "/health",
+      "mounted": true,
+      "function": "health_check_legacy",
+      "purpose": "旧健康路径兼容别名",
+      "auth": "无路由级用户鉴权",
+      "parameters": [],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "await health_check()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 32,
+      "source": "src/api/routers/health.py",
+      "decorator_options": {
+        "include_in_schema": "False"
+      }
+    },
+    {
+      "module": "health",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health/queues",
+      "local_path": "/queues",
+      "mounted": true,
+      "function": "get_queue_stats",
+      "purpose": "队列统计（按所在模块区分 Worker 与文档任务）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'status': 'degraded', 'message': '消息中间件正常，但没有在线 Worker：新任务只会堆积，不会被处理', 'summary': {'active_tasks': 0, 'reserved_tasks': 0, 'scheduled_tasks': 0}, 'details': {'active': {}, 'reserved': {}, 'scheduled': {}, 'worker_stats': {}}}",
+        "{'status': 'error', 'message': str(e)}",
+        "{'status': 'ok', 'summary': {'active_tasks': total_active, 'reserved_tasks': total_reserved, 'scheduled_tasks': total_scheduled, 'workers': len(workers)}, 'details': {'active': active, 'reserved': reserved, 'scheduled': scheduled, 'worker_stats': stats}}",
+        "{'status': 'unavailable', 'message': '任务队列中间件（RabbitMQ）不可达，队列统计不可用', 'detail': broker_error}",
+        "{'status': 'unavailable', 'message': '无法连接 Celery inspector'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 53,
+      "source": "src/api/routers/health.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "health",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health/dependencies",
+      "local_path": "/dependencies",
+      "mounted": true,
+      "function": "check_dependencies",
+      "purpose": "平台依赖可用性；不是被诊断业务健康结论",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "cached",
+        "payload"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 231,
+      "source": "src/api/routers/health.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "health",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health/models",
+      "local_path": "/models",
+      "mounted": true,
+      "function": "list_models",
+      "purpose": "可用模型及默认模型",
+      "auth": "无路由级用户鉴权",
+      "parameters": [],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'models': models, 'default_model': settings.LLM_MODEL}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 270,
+      "source": "src/api/routers/health.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "create_knowledge_base",
+      "purpose": "创建知识库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_in",
+          "type": "KBCreate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "KBOut",
+      "return_annotation": null,
+      "responses": [
+        "kb"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 220,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "KBOut"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "list_knowledge_bases",
+      "purpose": "列出自己的知识库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[KBOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(KnowledgeBase).filter(KnowledgeBase.owner_id == current_user.id).all()"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 240,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "List[KBOut]"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}",
+      "local_path": "/{kb_id}",
+      "mounted": true,
+      "function": "delete_knowledge_base",
+      "purpose": "删除知识库及关联数据",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Knowledge Base deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Knowledge Base not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 249,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}",
+      "local_path": "/{kb_id}",
+      "mounted": true,
+      "function": "get_knowledge_base",
+      "purpose": "读取知识库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "KBOut",
+      "return_annotation": null,
+      "responses": [
+        "kb"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Knowledge Base not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 273,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "KBOut"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}",
+      "local_path": "/{kb_id}",
+      "mounted": true,
+      "function": "update_knowledge_base",
+      "purpose": "更新知识库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "kb_in",
+          "type": "KBUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "KBOut",
+      "return_annotation": null,
+      "responses": [
+        "kb"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Knowledge Base not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 286,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "KBOut"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}/upload",
+      "local_path": "/{kb_id}/upload",
+      "mounted": true,
+      "function": "upload_document",
+      "purpose": "上传文档并安排入库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "file",
+          "type": "UploadFile",
+          "default": "File(...)"
+        },
+        {
+          "name": "source_url",
+          "type": "Optional[str]",
+          "default": "Form(None)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'File uploaded (sync mode)', 'doc_id': doc.id, 'task_id': None}",
+        "{'message': 'File uploaded successfully', 'doc_id': doc.id, 'task_id': task_id}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail=f\"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}\")",
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Knowledge Base not found')",
+        "HTTPException(status_code=413, detail=f'File too large: {file_size} bytes exceeds limit of {MAX_UPLOAD_SIZE} bytes')",
+        "HTTPException(status_code=500, detail=f'Failed to save file: {e}')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 312,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/batch-retry",
+      "local_path": "/documents/batch-retry",
+      "mounted": true,
+      "function": "batch_retry_documents",
+      "purpose": "批量重试文档入库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_ids",
+          "type": "List[int]",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Restarted {len(restarted)} documents'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 414,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/batch-delete",
+      "local_path": "/documents/batch-delete",
+      "mounted": true,
+      "function": "batch_delete_documents",
+      "purpose": "批量删除文档",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_ids",
+          "type": "List[int]",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Deleted {deleted} documents'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 437,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/retry",
+      "local_path": "/documents/{doc_id}/retry",
+      "mounted": true,
+      "function": "retry_document",
+      "purpose": "重试单份文档",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Retry started (sync mode)', 'task_id': None}",
+        "{'message': 'Retry started', 'task_id': task_id}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Original file not found on server')",
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 460,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}/documents",
+      "local_path": "/{kb_id}/documents",
+      "mounted": true,
+      "function": "list_documents",
+      "purpose": "列出库内文档",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[DocumentOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(KnowledgeDocument).filter(KnowledgeDocument.kb_id == kb_id).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Knowledge Base not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 493,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "List[DocumentOut]"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/{kb_id}/search",
+      "local_path": "/{kb_id}/search",
+      "mounted": true,
+      "function": "search_local_knowledge",
+      "purpose": "本地 BM25 知识检索（仅 bm25 库）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "search",
+          "type": "KeywordSearch",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'data_source': 'knowledge_base', 'retrieval_mode': 'bm25', 'results': [{'chunk_id': r.id, 'content': r.text, 'score': r.score, **r.metadata} for r in results]}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='此入口仅用于本地关键词知识库')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 508,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/generate-qa",
+      "local_path": "/documents/{doc_id}/generate-qa",
+      "mounted": true,
+      "function": "generate_qa_for_document",
+      "purpose": "调用模型生成问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "num_pairs",
+          "type": "int",
+          "default": "5"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[QAPairOut]",
+      "return_annotation": null,
+      "responses": [
+        "saved_pairs"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 522,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "List[QAPairOut]"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/qa-pairs",
+      "local_path": "/documents/{doc_id}/qa-pairs",
+      "mounted": true,
+      "function": "create_qa_pair",
+      "purpose": "手工创建问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "qa_in",
+          "type": "QAPairCreate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "QAPairOut",
+      "return_annotation": null,
+      "responses": [
+        "qa"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 576,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "QAPairOut"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/api/v1/knowledge-bases/qa-pairs/{qa_id}",
+      "local_path": "/qa-pairs/{qa_id}",
+      "mounted": true,
+      "function": "update_qa_pair",
+      "purpose": "修改问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "qa_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "qa_in",
+          "type": "QAPairUpdate",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "QAPairOut",
+      "return_annotation": null,
+      "responses": [
+        "qa"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='QA Pair not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 605,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "QAPairOut"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/knowledge-bases/qa-pairs/{qa_id}",
+      "local_path": "/qa-pairs/{qa_id}",
+      "mounted": true,
+      "function": "delete_qa_pair",
+      "purpose": "删除问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "qa_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'QA Pair deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='QA Pair not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 633,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/qa-pairs/download",
+      "local_path": "/documents/{doc_id}/qa-pairs/download",
+      "mounted": true,
+      "function": "download_qa_pairs",
+      "purpose": "下载问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "response"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": true,
+      "ownership_check": true,
+      "line": 651,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/chunks",
+      "local_path": "/documents/{doc_id}/chunks",
+      "mounted": true,
+      "function": "get_document_chunks",
+      "purpose": "读取文档分块",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "100"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[ChunkOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).limit(limit).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 682,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "List[ChunkOut]"
+      }
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/reprocess",
+      "local_path": "/documents/{doc_id}/reprocess",
+      "mounted": true,
+      "function": "reprocess_document",
+      "purpose": "修改切分设置并重新入库",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "config",
+          "type": "Optional[Dict[str, Any]]",
+          "default": "Body(None)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Reprocessing started (sync mode)', 'doc_id': doc.id, 'task_id': None}",
+        "{'message': 'Reprocessing started', 'doc_id': doc.id, 'task_id': task_id}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')",
+        "HTTPException(status_code=422, detail='Invalid retrieval_mode')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 699,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/preview",
+      "local_path": "/documents/{doc_id}/preview",
+      "mounted": true,
+      "function": "preview_document",
+      "purpose": "预览原始文档",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "get_preview_response(file_path, doc.file_type)"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')",
+        "HTTPException(status_code=404, detail='File not found on server')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 736,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "knowledge_base",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/knowledge-bases/documents/{doc_id}/qa-pairs",
+      "local_path": "/documents/{doc_id}/qa-pairs",
+      "mounted": true,
+      "function": "get_document_qa_pairs",
+      "purpose": "读取文档问答对",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[QAPairOut]",
+      "return_annotation": null,
+      "responses": [
+        "db.query(GeneratedQAPair).filter(GeneratedQAPair.doc_id == doc_id).all()"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 756,
+      "source": "src/api/routers/knowledge_base.py",
+      "decorator_options": {
+        "response_model": "List[QAPairOut]"
+      }
+    },
+    {
+      "module": "loadfile",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/upload/upload",
+      "local_path": "/upload",
+      "mounted": true,
+      "function": "upload_file",
+      "purpose": "上传文件（知识入库与对象存储按模块区分）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "background_tasks",
+          "type": "BackgroundTasks",
+          "default": null
+        },
+        {
+          "name": "file",
+          "type": "UploadFile",
+          "default": "File(...)"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": "Document",
+      "return_annotation": null,
+      "responses": [
+        "document"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail=f'不支持的文件类型: {ext}')",
+        "HTTPException(status_code=400, detail=f'不支持的文件类型: {file.content_type}')",
+        "HTTPException(status_code=400, detail=f'文件超过最大限制 {_MAX_FILE_SIZE // (1024 * 1024)}MB')",
+        "HTTPException(status_code=500, detail=f'保存文件失败: {e}')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 53,
+      "source": "src/api/routers/loadfile.py",
+      "decorator_options": {
+        "response_model": "Document"
+      }
+    },
+    {
+      "module": "monitor",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/monitor/",
+      "local_path": "/",
+      "mounted": true,
+      "function": "get_queue_status",
+      "purpose": "自己的文档入库任务列表",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "status_filter",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "List[QueueItem]",
+      "return_annotation": null,
+      "responses": [
+        "result"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 33,
+      "source": "src/api/routers/monitor.py",
+      "decorator_options": {
+        "response_model": "List[QueueItem]"
+      }
+    },
+    {
+      "module": "monitor",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/monitor/stats",
+      "local_path": "/stats",
+      "mounted": true,
+      "function": "get_queue_stats",
+      "purpose": "队列统计（按所在模块区分 Worker 与文档任务）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": "QueueStats",
+      "return_annotation": null,
+      "responses": [
+        "QueueStats(total_pending=base_query.filter(KnowledgeDocument.status == 0).count(), total_processing=base_query.filter(KnowledgeDocument.status == 1).count(), total_failed=base_query.filter(KnowledgeDocument.status == 3).count(), total_completed=base_query.filter(KnowledgeDocument.status == 2).count())"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 92,
+      "source": "src/api/routers/monitor.py",
+      "decorator_options": {
+        "response_model": "QueueStats"
+      }
+    },
+    {
+      "module": "monitor",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/monitor/tasks/{task_id}",
+      "local_path": "/tasks/{task_id}",
+      "mounted": true,
+      "function": "delete_task",
+      "purpose": "删除文档任务对应数据库记录（task_id 实为 doc_id）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'Deleted'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Invalid ID format')",
+        "HTTPException(status_code=403, detail='Not authorized')",
+        "HTTPException(status_code=404, detail='Task/Document not found')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 109,
+      "source": "src/api/routers/monitor.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "monitor",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/monitor/tasks/batch-delete",
+      "local_path": "/tasks/batch-delete",
+      "mounted": true,
+      "function": "batch_delete_tasks",
+      "purpose": "批量删除任务（所在模块分别为文档/评测）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "req",
+          "type": "BatchDeleteRequest",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        },
+        {
+          "name": "db",
+          "type": "Session",
+          "default": "Depends(get_db)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'No valid IDs provided'}",
+        "{'message': f'Deleted {count} tasks'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": true,
+      "line": 135,
+      "source": "src/api/routers/monitor.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/storage/files",
+      "local_path": "/files",
+      "mounted": true,
+      "function": "list_files",
+      "purpose": "列出自己命名空间的对象文件",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "prefix",
+          "type": "str",
+          "default": "''"
+        },
+        {
+          "name": "sort_by",
+          "type": "str",
+          "default": "'last_modified'"
+        },
+        {
+          "name": "order",
+          "type": "str",
+          "default": "'desc'"
+        },
+        {
+          "name": "search_query",
+          "type": "str",
+          "default": "''"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'files': files}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 44,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/storage/download/{object_name:path}",
+      "local_path": "/download/{object_name:path}",
+      "mounted": true,
+      "function": "download_file",
+      "purpose": "下载对象文件",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "object_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "StreamingResponse(iterfile(), media_type='application/octet-stream', headers={'Content-Disposition': f\"attachment; filename*=UTF-8''{encoded_filename}\"})"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='File not found')",
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": true,
+      "ownership_check": true,
+      "line": 63,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/storage/preview/{object_name:path}",
+      "local_path": "/preview/{object_name:path}",
+      "mounted": true,
+      "function": "preview_file",
+      "purpose": "预览对象文件",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "object_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "get_preview_response(tmp_path, suffix.lstrip('.'))"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='File not found')",
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 99,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/storage/upload",
+      "local_path": "/upload",
+      "mounted": true,
+      "function": "upload_file",
+      "purpose": "上传文件（知识入库与对象存储按模块区分）",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "file",
+          "type": "UploadFile",
+          "default": "File(...)"
+        },
+        {
+          "name": "prefix",
+          "type": "str",
+          "default": "''"
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': 'File uploaded successfully', 'object_name': object_name}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=400, detail='Invalid filename')",
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 138,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/storage/batch-delete",
+      "local_path": "/batch-delete",
+      "mounted": true,
+      "function": "batch_delete_files",
+      "purpose": "批量删除对象文件",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "BatchDeleteRequest",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'message': f'Deleted {len(safe_names)} files'}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 171,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "storage",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/storage/url/{object_name:path}",
+      "local_path": "/url/{object_name:path}",
+      "mounted": true,
+      "function": "get_file_url",
+      "purpose": "获取文件预签名地址",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "object_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "{'url': url}"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=404, detail='File not found or error generating URL')"
+      ],
+      "stream": false,
+      "ownership_check": true,
+      "line": 188,
+      "source": "src/api/routers/storage.py",
+      "decorator_options": {}
+    }
+  ],
+  "unmounted_routes": [
+    {
+      "module": "query",
+      "methods": [
+        "POST"
+      ],
+      "path": "/chat",
+      "local_path": "/chat",
+      "mounted": false,
+      "function": "chat",
+      "purpose": "同步知识问答",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "QueryRequest",
+          "default": null
+        }
+      ],
+      "response_model": "QueryResponse",
+      "return_annotation": null,
+      "responses": [
+        "QueryResponse(**result)"
+      ],
+      "http_errors": [
+        "HTTPException(status_code=500, detail=str(e))"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 19,
+      "source": "src/api/routers/query.py",
+      "decorator_options": {
+        "response_model": "QueryResponse"
+      }
+    },
+    {
+      "module": "tasks",
+      "methods": [
+        "GET"
+      ],
+      "path": "/{task_id}",
+      "local_path": "/{task_id}",
+      "mounted": false,
+      "function": "get_task_status",
+      "purpose": "读取 Celery 任务状态",
+      "auth": "登录用户",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "current_user",
+          "type": "User",
+          "default": "Depends(get_current_user)"
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "result"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 10,
+      "source": "src/api/routers/tasks.py",
+      "decorator_options": {}
+    }
+  ],
+  "models": [
+    {
+      "module": "agent",
+      "name": "MCPServerConfig",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "transport",
+          "type": "Literal['streamable_http', 'sse']",
+          "default": "'streamable_http'"
+        },
+        {
+          "name": "url",
+          "type": "Optional[str]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 16
+    },
+    {
+      "module": "agent",
+      "name": "LLMConfig",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "model",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "temperature",
+          "type": "Optional[float]",
+          "default": "Field(None, ge=0.0, le=2.0)"
+        },
+        {
+          "name": "max_tokens",
+          "type": "Optional[int]",
+          "default": "Field(None, gt=0)"
+        },
+        {
+          "name": "top_p",
+          "type": "Optional[float]",
+          "default": "Field(None, ge=0.0, le=1.0)"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 99
+    },
+    {
+      "module": "agent",
+      "name": "ExecutionConfig",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "max_iterations",
+          "type": "Optional[int]",
+          "default": "Field(None, gt=0, le=20)"
+        },
+        {
+          "name": "llm_timeout",
+          "type": "Optional[float]",
+          "default": "Field(None, gt=0.0)"
+        },
+        {
+          "name": "tool_timeout",
+          "type": "Optional[float]",
+          "default": "Field(None, gt=0.0)"
+        },
+        {
+          "name": "mcp_load_timeout",
+          "type": "Optional[float]",
+          "default": "Field(None, gt=0.0)"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 110
+    },
+    {
+      "module": "agent",
+      "name": "AgentConfigMixin",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "system_prompt",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "tools_config",
+          "type": "Optional[dict[str, MCPServerConfig]]",
+          "default": "None"
+        },
+        {
+          "name": "knowledge_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "memory_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "reasoning_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "security_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "interaction_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "llm_config",
+          "type": "Optional[LLMConfig]",
+          "default": "None"
+        },
+        {
+          "name": "execution_config",
+          "type": "Optional[ExecutionConfig]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 121
+    },
+    {
+      "module": "agent",
+      "name": "AgentCreate",
+      "bases": [
+        "AgentConfigMixin"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "type",
+          "type": "str",
+          "default": "'function_call'"
+        },
+        {
+          "name": "config",
+          "type": "Optional[dict]",
+          "default": "{}"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 135
+    },
+    {
+      "module": "agent",
+      "name": "AgentUpdate",
+      "bases": [
+        "AgentConfigMixin"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "type",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "config",
+          "type": "Optional[dict]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 142
+    },
+    {
+      "module": "agent",
+      "name": "AgentOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "type",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "system_prompt",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "tools_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "knowledge_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "memory_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "reasoning_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "security_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "interaction_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "llm_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "execution_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 149
+    },
+    {
+      "module": "agent",
+      "name": "AgentExecute",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/agent.py",
+      "line": 172
+    },
+    {
+      "module": "aiops",
+      "name": "AIOpsRequest",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "session_id",
+          "type": "str | None",
+          "default": "None"
+        },
+        {
+          "name": "terminal_enabled",
+          "type": "bool",
+          "default": "False"
+        }
+      ],
+      "source": "src/api/routers/aiops.py",
+      "line": 32
+    },
+    {
+      "module": "assistant",
+      "name": "AssistantCreate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "llm_model",
+          "type": "str",
+          "default": "settings.LLM_MODEL"
+        },
+        {
+          "name": "temperature",
+          "type": "float",
+          "default": "Field(0.7, ge=0.0, le=2.0)"
+        },
+        {
+          "name": "system_prompt",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "greeting_message",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "memory_config",
+          "type": "Optional[dict]",
+          "default": "{'enable': True, 'window_size': 10}"
+        },
+        {
+          "name": "kb_ids",
+          "type": "Optional[List[int]]",
+          "default": "[]"
+        },
+        {
+          "name": "rag_config",
+          "type": "Optional[dict]",
+          "default": "{'top_k': 5, 'enable_rerank': True}"
+        },
+        {
+          "name": "tool_config",
+          "type": "Optional[List[str]]",
+          "default": "[]"
+        },
+        {
+          "name": "agent_ids",
+          "type": "Optional[List[int]]",
+          "default": "[]"
+        }
+      ],
+      "source": "src/api/routers/assistant.py",
+      "line": 14
+    },
+    {
+      "module": "assistant",
+      "name": "AssistantUpdate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "llm_model",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "temperature",
+          "type": "Optional[float]",
+          "default": "None"
+        },
+        {
+          "name": "system_prompt",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "greeting_message",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "memory_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "kb_ids",
+          "type": "Optional[List[int]]",
+          "default": "None"
+        },
+        {
+          "name": "rag_config",
+          "type": "Optional[dict]",
+          "default": "None"
+        },
+        {
+          "name": "tool_config",
+          "type": "Optional[List[str]]",
+          "default": "None"
+        },
+        {
+          "name": "agent_ids",
+          "type": "Optional[List[int]]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/assistant.py",
+      "line": 28
+    },
+    {
+      "module": "assistant",
+      "name": "AssistantOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "llm_model",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "temperature",
+          "type": "float",
+          "default": null
+        },
+        {
+          "name": "system_prompt",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "greeting_message",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "memory_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "kb_ids",
+          "type": "Optional[List[int]]",
+          "default": null
+        },
+        {
+          "name": "rag_config",
+          "type": "Optional[dict]",
+          "default": null
+        },
+        {
+          "name": "tool_config",
+          "type": "Optional[List[str]]",
+          "default": null
+        },
+        {
+          "name": "agent_ids",
+          "type": "Optional[List[int]]",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/assistant.py",
+      "line": 41
+    },
+    {
+      "module": "assistant",
+      "name": "AssistantVersionOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "version",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "config",
+          "type": "dict",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/assistant.py",
+      "line": 149
+    },
+    {
+      "module": "auth",
+      "name": "UserCreate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "username",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "EmailStr",
+          "default": null
+        },
+        {
+          "name": "password",
+          "type": "str",
+          "default": "Field(..., min_length=6, description='Password must be at least 6 characters')"
+        }
+      ],
+      "source": "src/api/routers/auth.py",
+      "line": 20
+    },
+    {
+      "module": "auth",
+      "name": "Token",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "access_token",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "token_type",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/auth.py",
+      "line": 35
+    },
+    {
+      "module": "auth",
+      "name": "UserOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "username",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "str",
+          "default": "'user'"
+        }
+      ],
+      "source": "src/api/routers/auth.py",
+      "line": 39
+    },
+    {
+      "module": "auth",
+      "name": "RoleUpdate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "role",
+          "type": "RoleName",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/auth.py",
+      "line": 47
+    },
+    {
+      "module": "chat",
+      "name": "ChatRequest",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "session_id",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "kb_id",
+          "type": "Optional[int]",
+          "default": "None"
+        },
+        {
+          "name": "assistant_id",
+          "type": "Optional[int]",
+          "default": "None"
+        },
+        {
+          "name": "top_k",
+          "type": "int",
+          "default": "Field(5, ge=1, le=50)"
+        },
+        {
+          "name": "llm_model",
+          "type": "Optional[str]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/chat.py",
+      "line": 22
+    },
+    {
+      "module": "chat",
+      "name": "ChatResponse",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "answer",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "source_documents",
+          "type": "List[Any]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/chat.py",
+      "line": 42
+    },
+    {
+      "module": "chat",
+      "name": "SessionOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "session_uid",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "title",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "Any",
+          "default": null
+        },
+        {
+          "name": "assistant_id",
+          "type": "Optional[int]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/chat.py",
+      "line": 48
+    },
+    {
+      "module": "chat",
+      "name": "MessageOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "answer",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "Any",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/chat.py",
+      "line": 57
+    },
+    {
+      "module": "chat",
+      "name": "SessionCreate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "assistant_id",
+          "type": "Optional[int]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/chat.py",
+      "line": 280
+    },
+    {
+      "module": "evaluation",
+      "name": "EvalConfig",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "kb_id",
+          "type": "Optional[int]",
+          "default": "None"
+        },
+        {
+          "name": "num_questions",
+          "type": "int",
+          "default": "10"
+        },
+        {
+          "name": "doc_ids",
+          "type": "Optional[List[int]]",
+          "default": "None"
+        },
+        {
+          "name": "mode",
+          "type": "str",
+          "default": "'kb'"
+        },
+        {
+          "name": "ratios",
+          "type": "Dict[str, float]",
+          "default": "{'single_hop': 0.7, 'multi_hop': 0.2, 'error': 0.1}"
+        },
+        {
+          "name": "num_docs",
+          "type": "int",
+          "default": "5"
+        },
+        {
+          "name": "is_custom_upload",
+          "type": "bool",
+          "default": "False"
+        }
+      ],
+      "source": "src/api/routers/evaluation.py",
+      "line": 44
+    },
+    {
+      "module": "evaluation",
+      "name": "EvalTaskOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "status",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "Any",
+          "default": null
+        },
+        {
+          "name": "completed_count",
+          "type": "Optional[int]",
+          "default": "0"
+        },
+        {
+          "name": "total_count",
+          "type": "Optional[int]",
+          "default": "0"
+        },
+        {
+          "name": "dataset_path",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "is_custom_dataset",
+          "type": "bool",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/evaluation.py",
+      "line": 54
+    },
+    {
+      "module": "evaluation",
+      "name": "DatasetItemOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "question",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "qa_type",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/evaluation.py",
+      "line": 66
+    },
+    {
+      "module": "evaluation",
+      "name": "DatasetItemUpdate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "question",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "qa_type",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/evaluation.py",
+      "line": 74
+    },
+    {
+      "module": "knowledge_base",
+      "name": "KBCreate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "is_public",
+          "type": "bool",
+          "default": "False"
+        },
+        {
+          "name": "chunking_config",
+          "type": "Optional[Dict[str, Any]]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 45
+    },
+    {
+      "module": "knowledge_base",
+      "name": "KBUpdate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "name",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "is_public",
+          "type": "Optional[bool]",
+          "default": "None"
+        },
+        {
+          "name": "chunking_config",
+          "type": "Optional[Dict[str, Any]]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 58
+    },
+    {
+      "module": "knowledge_base",
+      "name": "KBOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "kb_uid",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "description",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "is_public",
+          "type": "bool",
+          "default": null
+        },
+        {
+          "name": "chunking_config",
+          "type": "Optional[Dict[str, Any]]",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "default": null
+        },
+        {
+          "name": "owner_id",
+          "type": "int",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 66
+    },
+    {
+      "module": "knowledge_base",
+      "name": "DocumentOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "doc_uid",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "filename",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "status",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "chunk_count",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "file_size",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "default": null
+        },
+        {
+          "name": "source_url",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "chunking_config",
+          "type": "Optional[Dict[str, Any]]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 78
+    },
+    {
+      "module": "knowledge_base",
+      "name": "QAPairOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "question",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "answer",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "qa_type",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "Any",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 91
+    },
+    {
+      "module": "knowledge_base",
+      "name": "QAPairCreate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "question",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "answer",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "qa_type",
+          "type": "str",
+          "default": "'single_hop'"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 100
+    },
+    {
+      "module": "knowledge_base",
+      "name": "QAPairUpdate",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "question",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "answer",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "qa_type",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "status",
+          "type": "Optional[int]",
+          "default": "None"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 105
+    },
+    {
+      "module": "knowledge_base",
+      "name": "ChunkOut",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "chunk_uid",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "content",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "page_num",
+          "type": "Optional[int]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 111
+    },
+    {
+      "module": "knowledge_base",
+      "name": "KeywordSearch",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": "Field(min_length=1, max_length=1000)"
+        },
+        {
+          "name": "top_k",
+          "type": "int",
+          "default": "Field(default=5, ge=1, le=20)"
+        }
+      ],
+      "source": "src/api/routers/knowledge_base.py",
+      "line": 120
+    },
+    {
+      "module": "monitor",
+      "name": "QueueItem",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "task_id",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "filename",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "kb_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "status",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "progress",
+          "type": "Optional[int]",
+          "default": null
+        },
+        {
+          "name": "message",
+          "type": "Optional[str]",
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "Any",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/monitor.py",
+      "line": 14
+    },
+    {
+      "module": "monitor",
+      "name": "QueueStats",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "total_pending",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "total_processing",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "total_failed",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "total_completed",
+          "type": "int",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/monitor.py",
+      "line": 26
+    },
+    {
+      "module": "monitor",
+      "name": "BatchDeleteRequest",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "task_ids",
+          "type": "List[str]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/monitor.py",
+      "line": 105
+    },
+    {
+      "module": "query",
+      "name": "QueryRequest",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "top_k",
+          "type": "int",
+          "default": "5"
+        }
+      ],
+      "source": "src/api/routers/query.py",
+      "line": 9
+    },
+    {
+      "module": "query",
+      "name": "QueryResponse",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "answer",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "source_documents",
+          "type": "List[Dict[str, Any]]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/query.py",
+      "line": 13
+    },
+    {
+      "module": "storage",
+      "name": "BatchDeleteRequest",
+      "bases": [
+        "BaseModel"
+      ],
+      "fields": [
+        {
+          "name": "object_names",
+          "type": "List[str]",
+          "default": null
+        }
+      ],
+      "source": "src/api/routers/storage.py",
+      "line": 12
+    }
+  ],
+  "service_routes": [
+    {
+      "module": "probe_gateway",
+      "methods": [
+        "GET"
+      ],
+      "path": "/health",
+      "local_path": "/health",
+      "mounted": true,
+      "function": "health",
+      "purpose": "Report ready only after the configured Windows Probe has connected.",
+      "auth": "无路由级用户鉴权",
+      "parameters": [],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "JSONResponse({'status': 'unavailable'}, status_code=503)",
+        "{'status': 'ok'}"
+      ],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 349,
+      "source": "mcp_servers/probe_gateway.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "probe_gateway",
+      "methods": [
+        "WEBSOCKET"
+      ],
+      "path": "/probe/ws",
+      "local_path": "/probe/ws",
+      "mounted": true,
+      "function": "probe_ws",
+      "purpose": "probe_ws",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "websocket",
+          "type": "WebSocket",
+          "default": null
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [],
+      "http_errors": [],
+      "stream": false,
+      "ownership_check": false,
+      "line": 365,
+      "source": "mcp_servers/probe_gateway.py",
+      "decorator_options": {}
+    },
+    {
+      "module": "termcp_gateway",
+      "methods": [
+        "GET",
+        "POST",
+        "DELETE"
+      ],
+      "path": "/mcp",
+      "local_path": "/mcp",
+      "mounted": true,
+      "function": "proxy_mcp",
+      "purpose": "proxy_mcp",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "request",
+          "type": "Request",
+          "default": null
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "JSONResponse(payload, headers=response_headers)",
+        "Response(upstream.content, status_code=upstream.status_code, headers=response_headers)",
+        "StreamingResponse(upstream.aiter_raw(), status_code=upstream.status_code, headers=response_headers, background=BackgroundTask(upstream.aclose))"
+      ],
+      "http_errors": [
+        "HTTPException(400, 'Invalid MCP parameters')",
+        "HTTPException(400, 'Invalid MCP request')",
+        "HTTPException(403, 'MCP method or batch is disabled')",
+        "HTTPException(409, 'Review is disabled or another command is pending')",
+        "HTTPException(502, 'Invalid new session response')",
+        "HTTPException(502, 'Termcp MCP is unavailable')",
+        "HTTPException(503, 'Termcp token is not configured')"
+      ],
+      "stream": true,
+      "ownership_check": false,
+      "line": 121,
+      "source": "mcp_servers/termcp_gateway.py",
+      "decorator_options": {
+        "methods": "['GET', 'POST', 'DELETE']"
+      }
+    },
+    {
+      "module": "termcp_gateway",
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/sessions/{session_id}/approval",
+      "local_path": "/api/sessions/{session_id}/approval",
+      "mounted": true,
+      "function": "read_approval_state",
+      "purpose": "read_approval_state",
+      "auth": "无路由级用户鉴权",
+      "parameters": [
+        {
+          "name": "session_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "request",
+          "type": "Request",
+          "default": null
+        }
+      ],
+      "response_model": null,
+      "return_annotation": null,
+      "responses": [
+        "await _termcp_request(client, 'GET', f'/api/sessions/{session_id}/approval')"
+      ],
+      "http_errors": [
+        "HTTPException(503, 'Termcp token is not configured')"
+      ],
+      "stream": false,
+      "ownership_check": false,
+      "line": 196,
+      "source": "mcp_servers/termcp_gateway.py",
+      "decorator_options": {}
+    }
+  ],
+  "mcp_tools": [
+    {
+      "server": "change_server",
+      "name": "search_changes",
+      "parameters": [
+        {
+          "name": "service_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "start_time",
+          "type": "int",
+          "default": "0"
+        },
+        {
+          "name": "end_time",
+          "type": "int",
+          "default": "0"
+        },
+        {
+          "name": "change_type",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "50"
+        }
+      ],
+      "description": "查询某服务在指定时间窗内的变更/发布事件(发布、配置、扩缩容、回滚等),按时间倒序。\n\n排障用途: 把\"故障发生时间\"与\"变更发生时间\"对齐 —— 若窗口内存在变更,\n说明故障很可能由该变更引入(变更相关性的核心证据)。\n\nArgs:\n    service_name: 服务名,如 \"order-service\" 或口头名 \"订单服务\"(必填,经别名表归一化)\n    start_time: 开始时间戳(毫秒,int)。传 0 或不传则默认\"最近 1 小时\"\n    end_time: 结束时间戳(毫秒,int)。传 0 或不传则默认\"当前时间\"\n    change_type: 变更类型过滤,如 \"deploy\"/\"config\"/\"scale\"/\"rollback\"(可选)\n    limit: 返回条数上限(默认 50)\n\nReturns:\n    含 service_name、total(命中数)、changes(每条含 change_id/timestamp/service/\n    change_type/operator/version/description/status)、summary(类型概览)、\n    data_source(\"elasticsearch\"真实 / \"unavailable\"不可用)。",
+      "source": "mcp_servers/change_server.py",
+      "line": 91
+    },
+    {
+      "server": "change_server",
+      "name": "get_change_detail",
+      "parameters": [
+        {
+          "name": "change_id",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "description": "按 change_id 获取单条变更的完整详情(用于确认变更内容与影响范围)。\n\nArgs:\n    change_id: 变更唯一标识(来自 search_changes 返回的 change_id)\n\nReturns:\n    含 found(是否找到)、change(变更详情)、data_source 标记。",
+      "source": "mcp_servers/change_server.py",
+      "line": 139
+    },
+    {
+      "server": "cls_server",
+      "name": "get_current_timestamp",
+      "parameters": [],
+      "description": "获取当前时间戳(毫秒)。\n\nAgent 排障第一步常用它来锚定时间窗:拿到\"现在\",再减去 N 分钟得到查询起点。\n\nReturns:\n    int: 当前毫秒时间戳,例如 1708012345000。\n    用法: 最近15分钟 = [get_current_timestamp() - 15*60*1000, get_current_timestamp()]",
+      "source": "mcp_servers/cls_server.py",
+      "line": 128
+    },
+    {
+      "server": "cls_server",
+      "name": "search_topic_by_service_name",
+      "parameters": [
+        {
+          "name": "service_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "fuzzy",
+          "type": "bool",
+          "default": "True"
+        }
+      ],
+      "description": "根据服务名查找对应的日志主题(topic,即 ES 索引),支持模糊匹配。排障链路第一层。\n\nArgs:\n    service_name: 服务名,如 \"data-sync-service\",或片段 \"sync\"(必填)\n    fuzzy: True=部分匹配(\"sync\" 命中 \"data-sync-service\");False=精确匹配(默认 True)\n\nReturns:\n    含 total(命中数)、topics(每个含 topic_id/topic_name/service_name/description)、query。\n    拿到 topics[0][\"topic_id\"] 后,喂给 search_log 查具体日志。",
+      "source": "mcp_servers/cls_server.py",
+      "line": 142
+    },
+    {
+      "server": "cls_server",
+      "name": "search_log",
+      "parameters": [
+        {
+          "name": "topic_id",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "start_time",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "end_time",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "query",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "100"
+        }
+      ],
+      "description": "在指定日志主题(ES 索引)里搜索一段时间内的日志。排障链路第二层。\n\nArgs:\n    topic_id: 主题ID(即 ES 索引名),如 \"data-sync-service-logs-2026.10.10\"\n        (必填,来自 search_topic_by_service_name)\n    start_time: 开始时间戳(毫秒,int)。如 get_current_timestamp() - 15*60*1000\n    end_time: 结束时间戳(毫秒,int)。通常用 get_current_timestamp()\n    query: 查询语句,如 \"level:ERROR\"(可选)\n    limit: 返回条数上限(默认 100)\n\nReturns:\n    含 topic_id、total(实际条数)、logs(每条含 timestamp/level/message)、took_ms、\n    data_source(\"elasticsearch\"真实 / \"unavailable\"不可用)。",
+      "source": "mcp_servers/cls_server.py",
+      "line": 174
+    },
+    {
+      "server": "diagnostic_server",
+      "name": "diagnostic_list_evidence",
+      "parameters": [],
+      "description": "列出部署方只读挂载的现场证据文件及其时间/大小元数据。",
+      "source": "mcp_servers/diagnostic_server.py",
+      "line": 234
+    },
+    {
+      "server": "diagnostic_server",
+      "name": "diagnostic_read_evidence",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "max_bytes",
+          "type": "int",
+          "default": "16384"
+        }
+      ],
+      "description": "读取一个白名单目录内的现场证据文件，拒绝路径穿越并限制输出。",
+      "source": "mcp_servers/diagnostic_server.py",
+      "line": 254
+    },
+    {
+      "server": "diagnostic_server",
+      "name": "diagnostic_query",
+      "parameters": [
+        {
+          "name": "operation",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "service",
+          "type": "str",
+          "default": "''"
+        },
+        {
+          "name": "lines",
+          "type": "int",
+          "default": "100"
+        }
+      ],
+      "description": "从唯一授权目标实时查询 catalog/resources/processes/ports/logs/service。\n\n先 catalog 确认服务及依赖；只接受配置服务名，禁止自定义命令、文件路径或主机。\n返回目标身份和真实采集时间，证据保存供 diagnostic_exec 自由分析。\n权限不可见的服务/容器必须申请审批，不能用诊断容器自身状态代替。",
+      "source": "mcp_servers/diagnostic_server.py",
+      "line": 360
+    },
+    {
+      "server": "diagnostic_server",
+      "name": "diagnostic_exec",
+      "parameters": [
+        {
+          "name": "command",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "timeout",
+          "type": "float",
+          "default": "10.0"
+        },
+        {
+          "name": "max_output",
+          "type": "int",
+          "default": "8192"
+        }
+      ],
+      "description": null,
+      "source": "mcp_servers/diagnostic_server.py",
+      "line": 371
+    },
+    {
+      "server": "diagnostic_server",
+      "name": "diagnostic_probe_dependency",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "timeout",
+          "type": "float",
+          "default": "3.0"
+        },
+        {
+          "name": "probe",
+          "type": "str",
+          "default": "'tcp'"
+        }
+      ],
+      "description": "从授权目标做配置依赖的 dns/tcp/health 探测；health 仅固定 GET、禁止跳转。",
+      "source": "mcp_servers/diagnostic_server.py",
+      "line": 376
+    },
+    {
+      "server": "monitor_server",
+      "name": "query_cpu_metrics",
+      "parameters": [
+        {
+          "name": "service_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "start_time",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "end_time",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "interval",
+          "type": "str",
+          "default": "'1m'"
+        }
+      ],
+      "description": "查询某个服务在一段时间内的 CPU 使用率(百分比),数据来自真实 Prometheus。\n\nArgs:\n    service_name: 服务名,如 \"data-sync-service\"(必填)\n    start_time: 开始时间 \"YYYY-MM-DD HH:MM:SS\"(可选,默认 1 小时前)\n    end_time: 结束时间 \"YYYY-MM-DD HH:MM:SS\"(可选,默认当前)\n    interval: 采样间隔 \"1m\"/\"5m\"/\"1h\"(可选,默认 \"1m\")\n\nReturns:\n    含 data_points(逐点 CPU%)、statistics(均值/峰值/p95)、alert_info(是否越过 80% 阈值)、\n    data_source(\"prometheus\"真实 / \"unavailable\"不可用)。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 152
+    },
+    {
+      "server": "monitor_server",
+      "name": "query_memory_metrics",
+      "parameters": [
+        {
+          "name": "service_name",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "start_time",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "end_time",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "interval",
+          "type": "str",
+          "default": "'1m'"
+        }
+      ],
+      "description": "查询某个服务在一段时间内的内存使用率(百分比),数据来自真实 Prometheus。参数同 query_cpu_metrics。\n\nReturns:\n    含 data_points(逐点内存%)、statistics、alert_info(是否越过 70% 阈值)、\n    data_source(\"prometheus\"真实 / \"unavailable\"不可用)。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 174
+    },
+    {
+      "server": "monitor_server",
+      "name": "check_website",
+      "parameters": [
+        {
+          "name": "url",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "timeout_s",
+          "type": "float",
+          "default": "10.0"
+        },
+        {
+          "name": "deep",
+          "type": "bool",
+          "default": "False"
+        }
+      ],
+      "description": "检查一个网址/网站是否可正常访问,并报告访问质量(真实发起 HTTP 请求)。\n\n典型使用场景:用户直接给出一个网址(如\"帮我看看 https://example.com 有没有问题\"),\n或要求对某个在线服务做健康检查。**这是真实探测,不是模拟数据**。\n\n判定口径(如实报告,不得臆造故障):\n  - 可访问(2xx): 结论为\"网站正常\",报告状态码与响应耗时;响应慢可提示性能观察;\n  - 可访问(3xx): 报告重定向到哪、最终落地状态;\n  - 可访问(4xx/5xx): 报告具体错误码与含义(如 404 页面不存在、503 服务不可用);\n  - 不可访问: 报告错误类型(DNS 失败/连接拒绝/超时/TLS 失败)及可能的含义。\n\ndeep=True 时额外做**深度检查**(当用户要求\"全面检查/排查问题\"时用它):\n  - 抽取首页引用的图片与链接,逐个真实访问,发现 404/500/响应慢的子资源;\n  - 汇总成 issues 列表(每条含具体 URL、现象、严重度),供报告如实引用。\n\nArgs:\n    url: 目标网址,如 \"https://example.com\"(必填,可省略 http:// 前缀)\n    timeout_s: 超时秒数(可选,默认 10)\n    deep: 是否做深度检查(首页资源逐个探测),默认 False\n\nReturns:\n    reachable(是否可达)、final_url(最终地址)、http_status(状态码)、\n    http_reason(状态码含义)、response_ms(响应耗时毫秒)、title(页面标题)、\n    server(服务器标识);不可达时含 error_type/error_hint;\n    deep=True 时另有 sub_checks(逐资源结果)与 issues(问题清单)。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 193
+    },
+    {
+      "server": "monitor_server",
+      "name": "check_ports",
+      "parameters": [
+        {
+          "name": "host",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "ports",
+          "type": "str",
+          "default": "'80,443,8000,8080,3000,5000'"
+        }
+      ],
+      "description": "探测某台主机上若干端口是否有服务在监听(真实 TCP 连接探测)。\n\n用途: 判断\"服务到底起没起\"。**同机/同网段**下:\n  - 端口\"连接被拒绝\" → 该端口无监听, 服务未启动/已退出;\n  - 端口\"连接超时\"   → 网络层不可达, **不能**据此判断服务状态。\n这是区分\"服务未启动\"与\"网络不通\"的关键证据, 页面检查无法替代。\n\nArgs:\n    host: 主机名或 IP, 如 \"127.0.0.1\" 或 \"192.168.3.251\"(必填)\n    ports: 逗号分隔的端口列表, 如 \"8080,8000\"(可选, 默认常见 Web 端口)\n\nReturns:\n    results(逐端口 open/refused/timeout)、open_ports(有监听的端口)、summary(人话结论)。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 240
+    },
+    {
+      "server": "monitor_server",
+      "name": "check_service_health",
+      "parameters": [
+        {
+          "name": "base_url",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "health_path",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "timeout_s",
+          "type": "float",
+          "default": "10.0"
+        }
+      ],
+      "description": "检查一个服务的健康检查端点(真实 HTTP 探测), 判断\"服务本身\"是否健康。\n\n与 check_website 的区别: check_website 看\"网页能不能打开\"(页面级),\n本工具看\"服务进程是否健康\"(服务级)。**页面正常不代表服务正常**——\n典型场景: 前端页面 200, 但后台服务已卡死/未就绪。\n\nArgs:\n    base_url: 服务根地址, 如 \"https://api.example.com\"(必填)\n    health_path: 健康检查路径(可选)。不传则依次尝试 /health /healthz /ready /api/health /status\n    timeout_s: 超时秒数(可选, 默认 10)\n\nReturns:\n    checked(逐个端点的探测结果)、healthy(是否有端点返回 2xx)、summary(人话结论)。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 276
+    },
+    {
+      "server": "monitor_server",
+      "name": "check_api_endpoint",
+      "parameters": [
+        {
+          "name": "url",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "method",
+          "type": "str",
+          "default": "'GET'"
+        },
+        {
+          "name": "payload",
+          "type": "Optional[str]",
+          "default": "None"
+        },
+        {
+          "name": "timeout_s",
+          "type": "float",
+          "default": "10.0"
+        },
+        {
+          "name": "headers",
+          "type": "Optional[str]",
+          "default": "None"
+        }
+      ],
+      "description": "真实请求一个**业务接口**, 判断业务功能是否正常(而不只是页面能不能打开)。\n\n典型场景: 用户说\"页面能打开, 但点某个功能报错 / 提交后一直没反应 / 任务不返回\"\n—— 这类故障页面检查看不出来, 必须实际打业务接口看返回。\n\n判定口径(如实报告): 2xx=接口正常; 4xx=请求/权限问题; 5xx=服务端异常;\n超时/连接失败=服务未响应或不可达。\n\nArgs:\n    url: 接口地址, 如 \"https://api.example.com/v1/tasks\"(必填)\n    method: HTTP 方法, GET/POST/PUT/DELETE/HEAD(可选, 默认 GET)\n    payload: 请求体(JSON 字符串, 可选, 用于 POST/PUT)\n    timeout_s: 超时秒数(可选, 默认 10)\n    headers: 额外请求头(JSON 字符串, 可选), 如 '{\"Authorization\": \"Bearer xxx\"}'\n\nReturns:\n    reachable、http_status、response_ms、body_snippet(响应体摘要)、\n    failure_layer; 不可达时含 error_type/error_hint。",
+      "source": "mcp_servers/monitor_server.py",
+      "line": 318
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_inventory",
+      "parameters": [],
+      "description": "Read the registered Windows target inventory.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 174
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_resource_snapshot",
+      "parameters": [],
+      "description": "Read CPU, memory, disk and network counters from the target.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 180
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_service_status",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "description": "Read a configured Windows service status by its configured alias.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 186
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_process_snapshot",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "str | None",
+          "default": "None"
+        },
+        {
+          "name": "sort_by",
+          "type": "str",
+          "default": "'memory'"
+        }
+      ],
+      "description": "Top 256 accessible processes by memory (default) or cpu; configured service filter.\n\nScans accessible processes before selecting. Not a complete process inventory;\nRSS can include shared memory and cannot explain all host memory use.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 192
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_port_snapshot",
+      "parameters": [
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "256"
+        },
+        {
+          "name": "local_port",
+          "type": "int | None",
+          "default": "None"
+        },
+        {
+          "name": "listening_only",
+          "type": "bool",
+          "default": "False"
+        }
+      ],
+      "description": "Read up to 256 connections; filter by local_port/listening_only before truncation.\n\nA truncated result cannot prove absence. A missing PID means owner unavailable.\nFilters require an updated Probe; verify the echoed filters in the payload.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 204
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_event_log",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "since_minutes",
+          "type": "int",
+          "default": "60"
+        },
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "200"
+        }
+      ],
+      "description": "Read allow-listed Windows Event Log entries for a configured service.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 222
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_config_snapshot",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "description": "Read selected keys from one explicitly configured JSON file, with source hash.\n\nAccepts a configured service name only; no caller-selected paths or keys.\nA snapshot proves current file contents, not change history or causality.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 228
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_text_log",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "path",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "lines",
+          "type": "int",
+          "default": "100"
+        }
+      ],
+      "description": "Tail an allow-listed text log path. service is a configured service name;\npath must be a concrete path published in inventory configured_services[service].text_logs,\nnever a service name or business-catalog log_refs entry. Read inventory first if unknown.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 238
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_dependency_probe",
+      "parameters": [
+        {
+          "name": "dependency",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "description": "Perform bounded DNS/TCP/GET checks for a configured dependency.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 247
+    },
+    {
+      "server": "probe_gateway",
+      "name": "probe_list_evidence",
+      "parameters": [
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "50"
+        }
+      ],
+      "description": "List metadata and up to 10 recent baseline summaries for time comparisons.\n\nHistorical summaries are leads, not current raw evidence. Verify conclusions\nwith the matching live Probe tool; list truncation cannot prove absence.",
+      "source": "mcp_servers/probe_gateway.py",
+      "line": 276
+    },
+    {
+      "server": "rag_server",
+      "name": "search_knowledge_base",
+      "parameters": [
+        {
+          "name": "query",
+          "type": "str",
+          "default": null
+        },
+        {
+          "name": "kb_id",
+          "type": "int",
+          "default": null
+        },
+        {
+          "name": "top_k",
+          "type": "int",
+          "default": "5"
+        }
+      ],
+      "description": "从知识库中检索与查询相关的文档片段。\n\n用于运维诊断时查阅运维手册、故障排查指南、操作规范等文档。\n返回按相关度排序的文档片段，包含内容、来源文档、页码和相关度评分。\n\nArgs:\n    query: 自然语言检索查询，如 \"CPU使用率过高如何排查\"\n    kb_id: 知识库 ID，指定从哪个知识库检索\n    top_k: 返回的文档片段数量，默认 5\n\nReturns:\n    包含 results 列表（每个元素有 content/source/page/score）和 total 计数。",
+      "source": "mcp_servers/rag_server.py",
+      "line": 69
+    },
+    {
+      "server": "rag_server",
+      "name": "list_knowledge_bases",
+      "parameters": [],
+      "description": "列出所有可用的知识库，包含 ID、名称和文档数量。\n\n当不确定该查哪个知识库时，先调用此工具查看可用列表。\n\nReturns:\n    包含 knowledge_bases 列表和 total 计数。",
+      "source": "mcp_servers/rag_server.py",
+      "line": 149
+    },
+    {
+      "server": "rag_server",
+      "name": "get_document_info",
+      "parameters": [
+        {
+          "name": "doc_id",
+          "type": "int",
+          "default": null
+        }
+      ],
+      "description": "获取指定文档的详细信息和文本片段概要。\n\n当需要了解某篇文档的具体内容时使用。\n\nArgs:\n    doc_id: 文档 ID\n\nReturns:\n    文档元信息和前 10 个 chunk 的内容摘要。",
+      "source": "mcp_servers/rag_server.py",
+      "line": 189
+    }
+  ],
+  "source_sha256": {
+    "src/api/routers/agent.py": "d65b5b17f7f25761ebb97820d652aad5d1ae6ff699bfcbc14f23986dbd509785",
+    "src/api/routers/aiops.py": "5943ec826acb910bae7d339a3cc45f25c8d46e4d4f6eb2c7c5df4d1d81458ff2",
+    "src/api/routers/assistant.py": "b9beca42f80ed303fab5a929b19b08a6ce735a535823d294af78cf6e12b7e776",
+    "src/api/routers/auth.py": "66f32096308acfbceb7ad58e6eb3bf0df2d6c4f15a623fd6d4553f985b272101",
+    "src/api/routers/chat.py": "8a883a52e4e91be4458ad6c0313cd0df37557629fb847dc1729f7949acf655fa",
+    "src/api/routers/evaluation.py": "edda00b5e9d8a9af2bc52c61455e241f106d3fb1d925b39a3cab82a63a26c4ad",
+    "src/api/routers/health.py": "15d45f4a2e65d9731c9ec776e25e41f13102cf2ea6338728d1c77876070b707f",
+    "src/api/routers/knowledge_base.py": "b6b9649aee6557affbcebee156ebf9264ee098962c9fcb758bc62abb3ac29baa",
+    "src/api/routers/loadfile.py": "d4d360c1ee1068a826c5d90507f2292df95e59df9259a64e2dd27bb8d293d722",
+    "src/api/routers/monitor.py": "08bb19efa08d4f3ab0ee625b11b15a7026ffffc9ac038fa4e87242822a73b703",
+    "src/api/routers/query.py": "f76b040ea1fc88aaf6a6171339481152a060626f4c3d7845064379abd8cccca2",
+    "src/api/routers/storage.py": "825945c1109d8fbe652a92ea3731cb5eaa7a59a3b9fa707e4a219c6063f80dcd",
+    "src/api/routers/tasks.py": "c7a3678ec44bafd9f38f24866489da568938f7afdce96bd0490dde27b2fc18cb",
+    "mcp_servers/change_server.py": "bcbe47c6ea027bb30575b5457a2e897a30517ce25b30ad93d26acab40dbe8d1b",
+    "mcp_servers/cls_server.py": "e207232752e6afc3b147939ebfedfc870c4f3f30f5c252c3a5f23d02cc21147c",
+    "mcp_servers/diagnostic_server.py": "5b84c1566d77a8a3b132e35edb000f28a88dc7a10e3f81ee93ebecea0e6fa4e8",
+    "mcp_servers/monitor_server.py": "9b55dace35ba0e891113b81129309eaf6c3d658327ea60ec2a617cd324b455c9",
+    "mcp_servers/probe_gateway.py": "1381924c16f4fb18827e922315b3b65651cf1628dbe408acc0367fe7b836eb40",
+    "mcp_servers/rag_server.py": "4772b1aae60ece4b6f4b581b4ad16db90d3f1cd1fdf9873922b8bfa781f16100",
+    "mcp_servers/termcp_gateway.py": "4543106e949a561a783b3941d6e8a54096fefb2779528bbcfdc25d7043783bd6",
+    "src/main.py": "a048d37db5c1118d2b5c5d4140667c13df2f88b2763f4d75b88ce2bae15d5ee9",
+    "src/settings.py": "d90a1612e94092e0e9fd74df26fdfe481f788103927e99d08ba36bbdefecc04a",
+    "src/api/dependencies.py": "c003ae32c2f1a500fe5a9b6e21484239e16360e58b34ae7c1729fb7e4f409a2c",
+    "src/agent/aiops/events.py": "a22967d988f9cd5867011a187f66f932f3abf7a1f18303f28bd1d626279d49b3"
+  }
+}
