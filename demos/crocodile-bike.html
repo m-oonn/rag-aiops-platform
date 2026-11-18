@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>鳄鱼的慢骑日记</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ctext y='32' font-size='32'%3E🚲%3C/text%3E%3C/svg%3E">
+  <style>
+    :root{font-family:ui-rounded,"Microsoft YaHei",system-ui,sans-serif;color:#244a3c;background:#f7f3e9;font-synthesis:none;--paper:#f7f3e9;--ink:#244a3c;--muted:#7b8978;--line:#dcded0;--panel:#fffdf7;--sky:#ebefdf;--hill:#cbd7ac;--hill-back:#dbe2c5;--ground:#e0dfc0;--road:#f3e9ce}
+    *{box-sizing:border-box}body{margin:0;transition:background .6s,color .6s}button,input{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid #e99848;outline-offset:5px}
+    main{max-width:1220px;margin:auto;padding:32px 52px 25px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:21px}.brand{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:750;letter-spacing:2px}.brand svg{width:33px;height:33px}.edition{font-size:11px;letter-spacing:2px;color:var(--muted)}
+    .intro{text-align:center;padding:37px 0 0}.eyebrow{margin:0 0 12px;font-size:11px;letter-spacing:4px;color:var(--muted)}h1{font-size:clamp(30px,4.2vw,49px);font-weight:650;letter-spacing:3px;margin:0 0 13px}h1 span{color:#d58145} .subtitle{font-size:13px;color:var(--muted);letter-spacing:2px;margin:0}
+    .scene{position:relative;margin:12px auto 0;max-width:1000px}.scene>svg{display:block;width:100%;height:auto;overflow:visible}.sky{fill:var(--sky)}.hill-back{fill:var(--hill-back)}.hill{fill:var(--hill)}.ground{fill:var(--ground)}.road{stroke:var(--road)}.scene-note{position:absolute;left:2%;top:23%;font-size:10px;letter-spacing:2px;color:var(--muted);writing-mode:vertical-rl}.sun{fill:#e9ba5e}.moon{display:none}.stars{opacity:0}.cloud{fill:var(--panel);opacity:.85}
+    .controls{display:flex;align-items:center;justify-content:center;gap:26px;max-width:640px;margin:-4px auto 0;background:var(--panel);border:1px solid var(--line);border-radius:60px;padding:12px 20px;box-shadow:0 6px 25px #244a3c05}.play{display:flex;align-items:center;justify-content:center;gap:9px;border:0;background:var(--ink);color:var(--paper);padding:13px 19px;border-radius:30px;min-width:124px;font-size:12px}.play svg{width:14px;height:14px;fill:currentColor}.speed{display:flex;align-items:center;gap:12px;flex:1;font-size:11px;white-space:nowrap}.speed input{width:100%;min-width:45px;accent-color:#598366;cursor:pointer}.speed output{font-size:11px;font-variant-numeric:tabular-nums;min-width:27px}.theme{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:none;color:var(--ink);display:grid;place-items:center;flex-shrink:0}.theme svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6}.divider{height:24px;width:1px;background:var(--line)}
+    footer{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:10px;letter-spacing:1px;margin-top:32px}footer p{margin:0}.status{display:flex;align-items:center;gap:7px}.dot{width:5px;height:5px;border-radius:50%;background:#81a36b}.paused .dot{background:#d59a61}
+    body.night{--paper:#1e302d;--ink:#dbe5cf;--muted:#a2b4a3;--line:#40524a;--panel:#283d35;--sky:#304a45;--hill:#49604c;--hill-back:#3b554c;--ground:#4d624b;--road:#718062;background:var(--paper);color:var(--ink)}.night .sun{display:none}.night .moon{display:block}.night .stars{opacity:1}.night .cloud{opacity:.13}
+    @media(max-width:600px){main{padding:23px 19px}.edition{font-size:9px;letter-spacing:1px}.brand{font-size:12px}.intro{padding-top:34px}h1{letter-spacing:1px}.subtitle{font-size:11px;letter-spacing:1px}.scene{margin:35px -15px 20px}.scene-note{display:none}.controls{gap:13px;padding:10px 12px}.play{min-width:102px;padding:12px;font-size:11px}.speed{gap:7px}.speed-label{display:none}.divider{display:none}.theme{width:36px;height:36px}footer{font-size:9px;letter-spacing:0;margin-top:28px}footer p:last-child{max-width:130px;text-align:right}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 25Q4 13 16 12L21 8 24 14H34Q39 14 37 22L29 26H16L10 31Z" fill="#72955d"/><path d="M21 22H34M10 26L7 31" stroke="#244a3c" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="16" r="1.5" fill="#244a3c"/></svg>慢骑俱乐部</div>
+    <span class="edition">CROCO CYCLING CLUB · NO. 001</span>
+  </header>
+  <section class="intro" aria-labelledby="title">
+    <p class="eyebrow">A LITTLE RIDE, A LITTLE JOY</p>
+    <h1 id="title">今天，<span>慢慢骑。</span></h1>
+    <p class="subtitle">风刚刚好，鳄鱼先生决定绕个远路。</p>
+  </section>
+  <div class="scene">
+    <span class="scene-note">沿途的风景，比终点更有趣</span>
+    <svg viewBox="0 0 1000 565" role="img" aria-labelledby="scene-title scene-desc">
+      <title id="scene-title">鳄鱼先生骑着橙色自行车穿过山间小路</title>
+      <desc id="scene-desc">戴着头盔和围巾的绿色鳄鱼踩动踏板，车轮旋转，白云和山丘慢慢后退。</desc>
+      <defs>
+        <clipPath id="landscape"><rect x="55" y="30" width="890" height="460" rx="220"/></clipPath>
+        <g id="wheel"><circle r="76" fill="var(--paper)" stroke="#304c40" stroke-width="10"/><circle r="65" fill="none" stroke="#a6b59b" stroke-width="2"/><g stroke="#9cae97" stroke-width="1.8"><path d="M-65 0H65M0-65V65M-46-46L46 46M-46 46L46-46M-60-25L60 25M-25-60L25 60M-60 25L60-25M-25 60L25-60"/></g><path d="M-48-48A68 68 0 0 1 5-68" fill="none" stroke="#f5f1df" stroke-width="3" stroke-linecap="round"/><circle r="7" fill="#304c40"/></g>
+        <g id="grass" fill="none" stroke="#83996c" stroke-width="2.5" stroke-linecap="round"><path d="M0 0L-5-10M0 0L4-16M0 0L11-8"/></g>
+      </defs>
+      <g clip-path="url(#landscape)">
+        <path class="sky" d="M0 0H1000V510H0Z"/>
+        <circle class="sun" cx="754" cy="127" r="38"/>
+        <g class="moon"><circle cx="754" cy="127" r="34" fill="#eee6bb"/><circle cx="768" cy="114" r="29" class="sky"/></g>
+        <g class="stars" fill="#d9dfbd"><path d="M261 71v12m-6-6h12M647 61v10m-5-5h10M840 211v10m-5-5h10" stroke="#d9dfbd" stroke-width="2"/><circle cx="380" cy="117" r="2"/><circle cx="592" cy="126" r="2"/><circle cx="172" cy="193" r="2"/><circle cx="817" cy="64" r="2"/></g>
+        <g id="clouds" class="cloud"><path d="M137 151q-9-23 14-27 4-29 31-20 16-15 31 4 28-4 27 22 21 3 15 21Z"/><path d="M583 92q-9-17 10-22 2-20 22-15 11-12 23 3 23-2 21 16 18 0 17 18Z"/><path d="M859 210q-8-18 11-22 3-22 23-17 11-12 23 3 23-2 21 16 18 1 16 20Z"/></g>
+        <path class="hill-back" d="M-80 370Q90 196 290 360Q410 230 600 340Q810 178 1100 350V520H-80Z"/>
+        <g id="hills"><path class="hill" d="M-200 445Q-35 309 161 394Q331 275 521 420Q707 311 887 403Q1055 291 1200 430V540H-200Z"/></g>
+        <path class="ground" d="M0 433Q460 411 1000 435V565H0Z"/>
+        <path class="road" d="M0 483Q500 458 1000 483" stroke-width="37" fill="none"/>
+        <g id="road-marks" stroke="#d4c5a1" stroke-width="2" stroke-linecap="round"><path d="M60 486h23m76-9h17m82 6h30m94-7h21m80 9h20m92-9h26m82 7h17m85-5h24m86 8h20m90-5h22"/></g>
+        <g id="plants"><use href="#grass" x="123" y="448"/><use href="#grass" x="260" y="459"/><use href="#grass" x="790" y="442"/><use href="#grass" x="902" y="465"/><path d="M831 447v-22" stroke="#83996c" stroke-width="2"/><g fill="#fbf1d1"><circle cx="831" cy="420" r="4"/><circle cx="826" cy="425" r="4"/><circle cx="836" cy="425" r="4"/></g><circle cx="831" cy="425" r="2.5" fill="#dca152"/></g>
+      </g>
+      <ellipse cx="500" cy="511" rx="215" ry="12" fill="#244a3c" opacity=".09"/>
+      <g id="rider">
+        <!-- Far leg sits behind the frame; both feet follow the crank. -->
+        <path id="far-leg" d="" fill="none" stroke="#426b45" stroke-width="22" stroke-linejoin="round" stroke-linecap="round"/>
+        <path id="far-shoe" d="" fill="none" stroke="#f0dba4" stroke-width="13" stroke-linecap="round"/>
+        <g transform="translate(359 428)"><g id="rear-wheel"><use href="#wheel"/></g></g>
+        <g transform="translate(654 428)"><g id="front-wheel"><use href="#wheel"/></g></g>
+        <!-- Bicycle frame -->
+        <g fill="none" stroke="#ce7943" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"><path d="M359 428L422 330L490 422L359 428L454 351H603L490 422M603 351L654 428M603 351L591 309"/><path d="M422 330L414 313" stroke="#304c40" stroke-width="7"/><path d="M591 309L586 294L613 287Q634 282 636 297Q639 309 627 313" stroke="#304c40" stroke-width="7"/></g>
+        <path d="M392 311Q415 304 442 312" stroke="#304c40" stroke-width="12" stroke-linecap="round"/>
+        <path d="M359 428L490 408Q510 408 510 426Q510 443 491 443L359 434" fill="none" stroke="#526c54" stroke-width="3"/>
+        <g id="crank"><circle cx="490" cy="422" r="19" fill="#f2d6a1" stroke="#304c40" stroke-width="3"/><path id="crank-arm" d="" stroke="#304c40" stroke-width="6" stroke-linecap="round"/><circle cx="490" cy="422" r="5" fill="#304c40"/></g>
+        <!-- Tail, torso and scarf -->
+        <path d="M461 324Q396 348 340 317Q316 303 286 277Q296 333 345 355Q410 384 472 348Z" fill="#729754" stroke="#304c40" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M302 304L307 288L324 318L332 304L349 331L361 318L376 341L390 329L403 348" fill="#486d40"/>
+        <path d="M444 243Q410 276 422 314Q427 340 472 344Q503 334 511 302L493 250Z" fill="#82a65e" stroke="#304c40" stroke-width="3"/>
+        <path d="M475 259Q493 282 480 319Q473 331 455 328Q436 313 445 284Z" fill="#c6ce89"/>
+        <path d="M437 247Q458 264 489 253L493 237L444 229Z" fill="#dc8c4e" stroke="#304c40" stroke-width="3"/>
+        <path id="scarf" d="M444 243Q404 236 379 251L388 236L374 224Q416 219 449 234" fill="#dc8c4e" stroke="#304c40" stroke-width="3" stroke-linejoin="round"/>
+        <!-- Crocodile head -->
+        <path d="M441 238Q418 221 432 195Q438 182 454 183Q460 158 480 169Q493 175 494 190L559 189Q586 185 591 201Q597 224 574 231L491 242Q464 249 441 238Z" fill="#82a65e" stroke="#304c40" stroke-width="3"/>
+        <path d="M491 219Q537 228 580 214" fill="none" stroke="#304c40" stroke-width="3" stroke-linecap="round"/>
+        <path d="M531 224L537 232L543 224M555 221L562 228L566 220" fill="#fff8dc"/>
+        <ellipse cx="478" cy="186" rx="9" ry="12" fill="#fff9df"/><ellipse cx="481" cy="187" rx="3" ry="5" fill="#304c40"/><circle cx="570" cy="200" r="2.8" fill="#304c40"/><ellipse cx="458" cy="217" rx="10" ry="6" fill="#d89867" opacity=".65"/>
+        <path d="M429 185Q427 151 458 147Q485 143 495 173L465 173L446 184Z" fill="#e9b45d" stroke="#304c40" stroke-width="3"/>
+        <path d="M446 154L444 171M461 151L464 166M477 157L481 168" fill="none" stroke="#bf8a43" stroke-width="4" stroke-linecap="round"/>
+        <path d="M438 182L449 207L461 209" fill="none" stroke="#304c40" stroke-width="2.5"/>
+        <!-- Relaxed arms hold the handlebar -->
+        <path d="M487 265Q514 296 551 299L596 291" fill="none" stroke="#304c40" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M487 265Q514 296 551 299L596 291" fill="none" stroke="#82a65e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M589 289L600 300M595 287L606 297" stroke="#304c40" stroke-width="2" stroke-linecap="round"/>
+        <path id="near-leg" d="" fill="none" stroke="#304c40" stroke-width="25" stroke-linejoin="round" stroke-linecap="round"/>
+        <path id="near-leg-inner" d="" fill="none" stroke="#82a65e" stroke-width="19" stroke-linejoin="round" stroke-linecap="round"/>
+        <path id="near-shoe" d="" fill="none" stroke="#304c40" stroke-width="16" stroke-linecap="round"/>
+        <path id="near-shoe-inner" d="" fill="none" stroke="#f0dba4" stroke-width="11" stroke-linecap="round"/>
+        <g id="pedals" stroke="#304c40" stroke-width="5" stroke-linecap="round"><path id="near-pedal" d=""/><path id="far-pedal" d=""/></g>
+        <g fill="none" stroke="#a8b48e" stroke-width="3" stroke-linecap="round"><path d="M274 392h-31M286 408h-18M278 425h-44"/></g>
+      </g>
+      <g fill="#7e8b73" font-size="10" letter-spacing="3"><text x="500" y="555" text-anchor="middle">LESS HURRY. MORE HAPPY.</text></g>
+    </svg>
+  </div>
+  <div class="controls" role="group" aria-label="骑行控制">
+    <button class="play" id="play" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path id="play-icon" d="M4 3h3v10H4zM10 3h3v10h-3z"/></svg><span id="play-label">歇一会儿</span></button>
+    <span class="divider" aria-hidden="true"></span>
+    <label class="speed" for="speed"><span class="speed-label">骑行速度</span><input id="speed" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="骑行速度"><output id="speed-value" for="speed">1.0×</output></label>
+    <button class="theme" id="theme" type="button" aria-label="切换到夜晚" aria-pressed="false" title="切换昼夜"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></svg></button>
+  </div>
+  <footer><p class="status"><span class="dot" aria-hidden="true"></span><span id="status">正在收集沿途的好心情</span></p><p>不必赶路，感受路。</p></footer>
+</main>
+<script>
+  (() => {
+    const $ = id => document.getElementById(id);
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    let paused = motion.matches, speed = 1, phase = 0, previous = null;
+    const setPath = (id, path) => $(id).setAttribute('d', path);
+    // Two copies make the passing scenery loop without a visible reset.
+    ['clouds','plants','road-marks'].forEach(id => {
+      const copy=$(id).cloneNode(true);copy.id=`${id}-copy`;$(id).after(copy);
+    });
+    function scroll(id,rate) {
+      const offset=-(phase*rate%1000);
+      $(id).setAttribute('transform',`translate(${offset} 0)`);
+      $(`${id}-copy`).setAttribute('transform',`translate(${offset+1000} 0)`);
+    }
+    function draw() {
+      const angle = phase * 2.8;
+      const feet = [0, Math.PI].map(offset => ({x:490 + Math.cos(angle + offset) * 29, y:422 + Math.sin(angle + offset) * 29}));
+      // Equal-length leg segments bend toward the front of the bicycle.
+      function leg(foot) {
+        const hip = {x:459,y:326}, dx=foot.x-hip.x, dy=foot.y-hip.y;
+        const distance=Math.hypot(dx,dy), bend=Math.sqrt(Math.max(0,70*70-distance*distance/4));
+        const knee={x:(hip.x+foot.x)/2+dy/distance*bend,y:(hip.y+foot.y)/2-dx/distance*bend};
+        return `M${hip.x} ${hip.y}L${knee.x} ${knee.y}L${foot.x} ${foot.y-5}`;
+      }
+      setPath('far-leg',leg(feet[1]));
+      setPath('near-leg',leg(feet[0]));setPath('near-leg-inner',leg(feet[0]));
+      feet.forEach((foot,i) => {
+        const shoe=`M${foot.x-7} ${foot.y-6}L${foot.x+15} ${foot.y-6}`;
+        if(i===0){setPath('near-shoe',shoe);setPath('near-shoe-inner',shoe);}else setPath('far-shoe',shoe);
+        setPath(i===0?'near-pedal':'far-pedal',`M${foot.x-12} ${foot.y+3}h28`);
+      });
+      setPath('crank-arm',`M${feet[0].x} ${feet[0].y}L${feet[1].x} ${feet[1].y}`);
+      ['rear-wheel','front-wheel'].forEach(id => $(id).setAttribute('transform',`rotate(${angle*180/Math.PI*.85})`));
+      $('rider').setAttribute('transform',`translate(0 ${Math.sin(angle*2)*1.2})`);
+      scroll('clouds',5);scroll('road-marks',72);scroll('plants',72);
+      $('hills').setAttribute('transform',`translate(${Math.sin(phase*.1)*45} 0)`);
+      $('scarf').setAttribute('transform',`rotate(${Math.sin(angle*1.5)*3} 444 239)`);
+    }
+    function updatePause() {
+      document.body.classList.toggle('paused',paused);
+      $('play').setAttribute('aria-pressed',String(paused));
+      $('play-label').textContent=paused?'继续兜风':'歇一会儿';
+      $('play-icon').setAttribute('d',paused?'M4 2L14 8L4 14Z':'M4 3h3v10H4zM10 3h3v10h-3z');
+      $('status').textContent=paused?'停下来，也是一种好风景':'正在收集沿途的好心情';
+    }
+    $('play').addEventListener('click',() => {paused=!paused;updatePause();});
+    $('speed').addEventListener('input',event => {speed=Number(event.target.value);$('speed-value').value=`${speed.toFixed(1)}×`;});
+    $('theme').addEventListener('click',() => {
+      const night=document.body.classList.toggle('night');
+      $('theme').setAttribute('aria-pressed',String(night));
+      $('theme').setAttribute('aria-label',night?'切换到白天':'切换到夜晚');
+    });
+    motion.addEventListener('change',event => {paused=event.matches;updatePause();});
+    function tick(now) {
+      if(previous!==null&&!paused&&!document.hidden)phase+=Math.min((now-previous)/1000,.05)*speed;
+      previous=now;draw();requestAnimationFrame(tick);
+    }
+    updatePause();draw();requestAnimationFrame(tick);
+  })();
+</script>
+</body>
+</html>
