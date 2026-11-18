@@ -99,3 +99,50 @@ async def test_log_paths_survive_recent_evidence_cap_without_retaining_invalid_i
         assert paths['evidence_id'] in inv.evidence_index(current)
     else:
         assert paths == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('inventory_status', ['valid', 'expired', 'truncated', 'error', 'other_target'])
+async def test_dependency_capabilities_survive_raw_cap_and_stay_in_scope(inventory_status):
+    from datetime import timedelta
+    from scripts.verify_competing_hypothesis_scenario import capture_decision_input
+    from src.probe.protocol import evidence
+    from src.settings import settings
+    current = state(('inventory', {'dependency_details': {
+        'socket': {'host': 'db', 'port': 5432, 'source_service': 'entry', 'probe_kind': 'tcp'},
+        'query': {'host': 'db', 'port': 5432, 'source_service': 'entry', 'probe_kind': 'django_database'},
+        'outside': {'host': 'secret-host', 'port': 1, 'probe_kind': 'tcp'}}}))
+    raw = json.loads(current['raw_evidence'][0][1])
+    if inventory_status == 'expired':
+        raw['collected_at'] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    if inventory_status == 'truncated': raw['truncated'] = True
+    if inventory_status == 'error': raw['payload']['error'] = 'unavailable'
+    if inventory_status == 'other_target': raw['target_id'] = 'another-target'
+    current['raw_evidence'][0] = ('inventory', json.dumps(raw))
+    current['target_resolution'] = {'status': 'resolved', 'allowed_services': ['entry'],
+                                    'allowed_dependencies': ['socket', 'query']}
+    for port in range(2000, 2009):
+        current['raw_evidence'].append(('ports', json.dumps(evidence(target_id=settings.PROBE_TARGET_ID,
+            operation='ports', payload={'local_port': port, 'ports': []}))))
+    captured = await capture_decision_input(current)
+    sources = json.loads(captured['inputs']['memory'])['decision_agenda']['sources']
+    details = sources.get('dependencies', {})
+    if inventory_status == 'valid':
+        assert set(details) == {'socket', 'query'}
+        assert details['socket']['probe_kind'] == 'tcp'
+        assert details['query']['source_service'] == 'entry'
+        assert 'query' in details['query']['observes']
+        assert '不验证' in details['socket']['limitation']
+    else:
+        assert details == {}
+    assert 'secret-host' not in json.dumps(sources)
+
+
+def test_application_summary_distinguishes_query_from_socket_success():
+    current = state(('dependency_probe', {'dependency': 'db', 'tcp': 'ok',
+        'probe_kind': 'django_database', 'source_service': 'entry', 'query': 'failed',
+        'error_category': 'authentication_rejected'}))
+    summary = inv._evidence_summaries(inv.evidence_index(current), current)[0]['summary']
+    assert 'TCP ok' in summary
+    assert 'query failed' in summary
+    assert 'authentication_rejected' in summary

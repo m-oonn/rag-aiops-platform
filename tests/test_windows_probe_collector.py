@@ -340,7 +340,10 @@ def test_process_snapshot_rejects_unrecognized_sort_without_collecting(tmp_path,
 
 
 @pytest.mark.parametrize('status, body', [(200, b'healthy'), (503, b'database unavailable'),
-                                       (503, b'x' * 2048), (302, b'redirect blocked')])
+                                       (503, b'x' * 2048), (302, b'redirect blocked'),
+                                       (400, b'DisallowedHost at /\nInvalid HTTP_HOST header'),
+                                       (400, b'<html><title>DisallowedHost at /</title>'),
+                                       (400, b'OtherError at /\nDisallowedHost mentioned in body')])
 def test_dependency_http_preserves_status_bounds_body_and_does_not_redirect(tmp_path, status, body):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
@@ -349,6 +352,7 @@ def test_dependency_http_preserves_status_bounds_body_and_does_not_redirect(tmp_
     requests = []
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            assert '*/*' in self.headers.get('Accept', '')
             requests.append(self.path)
             self.send_response(status)
             if status == 302:
@@ -373,9 +377,12 @@ def test_dependency_http_preserves_status_bounds_body_and_does_not_redirect(tmp_
     assert result['payload']['tcp'] == 'ok'
     http = result['payload']['http']
     assert http['status'] == status
+    assert http['url'].endswith('/health')
+    assert http.get('exception_type') == ('DisallowedHost' if body.startswith(b'DisallowedHost at /\n')
+        or b'<title>DisallowedHost ' in body else None)
     assert http['body_prefix'] == body[:1024].decode()
     assert http['truncated'] is (len(body) > 1024)
-    assert bool(result.get('truncated')) is (len(body) > 1024)
+    assert not result.get('truncated')  # Only http.body_prefix is incomplete.
     assert validate_evidence(result, target_id=cfg.target_id) is result
 
 
@@ -397,6 +404,7 @@ def test_port_filter_finds_listener_after_unrelated_connections(tmp_path, monkey
     assert result['payload']['listening_only'] is True
     assert result['payload']['matched_count'] == 1
     assert not result.get('truncated')
+    assert result['collector_version'] == '1.0.1'
     validate_evidence(result, target_id=cfg.target_id)
 
 
@@ -520,3 +528,41 @@ def test_upgrade_restores_original_runtime_when_start_fails(tmp_path, monkeypatc
     assert len(calls) == 2
     assert start.call_count == 2
 
+@pytest.mark.parametrize('value', [0, 11, True, 2.5])
+def test_dependency_http_timeout_is_bounded(tmp_path, value):
+    _config(tmp_path)
+    path = tmp_path / 'probe.toml'
+    path.write_text(path.read_text(encoding='utf-8') + f'http_timeout_seconds = {str(value).lower()}\n', encoding='utf-8')
+    with pytest.raises(ProbeConfigError, match='http_timeout_seconds'):
+        load_config(path)
+
+
+def test_dependency_bearer_stays_local_and_out_of_evidence(tmp_path, monkeypatch):
+    from src.probe.windows import collector as module
+    from io import BytesIO
+    cfg, _ = _config(tmp_path)
+    secret = tmp_path / 'auth-token'
+    secret.write_text('private-test-token', encoding='utf-8')
+    path = tmp_path / 'probe.toml'
+    original = path.read_text(encoding='utf-8')
+    path.write_text(original + f"bearer_token_file = '{secret}'\nhttp_timeout_seconds = 8\n", encoding='utf-8')
+    cfg = load_config(path)
+    observed = []
+    class Reply(BytesIO):
+        code = 200
+    def opened(request, timeout):
+        observed.append((request.get_header('Authorization'), timeout))
+        return Reply(b'reflected private-test-token')
+    monkeypatch.setattr(module, 'build_opener', lambda *_: Mock(open=opened))
+    result = WindowsCollector(cfg).dependency_probe('database')
+    assert observed == [('Bearer private-test-token', 8)]
+    assert result['payload']['http']['authenticated_request'] is True
+    assert 'private-test-token' not in str(result)
+    assert str(secret) not in str(WindowsCollector(cfg).inventory())
+    secret.unlink()
+    result = WindowsCollector(cfg).dependency_probe('database')
+    assert result['payload']['http'] == {'error': 'ProbeConfigError'}
+    assert len(observed) == 1  # Missing authentication must not fall back to anonymous.
+    path.write_text((original + f"bearer_token_file = '{secret}'\n").replace('host = "127.0.0.1"', 'host = "example.com"'), encoding='utf-8')
+    with pytest.raises(ProbeConfigError, match='loopback'):
+        load_config(path)

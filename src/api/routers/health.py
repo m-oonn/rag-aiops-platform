@@ -125,6 +125,13 @@ async def _check_http(name: str, url: str, timeout: float = 3) -> dict:
         return {"status": "unavailable", "error": str(e)[:80]}
 
 
+async def _check_mcp_source(key: str) -> dict:
+    config = settings.MCP_SERVERS.get(key)
+    if not config or not config.get('url'):
+        return {'status': 'unavailable', 'error': '未配置此证据来源'}
+    return await _check_http(key, config['url'].replace('/mcp', '/health'))
+
+
 async def _check_rabbitmq() -> dict:
     """检测 RabbitMQ 是否可达。"""
     def _sync():
@@ -245,15 +252,16 @@ async def check_dependencies(current_user: User = Depends(get_current_user)):
         return cached
 
     checks = [
-        _check_http("mcp_monitor", settings.MCP_MONITOR_URL.replace("/mcp", "/health")),
-        _check_http("mcp_cls", settings.MCP_CLS_URL.replace("/mcp", "/health")),
+        _check_mcp_source('monitor'),
+        _check_mcp_source('cls'),
+        _check_mcp_source('knowledge_base'),
         _check_rabbitmq(),
         _check_redis(),
         _check_milvus(),
         _check_minio(),
         _check_llm(),
     ]
-    names = ["mcp_monitor", "mcp_cls", "rabbitmq", "redis", "milvus", "minio", "llm"]
+    names = ["mcp_monitor", "mcp_cls", "knowledge", "rabbitmq", "redis", "milvus", "minio", "llm"]
     if settings.PROBE_ENABLED:
         checks.append(_check_probe())
         names.append("probe")

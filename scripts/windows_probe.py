@@ -168,8 +168,8 @@ def upgrade_service() -> int:
         registered = Path(win32serviceutil.GetServiceCustomOption(ProbeService._svc_name_, 'ConfigPath')).resolve()
         if registered != config_path().resolve():
             raise RuntimeError('Upgrade must use the registered Probe configuration')
-        executable = _deploy_runtime(root / f'runtime-{uuid.uuid4().hex[:12]}')
         was_running = win32serviceutil.QueryServiceStatus(ProbeService._svc_name_)[1] == win32service.SERVICE_RUNNING
+        executable = _deploy_runtime(root / f'runtime-{uuid.uuid4().hex[:12]}')
         if was_running:
             win32serviceutil.StopService(ProbeService._svc_name_)
             win32serviceutil.WaitForServiceStatus(ProbeService._svc_name_, win32service.SERVICE_STOPPED, 30)

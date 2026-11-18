@@ -16,6 +16,8 @@ monitor_server 的 query_cpu_metrics / query_memory_metrics 把取数交给本�
 由 monitor_server.py 在独立进程中 import 使用。
 """
 
+import hashlib
+import json
 import logging
 import re
 from datetime import datetime
@@ -120,6 +122,17 @@ def _service_regex(service_name: str) -> str:
     return f"(?:{alternatives})"
 
 
+def _series_key(metric: Dict[str, Any]) -> str:
+    """Return a stable opaque identity shared by up and timestamp(up)."""
+    if not isinstance(metric, dict):
+        raise ValueError("Prometheus returned an invalid metric label set")
+    labels = {str(key): str(value) for key, value in metric.items() if key != "__name__"}
+    if not labels:
+        raise ValueError("Prometheus returned a metric without identifying labels")
+    payload = json.dumps(labels, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 class PrometheusClient:
     """Prometheus HTTP API 客户端(单例由 monitor_server 持有)。"""
 
@@ -153,6 +166,56 @@ class PrometheusClient:
         """查询内存使用率(结构与 mock 路径一致)。"""
         return self._query_range(service_name, "memory", settings.PROMETHEUS_MEMORY_PROMQL,
                                  start, end, interval_min, MEMORY_ALERT_THRESHOLD)
+
+    def query_up(self, service_name: str) -> Dict[str, Any]:
+        """Return real up samples with their underlying scrape timestamps."""
+        if not use_prometheus_backend():
+            return {"data_source": "unavailable", "samples": [], "error": "Prometheus is not configured"}
+        if not self.available:
+            self.available = self._probe()
+        if not self.available:
+            return {"data_source": "unavailable", "samples": [], "error": "Prometheus is unavailable"}
+
+        selector = f'up{{instance=~"{_service_regex(service_name)}.*"}}'
+        evaluation_time = datetime.now().timestamp()
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/v1/query",
+                params={"query": selector, "time": evaluation_time},
+                timeout=self.timeout,
+                **_request_kwargs(),
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("status") != "success":
+                raise ValueError("Prometheus returned a non-success response")
+            result = body.get("data", {}).get("result", [])
+            if not isinstance(result, list):
+                raise ValueError("Prometheus returned an invalid vector result")
+            samples = []
+            for series in result:
+                value = series.get("value")
+                if not isinstance(value, list) or len(value) != 2:
+                    raise ValueError("Prometheus returned an invalid up sample")
+                try:
+                    sample_time = float(value[0])
+                    sample_value = float(value[1])
+                except (TypeError, ValueError):
+                    raise ValueError("Prometheus returned a non-numeric up sample") from None
+                series_key = _series_key(series.get("metric"))
+                samples.append({
+                    "instance": str(series.get("metric", {}).get("instance", "")),
+                    "series_key": series_key,
+                    "sample_time_unix": sample_time,
+                    "value": sample_value,
+                })
+            return {"data_source": "prometheus", "samples": samples}
+        except Exception as exc:
+            self.available = False
+            logger.warning("Prometheus up 查询失败(service=%s, error_type=%s)",
+                           service_name, type(exc).__name__)
+            return {"data_source": "unavailable", "samples": [],
+                    "error": f"Prometheus query failed ({type(exc).__name__})"}
 
     def _query_range(self, service_name: str, metric: str, promql_template: str,
                      start: datetime, end: datetime, interval_min: int,

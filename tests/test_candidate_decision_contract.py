@@ -41,6 +41,49 @@ def test_live_contract_requires_explicit_list_but_legacy_and_empty_remain_valid(
     assert 'alternatives' in inv.InvestigationProposal.model_json_schema()['required']
 
 
+def test_live_primary_ids_exclude_incomplete_failed_and_out_of_scope_records():
+    current = state(('services', {'service': 'entry', 'state': 'stopped'}),
+        ('text_logs', {'service': 'entry', 'lines': ['limited']}),
+        ('configuration', {'service': 'entry', 'error': 'unavailable'}),
+        ('services', {'service': 'other', 'state': 'running'}))
+    current['target_resolution'] = {'status': 'resolved', 'allowed_services': ['entry']}
+    records = inv.evidence_index(current)
+    raw = json.loads(records['e2.1']['payload'])
+    raw['truncated'] = True
+    records['e2.1']['payload'] = json.dumps(raw)
+    schema = inv._live_proposal_schema(current, records)
+    base = {'hypothesis': 'unknown', 'alternatives': []}
+    assert schema.model_validate({**base, 'supporting_evidence': [
+        {'evidence_id': 'e1.1', 'quote': 'stopped'}]}).supporting_evidence[0].evidence_id == 'e1.1'
+    for ident in ['e2.1', 'e3.1', 'e4.1', 'invented']:
+        with pytest.raises(ValidationError):
+            schema.model_validate({**base, 'supporting_evidence': [{'evidence_id': ident}]})
+    # Limited background remains citable as an alternative, never silently removed.
+    alternative = _model_alternative(explanation='limited log', status='unresolved',
+        evidence=[inv.Citation(evidence_id='e2.1')]).model_dump()
+    parsed = schema.model_validate({**base, 'alternatives': [alternative]})
+    assert parsed.alternatives[0].evidence[0].evidence_id == 'e2.1'
+
+
+def test_live_primary_schema_with_no_eligible_evidence_requires_empty_list():
+    schema = inv._live_proposal_schema(state(), {})
+    assert schema(hypothesis='unknown', alternatives=[]).supporting_evidence == []
+    with pytest.raises(ValidationError):
+        schema(hypothesis='unknown', alternatives=[], supporting_evidence=[{'evidence_id': 'invented'}])
+
+
+@pytest.mark.asyncio
+async def test_strategy_supplies_live_primary_constraint_to_model(monkeypatch):
+    current = state(('services', {'service': 'entry', 'state': 'running'}))
+    async def model(llm, schema, prompt, inputs):
+        with pytest.raises(ValidationError):
+            schema(hypothesis='unknown', alternatives=[], supporting_evidence=[{'evidence_id': 'invented'}])
+        return schema(hypothesis='unknown', alternatives=[], blocked_reason='no new evidence')
+    monkeypatch.setattr(inv, 'create_agent_llm', lambda **kwargs: object())
+    monkeypatch.setattr(inv, 'ainvoke_structured', model)
+    await inv.InvestigationStrategy().decide(current)
+
+
 def test_live_alternative_contract_requires_claim_fields_omitted_by_model():
     schema = inv.InvestigationProposal.model_json_schema()
     alternative = schema['$defs']['ModelAlternative']
@@ -528,7 +571,7 @@ async def test_candidates_execute_consume_and_reopen_without_model_reselection(t
             answer.alternatives[0].check = None
         arguments = answer.model_dump()
         raw = AIMessage(content='', tool_calls=[{'name': 'InvestigationDecision', 'args': arguments, 'id': 'one'}])
-        return {'raw': raw, 'parsed': inv.InvestigationProposal.model_validate(arguments), 'parsing_error': None}
+        return {'raw': raw, 'parsed': arguments, 'parsing_error': None}
     monkeypatch.setattr(structured, 'ainvoke_with_retry', AsyncMock(side_effect=model))
     config = {'configurable': {'thread_id': 'candidate-contract'}}
     service = graph_module.AIOpsService()

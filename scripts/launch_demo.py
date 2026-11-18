@@ -20,15 +20,18 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import socket
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -38,6 +41,8 @@ LOG_DIR = ROOT / "logs"
 # Docker 基础服务（与 docker/docker-compose*.yml 对齐）
 COMPOSE_BASE = ROOT / "docker" / "docker-compose.yml"
 COMPOSE_OBS = ROOT / "docker" / "docker-compose.observability.yml"
+COMPOSE_PROBE_LOCAL = ROOT / "docker" / "docker-compose.probe-local.yml"
+PROBE_GATEWAY_PORT = 18767
 # (展示名, 端口)：应用栈 MCP 启动时只探活一次，因此必须先等到这些端口就绪
 INFRA_PROBES = (("Milvus", 19530), ("Elasticsearch", 9200), ("Prometheus", 19090))
 
@@ -117,6 +122,101 @@ def wait_ready(url: str, seconds: float, is_mcp: bool = False, port: int = 0) ->
             return True
         time.sleep(1.0)
     return False
+
+
+def probe_config_path() -> Path:
+    default_dir = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "RagAIOpsProbe"
+    return Path(os.environ.get("RAG_AIOPS_PROBE_CONFIG", default_dir / "config.toml"))
+
+
+def probe_runtime() -> tuple[dict[str, str], str] | None:
+    """Read the installed Probe config and prepare local-only app/gateway env."""
+    path = probe_config_path()
+    if not path.is_file():
+        return None
+    with path.open("rb") as handle:
+        config = tomllib.load(handle)
+    target_id = config.get("target_id")
+    gateway_url = config.get("gateway_url")
+    token_path = Path(config.get("token_file", Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+                             / "RagAIOpsProbe" / "token"))
+    if not isinstance(target_id, str) or not target_id or len(target_id) > 128:
+        raise ValueError("Probe target_id 配置无效")
+    if not isinstance(gateway_url, str):
+        raise ValueError("Probe gateway_url 配置无效")
+    gateway = urlparse(gateway_url)
+    try:
+        is_loopback = ipaddress.ip_address(gateway.hostname or "").is_loopback
+    except (ValueError, TypeError):
+        is_loopback = False
+    if (gateway.scheme != "ws" or not is_loopback or gateway.port != PROBE_GATEWAY_PORT
+            or gateway.path != "/probe/ws" or gateway.username or gateway.password or gateway.fragment):
+        raise ValueError("演示启动器只允许本机 Probe 网关 ws://127.0.0.1:18767/probe/ws")
+    if not token_path.is_absolute():
+        token_path = ROOT / token_path
+    token = token_path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise ValueError(f"Probe token 文件为空: {token_path}")
+    env = {
+        "PROBE_ENABLED": "true",
+        "PROBE_TARGET_ID": target_id,
+        "PROBE_TOKEN": token,
+        "MCP_PROBE_URL": f"http://127.0.0.1:{PROBE_GATEWAY_PORT}/mcp",
+    }
+    return env, token
+
+
+def probe_compose(action: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    command = ["docker", "compose", "-f", str(COMPOSE_BASE), "-f", str(COMPOSE_PROBE_LOCAL),
+               "--profile", "termcp", action]
+    if action == "up":
+        command.extend(["--build", "-d"])
+    command.append("probe-gateway")
+    return subprocess.run(command, cwd=str(ROOT), env=env, capture_output=True,
+                          text=True, timeout=300, errors="replace")
+
+
+def ensure_probe(args) -> dict[str, str] | None:
+    """Start local gateway and require the installed Windows Probe to connect."""
+    runtime = probe_runtime()
+    if runtime is None:
+        print(f"{C_INFO} Windows Probe: 未找到配置，保持关闭（{probe_config_path()}）")
+        return None
+    env_values, token = runtime
+    query = subprocess.run(["sc.exe", "query", "RagAIOpsProbe"], capture_output=True,
+                           text=True, timeout=10, errors="replace")
+    if query.returncode != 0:
+        raise RuntimeError("Windows Probe 服务未安装；请先按 docs/windows-probe.md 完成一次性安装")
+    compose_env = os.environ.copy()
+    compose_env.update(env_values)
+    result = probe_compose("up", compose_env)
+    if result.returncode != 0:
+        output = (result.stderr or result.stdout or "").replace(token, "[redacted]").strip()
+        raise RuntimeError(f"Probe 网关启动失败: {output[-1200:]}")
+
+    if "RUNNING" in (query.stdout or "").upper():
+        subprocess.run(["sc.exe", "stop", "RagAIOpsProbe"], capture_output=True,
+                       text=True, timeout=15, errors="replace")
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            state = subprocess.run(["sc.exe", "query", "RagAIOpsProbe"], capture_output=True,
+                                   text=True, timeout=10, errors="replace")
+            if "STOPPED" in (state.stdout or "").upper():
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError("Windows Probe 服务未能在 30 秒内停止")
+    start_result = subprocess.run(["sc.exe", "start", "RagAIOpsProbe"], capture_output=True,
+                                  text=True, timeout=30, errors="replace")
+    if start_result.returncode != 0 and "ALREADY_RUNNING" not in (start_result.stdout or "").upper():
+        detail = (start_result.stderr or start_result.stdout or "").strip()
+        raise RuntimeError(f"无法启动 Windows Probe 服务: {detail or 'sc.exe start 失败'}")
+
+    if not wait_ready(f"http://127.0.0.1:{PROBE_GATEWAY_PORT}/health", args.timeout):
+        probe_compose("stop", compose_env)
+        raise RuntimeError("Probe 网关已启动，但 Windows Probe 未连接；请检查服务配置、令牌和 logs")
+    print(f"{C_OK} Windows Probe: 网关与采集服务已连接（目标 {env_values['PROBE_TARGET_ID']}）")
+    return env_values
 
 
 # ══════════════════════════════════════════════════════════════
@@ -292,6 +392,12 @@ def start(args) -> int:
         print(f"{C_INFO} 清理过期 PID 记录（上次未正常退出或 PID 已被复用）")
         save_pids({})
 
+    try:
+        probe_env = ensure_probe(args)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"{C_BAD} Windows Probe 启动失败: {exc}")
+        return 1
+
     pids: dict = {}
     failures: list[str] = []
     optional_down: list[str] = []
@@ -317,8 +423,13 @@ def start(args) -> int:
         try:
             # DETACHED_PROCESS + NEW_PROCESS_GROUP + NO_WINDOW：
             # 服务完全脱离本控制台，关掉启动窗口 / 启动器退出后服务继续跑。
+            service_env = None
+            if key == "api" and probe_env:
+                service_env = os.environ.copy()
+                service_env.update(probe_env)
             proc = subprocess.Popen(
                 cmd, cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT,
+                env=service_env,
                 creationflags=0x00000008 | 0x00000200 | 0x08000000,
             )
         except Exception as e:
@@ -434,6 +545,16 @@ def stop(_args) -> int:
                            capture_output=True, text=True, errors="replace")
             print(f"{C_OK} {info.get('name', key)} (PID {pid}) 已停止")
             stopped += 1
+    if docker_ok():
+        try:
+            result = probe_compose("stop")
+            if result.returncode == 0:
+                print(f"{C_OK} Windows Probe 网关: 已停止（Windows Probe 服务保持安装状态）")
+            elif "No such service" not in (result.stderr or ""):
+                detail = (result.stderr or result.stdout or "").strip()
+                print(f"{C_INFO} Windows Probe 网关未运行{': ' + detail[-500:] if detail else ''}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"{C_INFO} Windows Probe 网关状态未改变: {exc}")
     if PID_FILE.exists():
         PID_FILE.unlink()
     print("-" * 60)
@@ -454,6 +575,13 @@ def status(args=None) -> int:
             n_run += 1
         else:
             print(f"{C_BAD} {name}: 未运行")
+    if probe_config_path().is_file():
+        if http_ok(f"http://127.0.0.1:{PROBE_GATEWAY_PORT}/health"):
+            print(f"{C_OK} Windows Probe: 网关和采集服务在线（端口 {PROBE_GATEWAY_PORT}）")
+        else:
+            print(f"{C_BAD} Windows Probe: 未连接（端口 {PROBE_GATEWAY_PORT}）")
+    else:
+        print(f"{C_INFO} Windows Probe: 未配置（{probe_config_path()}）")
     print("-" * 60)
     if n_run:
         print(f"  共 {n_run} 个服务在运行")
@@ -482,6 +610,8 @@ def up(args) -> int:
         print(f"{C_INFO} 基础服务未全部就绪，继续启动应用层（相关证据源会标注缺席）")
     if port_in_use(8200):
         print(f"{C_OK} 应用层已在运行（API 8200 占用），跳过启动")
+        if probe_config_path().is_file() and not http_ok(f"http://127.0.0.1:{PROBE_GATEWAY_PORT}/health"):
+            print(f"{C_INFO} Probe 配置已存在；执行 stop 后重新 up，才能让后端加载 Probe 设置")
         if port_in_use(5273):
             print("  界面入口: http://127.0.0.1:5273")
         return 0

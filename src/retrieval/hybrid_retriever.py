@@ -95,7 +95,7 @@ class HybridRetriever(BaseRetriever):
                 db = SessionLocal()
                 try:
                     rows = db.execute(sql_text(
-                        "SELECT dc.chunk_uid, dc.content, kd.kb_id, kd.filename, dc.page_num, kd.id "
+                        "SELECT dc.chunk_uid, dc.content, kd.kb_id, kd.filename, dc.page_num, kd.id, kd.source_url "
                         "FROM document_chunks dc "
                         "JOIN knowledge_documents kd ON dc.doc_id = kd.id WHERE kd.status = 2"
                     )).fetchall()
@@ -103,7 +103,7 @@ class HybridRetriever(BaseRetriever):
                         chunk_uid, content, kb_id = row[0], row[1], row[2]
                         if content:
                             indexed.append((str(chunk_uid), str(content), {"kb_id": kb_id,
-                                "filename": row[3], "source": row[3], "page": row[4], "doc_id": row[5]}))
+                                "filename": row[3], "source": row[3], "page": row[4], "doc_id": row[5], "source_url": row[6]}))
                     if indexed:
                         logger.info("[hybrid_retriever] 从 SQLite 加载 %d chunks 建 BM25 索引", len(indexed))
                 finally:
@@ -190,4 +190,5 @@ class HybridRetriever(BaseRetriever):
 
         if min_score > 0:
             results = [r for r in results if r.score is not None and r.score >= min_score]
-        return results
+        from src.agent.aiops.experience import filter_published_results
+        return filter_published_results(results)

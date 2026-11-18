@@ -14,6 +14,7 @@ HITL（人在回路，settings.ENABLE_HITL）：
 from typing import Any, AsyncGenerator, Dict, Optional
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 from pathlib import Path
@@ -37,6 +38,7 @@ from src.agent.aiops.events import (
     make_evidence_event,
 )
 from src.agent.aiops.executor import executor
+from src.agent.aiops.evidence_sources import knowledge_context
 from src.agent.aiops.termcp_tools import (
     TerminalApprovalStatusError, clear_terminal_context, terminal_scope, verify_terminal_approval,
 )
@@ -49,6 +51,7 @@ from src.agent.aiops.strategies.base import BaseReplanStrategy
 from src.agent.aiops.strategies.default import DefaultReplanStrategy
 from src.agent.aiops.strategies.dynamic_classification import DynamicClassificationStrategy
 from src.settings import settings
+from src.probe.protocol import redact
 from src.utils.logger import logger
 from src.utils.tracing import trace_span
 
@@ -71,6 +74,7 @@ def _diagnostic_extras(final_state) -> Dict[str, Any]:
         "sidebar_branches": values.get("sidebar_branches", []),
         "belief_history": values.get("belief_history", []),
         "evidence_source_availability": values.get("evidence_source_availability", []),
+        "knowledge_references": knowledge_context(values.get("raw_evidence")),
         'diagnosis': values.get('diagnosis'),
         'investigation': investigation_summary(values),
     }
@@ -79,20 +83,26 @@ def _diagnostic_extras(final_state) -> Dict[str, Any]:
 def _snapshot_payload(node_name: str, state: Dict | None) -> Dict[str, Any]:
     """从节点输出抽取 JSON-安全的快照摘要（B3 步快照 payload）。"""
     st = state or {}
+    evidence_ids = [row["evidence_id"] for row in st.get("evidence_events", []) or []
+                    if isinstance(row, dict) and row.get("evidence_id")]
+    links = {"evidence_ids": evidence_ids} if evidence_ids else {}
     if node_name == NODE_PLANNER:
-        return {"plan": list(st.get("plan", []) or [])}
+        return {**links, "plan": list(st.get("plan", []) or []),
+                **({"plan_limits": st["plan_limits"]} if st.get("plan_limits") else {})}
     if node_name == NODE_EXECUTOR:
         past = st.get("past_steps", []) or []
         if past:
             step, result = past[-1]
-            return {"last_step": step, "result_digest": str(result)[:200]}
-        return {}
+            return {**links, "last_step": step, "result_digest": str(result)[:200], "digest_truncated": len(str(result)) > 200}
+        return links
     if node_name == NODE_REPLANNER:
         return {
+            **links,
             "remaining_plan": list(st.get("plan", []) or []),
             "response_digest": str(st.get("response", ""))[:200],
+            "decision": redact(st.get("investigation_memory") or {}),
         }
-    return {}
+    return links
 
 
 class AIOpsService:
@@ -143,6 +153,7 @@ class AIOpsService:
         snapshot = await graph.aget_state({'configurable': {'thread_id': thread_id}})
         values = (snapshot.values or {}) if snapshot else {}
         return {'diagnosis': values.get('diagnosis'), 'investigation': investigation_summary(values),
+                'knowledge_references': knowledge_context(values.get('raw_evidence')),
                 'investigation_failure': values.get('investigation_failure')}
 
     async def _persistent_graph(self, strategy: BaseReplanStrategy):
@@ -185,15 +196,35 @@ class AIOpsService:
             tool = _build_tool_map(tools).get("shell_output")
             if not tool:
                 raise RuntimeError(f"Termcp shell_output unavailable: {err or 'tool missing'}")
-            result = await tool.ainvoke({"shell_id": approval["shell_id"], "timeout": 1})
+            tool_args = {"shell_id": approval["shell_id"], "timeout": 1}
+            step = str(approval.get("step") or "受控终端诊断")
+            call_uid = run_store.start_tool_call(
+                str(state["thread_id"]), state.get("user_id"),
+                len(state.get("past_steps") or []), step, approval.get("request_id"),
+                "shell_output", {"proposed": tool_args, "executed": tool_args},
+            )
+            if call_uid is None:
+                raise RuntimeError("tool_call_audit_unavailable; shell_output was not invoked")
+            started = time.monotonic()
+            try:
+                result = await tool.ainvoke(tool_args)
+            except asyncio.CancelledError:
+                run_store.finish_tool_call_or_raise(call_uid, status="cancelled", reason="tool_call_cancelled",
+                    elapsed_ms=(time.monotonic() - started) * 1000)
+                raise
+            except Exception as exc:
+                run_store.finish_tool_call_or_raise(call_uid, status="failed", reason=type(exc).__name__,
+                    result={"error": type(exc).__name__}, elapsed_ms=(time.monotonic() - started) * 1000)
+                raise
             output = str(result)
+            run_store.finish_tool_call_or_raise(call_uid, status="success", result=output,
+                elapsed_ms=(time.monotonic() - started) * 1000)
             raw_output = json.dumps({
                 "data_source": "termcp_approved_target", "target_id": settings.TERMCP_SSH_PROFILE,
                 "collected_at": datetime.now(timezone.utc).isoformat(),
                 "approval_request_id": approval["request_id"], "command": approval["command"],
                 "output": output,
             }, ensure_ascii=False)
-            step = str(approval.get("step") or "受控终端诊断")
             return {
                 "plan": (state.get("plan") or [])[1:],
                 "past_steps": [(step, output)],
@@ -278,6 +309,16 @@ class AIOpsService:
         """
         thread_id = str((config.get("configurable") or {}).get("thread_id", ""))
         step_index = 0
+        seen_calls = None
+        if settings.ENABLE_STEP_SNAPSHOTS and thread_id:
+            try:
+                previous = run_store.list_step_snapshots(thread_id)
+                step_index = max((row["step_index"] for row in previous), default=-1) + 1
+                seen_calls = {row["call_id"] for row in run_store.list_tool_calls(thread_id)}
+            except (run_store.StepSnapshotReadError, run_store.ToolCallAuditReadError):
+                # Cannot establish a reliable continuation index; leave the
+                # graph running, and explicitly mark its replay incomplete.
+                run_store._update_run(thread_id, degraded="step_snapshot_write_failed")
         scope_token = terminal_scope.set(thread_id)
         try:
             while True:
@@ -290,10 +331,15 @@ class AIOpsService:
                             continue
                         boundary = boundary or node_name == NODE_REPLANNER
                         if settings.ENABLE_STEP_SNAPSHOTS and thread_id:
-                            run_store.add_step_snapshot(
-                                thread_id, step_index, node_name,
-                                _snapshot_payload(node_name, node_output),
-                            )
+                            payload = _snapshot_payload(node_name, node_output)
+                            try:
+                                calls = {row["call_id"] for row in run_store.list_tool_calls(thread_id)}
+                                payload["tool_call_ids"] = sorted(calls - seen_calls) if seen_calls is not None else []
+                                payload["call_links_status"] = "available" if seen_calls is not None else "unavailable"
+                                seen_calls = calls
+                            except run_store.ToolCallAuditReadError:
+                                payload["call_links_status"] = "unavailable"
+                            run_store.add_step_snapshot(thread_id, step_index, node_name, payload)
                         step_index += 1
                         if isinstance(node_output, dict):
                             for item in node_output.get("evidence_events", []) or []:
@@ -331,7 +377,7 @@ class AIOpsService:
 
     async def execute(
         self, user_input: str, session_id: str = "default", user_id: Optional[int] = None,
-        terminal_enabled: bool = False,
+        terminal_enabled: bool = False, persist_run: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """开始一次诊断（流式）。
 
@@ -345,7 +391,8 @@ class AIOpsService:
         unique_session = f"{session_id[:24]}-{uuid4().hex}"
 
         terminal_enabled = bool(terminal_enabled and settings.TERMCP_ENABLED)
-        managed_run = settings.ENABLE_HITL or settings.TERMCP_ENABLED or settings.PROBE_ENABLED
+        managed_run = (settings.ENABLE_HITL or settings.TERMCP_ENABLED
+                       or settings.PROBE_ENABLED or persist_run)
         if managed_run:
             strategy = self._create_run_strategy(terminal_enabled)
             graph = await self._persistent_graph(strategy)
@@ -384,6 +431,9 @@ class AIOpsService:
             config = {"configurable": {"thread_id": unique_session}}
 
             try:
+                if managed_run:
+                    yield {"type": "status", "thread_id": unique_session,
+                           "message": "诊断已保存，正在准备排查；切换页面后可继续查看"}
                 async for event in self._stream_events(graph, config, initial):
                     yield event
 
@@ -499,6 +549,9 @@ class AIOpsService:
         async with trace_span("aiops.resume", session_id=thread_id):
             logger.info(f"[aiops] 恢复诊断 {thread_id}: {decision}")
             try:
+                if NODE_HUMAN_REVIEW in checkpoint.next and "reviewer_id" in decision:
+                    run_store.add_approval(thread_id, decision["reviewer_id"], decision["action"],
+                                           decision.get("instruction"), required=True)
                 async for event in self._stream_events(graph, config, Command(resume=decision)):
                     yield event
 

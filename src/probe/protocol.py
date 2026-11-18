@@ -67,7 +67,7 @@ def evidence(*, target_id: str, operation: str, payload: Any, collected_at: str 
         "platform": "windows",
         "operation": operation,
         "collected_at": collected_at or utc_now(),
-        "collector_version": "1.0.0",
+        "collector_version": "1.0.1",
         "data_source": "probe_target",
         "payload": payload,
         "raw_hash": raw_hash(payload),
@@ -75,7 +75,7 @@ def evidence(*, target_id: str, operation: str, payload: Any, collected_at: str 
     }
 
 
-def hello(*, target_id: str, hostname: str, agent_version: str = "1.0.0", capabilities: list[str] | None = None) -> dict[str, Any]:
+def hello(*, target_id: str, hostname: str, agent_version: str = "1.0.1", capabilities: list[str] | None = None) -> dict[str, Any]:
     caps = sorted(set(capabilities or CAPABILITIES))
     unknown = set(caps) - set(CAPABILITIES)
     if unknown:
@@ -122,6 +122,7 @@ def redact(value: Any) -> Any:
     if isinstance(value, list):
         return [redact(v) for v in value]
     if isinstance(value, str):
+        value = re.sub(r'''(?i)(for user\s+)["'][^"']+["']''', r'\1[REDACTED]', value)
         value = re.sub(r"(?s)-----BEGIN ([A-Z ]*PRIVATE KEY)-----.*?-----END \1-----",
                        '[REDACTED]', value)
         value = re.sub(r"(?i)(\b(?:[a-z][a-z0-9+.-]*)://[^\s/@:]+:)[^\s/@]+(@)",

@@ -265,6 +265,16 @@ class Settings(BaseSettings):
     PROMETHEUS_BEARER_TOKEN: str = ""  # 设置后优先于 Basic Auth(如前置网关/Thanos 场景)
     PROMETHEUS_VERIFY_SSL: bool = True  # 自签证书的内网环境可置 False
 
+    # Continuous service health monitoring is opt-in. Targets are explicit
+    # service names resolved through SERVICE_ALIASES; no mock samples are used.
+    OPS_WATCH_ENABLED: bool = False
+    OPS_WATCH_SERVICES: str = ""
+    OPS_WATCH_INTERVAL_SECONDS: int = 30
+    OPS_WATCH_STALE_AFTER_SECONDS: int = 120
+    OPS_WATCH_AUTO_DIAGNOSE: bool = False
+    OPS_WATCH_PROBE_CONFIG: str = ""
+    OPS_WATCH_PROBE_CHECKS: str = "{}"
+
     # —— RAG 知识源采集(connectors,见 docs/MCP生产化改造方案.md §5)——
     # MinIO 知识源: 扫描该桶内 .md/.txt 文档注入知识库(与文档备份桶 rag-documents 可不同)
     MINIO_SOURCE_BUCKET: str = "rag-documents"

@@ -35,6 +35,32 @@ def log_state(*extra):
     return current
 
 
+@pytest.mark.parametrize('mutation', ['', 'unregistered', 'wrong_consumer', 'other_target', 'older', 'unchanged'])
+def test_log_refresh_recognizes_registered_consumer_dependency(mutation):
+    current = log_state()
+    current['target_resolution'] = {'status': 'resolved', 'allowed_services': ['entry', 'redis'],
+        'allowed_dependencies': ['entry_redis'], 'dependency_services': {'entry_redis': 'redis'}}
+    previous = datetime.fromisoformat(json.loads(current['raw_evidence'][0][1])['collected_at'])
+    catalog = evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
+        'dependency_details': {} if mutation == 'unregistered' else {
+            'entry_redis': {'source_service': 'other' if mutation == 'wrong_consumer' else 'entry'}}})
+    catalog['collected_at'] = previous.isoformat()
+    current['raw_evidence'].append(('inventory', json.dumps(catalog)))
+    dep = evidence(target_id='other' if mutation == 'other_target' else settings.PROBE_TARGET_ID,
+        operation='dependency_probe', payload={'dependency': 'entry_redis',
+            'source_service': 'entry', 'host': 'redis', 'port': 6379, 'tcp': 'failed'})
+    dep['collected_at'] = (previous + timedelta(seconds=-1 if mutation == 'older' else 1)).isoformat()
+    if mutation == 'unchanged':
+        old = deepcopy(dep)
+        old['collected_at'] = (previous - timedelta(seconds=1)).isoformat()
+        current['raw_evidence'].append(('old dependency', json.dumps(old)))
+    current['raw_evidence'].append(('new dependency', json.dumps(dep)))
+    records = inv.evidence_index(current)
+    check = log_check(repeat_reason='inspect consumer after new dependency failure',
+        repeat_evidence_ids=list(records))
+    assert bool(progress_error(check.model_dump(), current, records)) is (mutation != '')
+
+
 def test_handoff_exposes_missing_condition_and_preserves_causal_unknown():
     answer = decision(next_check='', next_tools=[], next_arguments=None, alternatives=[
         inv.Alternative(explanation='进程不存在', status='unresolved', claim_type='observed_condition'),

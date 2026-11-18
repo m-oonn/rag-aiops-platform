@@ -12,12 +12,14 @@ from typing import Any, Dict, List
 import os
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from src.agent.aiops.skills import SKILLS, render_skills_block, route_skills
+from src.agent.aiops import run_store
 from src.agent.aiops.state import PlanExecuteState
 from src.agent.aiops.tools import load_agent_tools, investigation_tool_catalog, config_file_read_unavailable
 from src.agent.aiops.structured import ainvoke_structured
@@ -29,13 +31,12 @@ from src.probe.evidence import validate_tool_evidence
 from src.probe.protocol import redact
 from src.agent.aiops.executor import _record_probe_evidence
 from src.agent.aiops.target_catalog import resolve_target
-from src.agent.aiops.evidence_reader import evidence_read_tool
+from src.agent.aiops.evidence_reader import evidence_read_tool, can_read_run_evidence
 from src.agent.aiops.evidence_sources import source_availability, knowledge_context
 
 _EXPERIENCE_TOP_K = 2  # 少 tokens(2026-09-23): 3→2, 2 条相关经验足够参考
 
-# 计划步数硬上限：与 DynamicClassificationStrategy._MAX_STEPS 匹配，
-# 防止 LLM 生成超长计划导致"步数上限强制 respond"时 Top1 尚未收敛。
+# 单次初始计划的展示与执行批次上限；不是自主调查总检查次数上限。
 _MAX_PLAN_STEPS = 6
 
 def _sanitize_plan_steps(steps: list[str], tools: list) -> list[str]:
@@ -226,6 +227,29 @@ class Plan(BaseModel):
     )
 
 
+async def _audited_experience(state, query):
+    """Record internal retrieval with the same run ledger as model-selected tools."""
+    if not state.get("thread_id"):
+        return _retrieve_experience(query)  # Legacy callers without persisted run context.
+    arguments = {"query": query, "kb_ids": settings.EXPERIENCE_KB_IDS,
+                 "purpose": "选择排查方法；不是现场证据"}
+    started = time.monotonic()
+    call_id = run_store.start_tool_call(state["thread_id"], state.get("user_id"), 0,
+        "规划前检索排查参考", None, "retrieve_experience", {"proposed": arguments, "executed": arguments})
+    if call_id is None:
+        raise run_store.ToolCallAuditError("experience_audit_unavailable")
+    try:
+        result = await asyncio.to_thread(_retrieve_experience, query)
+    except BaseException as exc:
+        run_store.finish_tool_call_or_raise(call_id, status="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+            reason=type(exc).__name__, result="参考检索未完成", elapsed_ms=(time.monotonic() - started) * 1000)
+        raise
+    run_store.finish_tool_call_or_raise(call_id, status="success", reason="" if result else "empty_or_unavailable",
+        result=result or "未返回参考；可能为空、停用或不可用，不能据此判定无相关知识。",
+        elapsed_ms=(time.monotonic() - started) * 1000)
+    return result
+
+
 planner_prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -321,7 +345,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             tools, err = await load_agent_tools(True)
         if err:
             logger.warning(f"[planner] MCP 工具加载失败: {err}")
-        if state.get('thread_id') and state.get('user_id') is not None:
+        if can_read_run_evidence(state.get('thread_id'), state.get('user_id')):
             tools = [*tools, evidence_read_tool(state['thread_id'], state['user_id'])]
         tools_description = _format_tools(tools)
         probe_context = ""
@@ -339,8 +363,28 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
                 if not tool:
                     probe_context += f"\nWindows 主机 Probe 工具 {tool_name} 不可用。"
                     continue
+                if not state.get('thread_id'):
+                    reason = 'tool_call_audit_context_missing'
+                    probe_context += f"\n【{tool_name}】现场未采集：诊断缺少审计标识。"
+                    readiness.append({'tool': tool_name, 'status': 'failed', 'reason': reason,
+                        'checked_at': datetime.now(timezone.utc).isoformat()})
+                    continue
+                record_id = run_store.start_tool_call(
+                    str(state['thread_id']), state.get('user_id'), 0,
+                    '规划前初始现场采集', f'planner-{tool_name}', tool_name,
+                    {'proposed': {}, 'executed': {}},
+                )
+                if record_id is None:
+                    reason = 'tool_call_audit_unavailable'
+                    probe_context += f"\n【{tool_name}】现场未采集：无法持久化调用审计记录。"
+                    readiness.append({'tool': tool_name, 'status': 'failed', 'reason': reason,
+                        'checked_at': datetime.now(timezone.utc).isoformat()})
+                    continue
+                started = time.monotonic()
+                call_status, call_reason, call_result = 'failed', 'tool_call_interrupted', ''
                 try:
                     result = await asyncio.wait_for(tool.ainvoke({}), timeout=15)
+                    call_result = result
                     if tool_name == 'probe_inventory':
                         result = validate_tool_evidence(result, tool_name=tool_name, target_id=settings.PROBE_TARGET_ID)
                         inventory = result.get('payload')
@@ -352,11 +396,20 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
                         probe_events.extend(_record_probe_evidence(state, text, 'inventory'))
                     readiness.append({'tool': tool_name, 'status': 'success', 'reason': '',
                         'checked_at': datetime.now(timezone.utc).isoformat()})
+                    call_status, call_reason = 'success', ''
+                except asyncio.CancelledError:
+                    call_status, call_reason = 'cancelled', 'tool_call_cancelled'
+                    raise
                 except Exception as exc:
+                    call_reason = type(exc).__name__
+                    call_result = {'error': call_reason}
                     probe_context += f"\n【{tool_name}】现场不可用：{type(exc).__name__}"
                     readiness.append({'tool': tool_name, 'status': 'failed',
                         'reason': type(exc).__name__ + ':' + str(redact(str(exc)))[:300],
                         'checked_at': datetime.now(timezone.utc).isoformat()})
+                finally:
+                    run_store.finish_tool_call_or_raise(record_id, status=call_status, reason=call_reason,
+                        result=call_result, elapsed_ms=(time.monotonic() - started) * 1000)
         for check in readiness:
             probe_raw.append(('工具就绪核对', json.dumps({'data_source': 'tool_execution', **check}, ensure_ascii=False)))
         resolution = resolve_target(settings.DIAGNOSTIC_TARGET_CATALOG, input_text, inventory,
@@ -368,7 +421,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
                 'diagnosis': {'version': 1, 'kind': 'unlocated', 'target_id': settings.PROBE_TARGET_ID,
                     'scope': input_text, 'conclusion': reason, 'evidence': [], 'alternatives': [],
                     'contradictions': [], 'limitations': resolution.get('mismatches', []), 'stop_reason': reason}}
-        experience = redact(_retrieve_experience(input_text))
+        experience = redact(await _audited_experience(state, input_text))
         reference_context += '\n' + experience
         if knowledge_context([('规划前知识检索', experience)]):
             # 保留检索来源供后续引用；knowledge_base 标记禁止进入现场证据索引。
@@ -387,14 +440,16 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         if any(config_file_read_unavailable(step, tools) for step in result.steps):
             reference_context += ('\n规划能力限制：文件读取计划未被执行；仅在有已登记日志工具时改查日志。'
                                   '原配置文件内容仍未核实，日志不能替代配置文件原文。')
-        # 硬截断，防止 LLM 输出超长计划（超长计划会撞上策略的步数上限，
-        # 在 Top1 未收敛时就强制 respond）
+        proposed_count = len(steps)
+        # 初始批次上限与后续自主调查、递归和费用边界分别记录。
         if len(steps) > _MAX_PLAN_STEPS:
             logger.warning(f"[planner] 计划 {len(steps)} 步超过上限 {_MAX_PLAN_STEPS},截断")
             steps = steps[:_MAX_PLAN_STEPS]
         logger.info(f"[planner] 计划已生成,共 {len(steps)} 步")
         return {
             "plan": steps,
+            "plan_limits": {"initial_limit": _MAX_PLAN_STEPS, "proposed": proposed_count,
+                            "accepted": len(steps), "truncated": proposed_count > len(steps)},
             "terminal_enabled": terminal_enabled,
             "autonomous_investigation": terminal_enabled or settings.PROBE_ENABLED,
             "raw_evidence": probe_raw,
@@ -405,6 +460,8 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             'evidence_source_availability': source_availability(tools, readiness),
         }
 
+    except run_store.ToolCallAuditError:
+        raise
     except Exception:
         logger.exception("[planner] 生成计划失败,用默认计划")
         return {

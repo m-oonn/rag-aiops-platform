@@ -30,6 +30,38 @@ def decide(current, answer):
     return inv.decide_from_evidence(current, answer, inv.evidence_index(current))
 
 
+def test_same_label_does_not_block_a_different_verified_query():
+    current = state(('dependency_probe', {'dependency': 'entry', 'tcp': 'ok'}))
+    current['raw_evidence'] = [('inspect entry', current['raw_evidence'][0][1])]
+    current['past_steps'] = [('inspect entry', 'completed')]
+    current['target_resolution'] = {'status': 'resolved', 'allowed_dependencies': ['entry', 'other']}
+    answer = decision(next_arguments={'probe_dependency_probe': {'dependency': 'other'}})
+    result = decide(current, answer)
+    assert result['plan'] == ['inspect entry']
+    assert result['investigation_memory']['next_arguments'] == answer.next_arguments
+    assert not decide(current, decision())['plan']
+    current['raw_evidence'].append(('inspect entry', json.dumps({
+        'data_source': 'tool_execution', 'tool': 'probe_dependency_probe',
+        'arguments': {'dependency': 'other'}, 'status': 'failed', 'reason': 'unavailable'})))
+    assert not decide(current, answer)['plan']
+
+
+def test_same_label_with_a_new_tool_uses_its_query_identity():
+    current = state(('dependency_probe', {'dependency': 'entry', 'tcp': 'ok'}))
+    current['raw_evidence'] = [('inspect entry', current['raw_evidence'][0][1])]
+    current['past_steps'] = [('inspect entry', 'completed')]
+    current['target_resolution'] = {'status': 'resolved', 'allowed_services': ['entry'],
+                                    'allowed_dependencies': ['entry']}
+    answer = decision(next_tools=['probe_text_log'], next_arguments={
+        'probe_text_log': {'service': 'entry', 'path': 'D:/entry.log'}})
+    assert decide(current, answer)['plan'] == ['inspect entry']
+    answer.next_tools.append('probe_dependency_probe')
+    answer.next_arguments['probe_dependency_probe'] = {'dependency': 'entry'}
+    assert not decide(current, answer)['plan']  # An old query still needs repeat evidence.
+    answer.next_arguments = None
+    assert not decide(current, answer)['plan']  # Legacy opaque steps remain conservative.
+
+
 @pytest.mark.parametrize('main_error', ['missing_tool', 'completed'])
 def test_unexecutable_main_check_uses_current_valid_alternative(main_error):
     current = state()
@@ -58,6 +90,21 @@ def test_missing_prose_does_not_block_an_executable_argument_map():
     assert result['plan'] == ['inspect entry']
     assert result['investigation_memory']['next_arguments'] == {
         'probe_dependency_probe': {'dependency': 'entry'}}
+
+
+def test_mcp_arguments_are_removed_from_probe_map_and_tool_stays_scheduled():
+    current = state()
+    current['investigation_tools'].append({'name': 'search_log'})
+    answer = decision(next_tools=['search_log'], next_arguments={
+        'search_log': {'topic_id': 'orders', 'start_time': 1, 'end_time': 2}})
+
+    result = decide(current, answer)
+
+    assert result['plan'] == ['inspect entry']
+    memory = result['investigation_memory']
+    assert memory['next_tools'] == ['search_log']
+    assert memory['next_arguments'] is None
+    assert any('普通 MCP 工具误填' in issue for issue in memory['validation_issues'])
 
 
 def test_blocked_check_does_not_claim_global_exhaustion():

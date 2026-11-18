@@ -187,8 +187,12 @@ async def test_probe_only_run_uses_persistent_investigation_and_survives_reopen(
 
 
 @pytest.mark.asyncio
-async def test_planner_persists_initial_inventory_without_enabling_terminal(monkeypatch):
+async def test_planner_persists_initial_inventory_without_enabling_terminal(monkeypatch, engine):
+    from sqlalchemy.orm import sessionmaker
+
     planner = importlib.import_module('src.agent.aiops.planner')
+    run_store = importlib.import_module('src.agent.aiops.run_store')
+    monkeypatch.setattr(run_store, 'SessionLocal', sessionmaker(bind=engine))
     raw = evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={'hostname': 'test'})
     tool = SimpleNamespace(name='probe_inventory', args={}, description='inventory',
                            ainvoke=AsyncMock(return_value=[{'type': 'text', 'text': json.dumps(raw)}]))
@@ -207,10 +211,30 @@ async def test_planner_persists_initial_inventory_without_enabling_terminal(monk
     assert result['evidence_events'] == [{'evidence_id': 'ev-test'}]
     assert json.loads(result['raw_evidence'][0][1]) == raw
     writes.assert_called_once()
+    calls = run_store.list_tool_calls('probe-plan')
+    assert len(calls) == 2
+    assert calls[0]['tool'] == 'probe_inventory' and calls[0]['status'] == 'success'
+    assert calls[1]['tool'] == 'retrieve_experience' and calls[1]['status'] == 'success'
+    assert 'hidden-guidance' not in calls[1]['result']
     references = result['investigation_reference_context']
     assert 'localapp downstream' in references and 'handbook-marker' in references
     assert 'hidden-guidance' not in references and 'hidden-config' not in references
     assert 'handbook-marker' not in str(result['raw_evidence'])
+
+
+@pytest.mark.asyncio
+async def test_planner_skips_initial_probe_without_audit_context(monkeypatch):
+    planner = importlib.import_module('src.agent.aiops.planner')
+    tool = SimpleNamespace(name='probe_inventory', args={}, description='inventory',
+                           ainvoke=AsyncMock(return_value='must not run'))
+    monkeypatch.setattr(settings, 'PROBE_ENABLED', True)
+    monkeypatch.setattr(settings, 'DIAGNOSTIC_TARGET_CATALOG', '{}')
+    monkeypatch.setattr(planner, 'load_agent_tools', AsyncMock(return_value=([tool], None)))
+
+    result = await planner.planner({'input': 'mall request failed'})
+
+    tool.ainvoke.assert_not_awaited()
+    assert 'tool_call_audit_context_missing' in json.dumps(result['raw_evidence'])
 
 
 @pytest.mark.asyncio
@@ -242,8 +266,10 @@ async def test_planner_uses_registered_business_entry_before_model(monkeypatch, 
     monkeypatch.setattr(planner_module, 'load_agent_tools', AsyncMock(return_value=([tool], None)))
     monkeypatch.setattr(planner_module, 'create_agent_llm', MagicMock())
     monkeypatch.setattr(planner_module, 'ainvoke_structured', invoke)
+    monkeypatch.setattr(planner_module.run_store, 'start_tool_call', lambda *args: 'planner-audit')
+    monkeypatch.setattr(planner_module.run_store, 'finish_tool_call', lambda *args, **kwargs: True)
 
-    result = await planner_module.planner({'input': symptom})
+    result = await planner_module.planner({'input': symptom, 'thread_id': 'planner-test'})
 
     assert result['target_resolution']['status'] == expected_status
     if expected_status == 'resolved':
@@ -383,6 +409,9 @@ async def test_failed_loopback_dependency_listener_check_runs_and_pid_stays_obse
     from langchain_core.tools import StructuredTool
     executor = importlib.import_module('src.agent.aiops.executor')
     investigation = importlib.import_module('src.agent.aiops.strategies.investigation')
+    monkeypatch.setattr(executor.run_store, 'start_tool_call', lambda *args: 'loopback-audit')
+    monkeypatch.setattr(executor.run_store, 'finish_tool_call', lambda *args, **kwargs: True)
+    monkeypatch.setattr(executor, '_record_probe_evidence', lambda *args: [])
 
     dependency = evidence(target_id=settings.PROBE_TARGET_ID, operation='dependency_probe', payload={
         'dependency': 'downstream', 'host': '127.0.0.1', 'port': 6989,
@@ -407,7 +436,7 @@ async def test_failed_loopback_dependency_listener_check_runs_and_pid_stays_obse
     monkeypatch.setattr(executor, 'ainvoke_with_retry', AsyncMock(side_effect=[
         AIMessage(content='', tool_calls=[tool_call]), AIMessage(content='监听进程 PID 为 43210。')]))
 
-    initial = {'input': '入口返回503，下游连接失败', 'target_resolution': {
+    initial = {'input': '入口返回503，下游连接失败', 'thread_id': 'loopback-test', 'target_resolution': {
         'status': 'resolved', 'target_id': settings.PROBE_TARGET_ID,
         'service': 'localapp', 'allowed_dependencies': ['downstream'],
         'allowed_services': ['localapp'], 'services': {'localapp': {'expected_ports': []}}},

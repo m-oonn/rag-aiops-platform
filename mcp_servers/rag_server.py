@@ -203,6 +203,10 @@ def get_document_info(doc_id: int) -> Dict[str, Any]:
     db = SessionLocal()
     try:
         # 文档元信息
+        from src.database.models import AiopsExperience
+        if db.query(AiopsExperience).filter(AiopsExperience.document_id == doc_id,
+                AiopsExperience.status != "published").first():
+            return {"error": "此经验未发布或已撤回，不能作为知识参考"}
         doc = db.execute(sql_text(
             "SELECT id, doc_uid, filename, file_type, file_size, status, chunk_count "
             "FROM knowledge_documents WHERE id = :doc_id"

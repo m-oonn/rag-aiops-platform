@@ -6,10 +6,21 @@ import httpx
 import pytest
 
 from scripts.aiops_test_environment import (
-    archive_round, check_environment_round, install_budget, product_environment, save,
+    _local_test_api_allowed, archive_round, check_environment_round, install_budget, product_environment, save,
 )
 from scripts.competing_hypothesis_fixture import CompetingFaultFixture
 from scripts.verify_competing_hypothesis_scenario import write_scenario_files
+
+
+@pytest.mark.parametrize('method,path,allowed', [
+    ('POST', '/api/v1/auth/login/access-token', True),
+    ('GET', '/api/v1/auth/me', True),
+    ('GET', '/api/v1/aiops/thread-1', True),
+    ('GET', '/api/v1/users', False),
+    ('POST', '/api/v1/aiops', False),
+])
+def test_local_test_backend_allows_frontend_auth_check_only(method, path, allowed):
+    assert _local_test_api_allowed(method, path) is allowed
 
 
 @pytest.mark.integration

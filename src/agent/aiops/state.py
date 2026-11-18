@@ -22,6 +22,7 @@ class PlanExecuteState(TypedDict):
 
     # 执行计划:待执行的线性步骤列表
     plan: List[str]
+    plan_limits: NotRequired[dict]
 
     # 已执行步骤历史 (步骤, 结果)。operator.add = 追加而非覆盖。
     past_steps: Annotated[List[Tuple[str, str]], operator.add]

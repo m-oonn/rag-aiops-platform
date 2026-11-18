@@ -58,6 +58,7 @@ async def main():
     checks = [('probe_inventory', {}), ('probe_resource_snapshot', {}),
               ('probe_process_snapshot', {'sort_by': 'memory'}),
               ('probe_process_snapshot', {'sort_by': 'cpu'}), ('probe_port_snapshot', {})]
+    checks.append(('probe_port_snapshot', {'local_port': 1, 'listening_only': True}))
     for name in cfg.services:
         checks += [('probe_service_status', {'service': name}),
                    ('probe_event_log', {'service': name, 'limit': 5})]
@@ -84,6 +85,11 @@ async def main():
             assert batch_results[index].tool_call_id == str(index)
             result = batch_results[index].content
         value = validate_tool_evidence(result, tool_name=name, target_id=cfg.target_id)
+        if name == 'probe_inventory':
+            assert value['payload']['probe_version'] == '1.0.1', 'installed Probe runtime is outdated'
+        if name == 'probe_port_snapshot' and params.get('local_port') is not None:
+            assert value['payload']['local_port'] == params['local_port']
+            assert value['payload']['listening_only'] is params['listening_only']
         if name == 'probe_process_snapshot':
             payload = value['payload']
             assert payload['cpu_sample_interval_seconds'] in {0.1, None}

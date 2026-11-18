@@ -24,9 +24,10 @@ class TargetCatalog(BaseModel):
     services: dict[str, BusinessService]
 
 
-def normalized_url(value):
+def normalized_url(value, *, allow_query=False):
     url = urlsplit(value)
-    if url.scheme not in {'http', 'https'} or not url.hostname or url.username or url.password or url.query or url.fragment:
+    if (url.scheme not in {'http', 'https'} or not url.hostname or url.username or url.password
+            or (not allow_query and (url.query or url.fragment))):
         raise ValueError('entry must be an HTTP URL without credentials, query or fragment')
     port = url.port or (443 if url.scheme == 'https' else 80)
     return (url.scheme, url.hostname.lower(), port, url.path.rstrip('/') or '/')
@@ -71,7 +72,8 @@ def resolve_target(raw, query, inventory, target_id, aliases='{}'):
         url_match = False
         for url in urls:
             try:
-                url_match |= any(normalized_url(url) == normalized_url(entry) for entry in service.entries)
+                # Query values identify an operation, never expand the registered path or tool scope.
+                url_match |= any(normalized_url(url, allow_query=True) == normalized_url(entry) for entry in service.entries)
             except ValueError:
                 pass
         if url_match or (mentioned and not urls):

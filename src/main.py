@@ -1,4 +1,5 @@
 import sys
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -181,9 +182,19 @@ def create_app() -> FastAPI:
     is_prod = settings.APP_ENV == "production"
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        watch_task = None
+        if settings.OPS_WATCH_ENABLED:
+            from src.agent.aiops.continuous_monitor import run_continuous_watch
+            watch_task = asyncio.create_task(run_continuous_watch(), name="ops-watch")
         try:
             yield
         finally:
+            if watch_task:
+                watch_task.cancel()
+                try:
+                    await watch_task
+                except asyncio.CancelledError:
+                    pass
             await aiops.aiops_service.close()
 
     app = FastAPI(

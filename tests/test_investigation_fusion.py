@@ -37,6 +37,21 @@ def test_exact_business_resolution_and_conflicts_do_not_grant_permissions():
     assert resolve_target('old reference', 'orders', {}, settings.PROBE_TARGET_ID)['status'] == 'legacy_reference'
 
 
+def test_registered_operation_url_with_query_resolves_without_expanding_scope():
+    raw = catalog(old={'aliases': ['商城']}, mall={'aliases': ['mall 商城'],
+        'entries': {'http://localhost:8324/search': 'search'}, 'probe_service': 'search'})
+    inventory = {'configured_services': {'search': {}}, 'configured_dependencies': ['search']}
+    found = resolve_target(raw, 'mall 商城 http://localhost:8324/search?keyword=商品#result 拒绝连接',
+                           inventory, settings.PROBE_TARGET_ID)
+    assert found['status'] == 'resolved' and found['service'] == 'mall'
+    assert found['allowed_dependencies'] == ['search']
+    for url in ('http://localhost:8324/other?keyword=商品', 'http://other:8324/search?q=商品',
+                'http://user:password@localhost:8324/search?q=商品'):
+        assert resolve_target(raw, 'mall 商城 ' + url, inventory, settings.PROBE_TARGET_ID)['status'] != 'resolved'
+    with pytest.raises(ValueError):
+        normalized_url('http://localhost:8324/search?q=商品')
+
+
 def test_dependency_service_mapping_is_explicit_and_inventory_restricted():
     catalog = {'version': 1, 'target_id': settings.PROBE_TARGET_ID, 'services': {
         'entry': {'dependencies': ['db'], 'dependency_services': {'db': 'db-worker', 'rogue': 'other'}}}}
@@ -688,12 +703,13 @@ def test_repeat_guard_requires_two_valid_returns(invalid):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('same_batch', [False, True])
-async def test_executor_blocks_third_unchanged_query_in_same_step_but_keeps_other_object(monkeypatch, same_batch):
+async def test_executor_blocks_third_unchanged_query_in_same_step_but_keeps_other_object(monkeypatch, same_batch, engine):
     import importlib
     from types import SimpleNamespace
     from langchain_core.messages import AIMessage
     from langchain_core.tools import StructuredTool
     ex = importlib.import_module('src.agent.aiops.executor')
+    monkeypatch.setattr(run_store, 'SessionLocal', sessionmaker(bind=engine))
     called = []
 
     async def probe(dependency: str):
@@ -710,7 +726,8 @@ async def test_executor_blocks_third_unchanged_query_in_same_step_but_keeps_othe
     responses = ([AIMessage(content='', tool_calls=calls)] if same_batch else [
         AIMessage(content='', tool_calls=calls[:1]), AIMessage(content='', tool_calls=calls[1:])])
     monkeypatch.setattr(ex, 'ainvoke_with_retry', AsyncMock(side_effect=[*responses, AIMessage(content='done')]))
-    result, raw = await ex._run_step('inspect dependencies', {'autonomous_investigation': True})
+    result, raw = await ex._run_step('inspect dependencies', {'autonomous_investigation': True,
+        'thread_id': 'repeat-check', 'user_id': 712})
     assert result == 'done'
     assert called == ['db', 'db', 'other']
     records = inv.execution_checks({'raw_evidence': [('step', raw)]})

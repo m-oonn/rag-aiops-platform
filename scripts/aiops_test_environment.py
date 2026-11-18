@@ -204,6 +204,11 @@ def product_environment(output):
         'SECRET_KEY': hashlib.sha256((output / 'token').read_bytes()).hexdigest()}
 
 
+def _local_test_api_allowed(method, path):
+    return ((method == 'GET' and (path.startswith('/api/v1/aiops/') or path == '/api/v1/auth/me'))
+        or (method == 'POST' and path == '/api/v1/auth/login/access-token'))
+
+
 def backend(args):
     output = args.output.resolve()
     os.environ.update(product_environment(output))
@@ -254,10 +259,7 @@ def backend(args):
             except ValueError:
                 return JSONResponse({'detail': '测试环境已停止或切换轮次，请重启测试后端。'}, status_code=503)
             used = True
-        elif path.startswith('/api/') and not (
-            request.method == 'GET' and path.startswith('/api/v1/aiops/') or
-            request.method == 'POST' and path == '/api/v1/auth/login/access-token'
-        ):
+        elif path.startswith('/api/') and not _local_test_api_allowed(request.method, path):
             return JSONResponse({'detail': '该独立环境只开放诊断、读取报告与登录。'}, status_code=403)
         return await call_next(request)
 
@@ -331,6 +333,7 @@ def install_budget(args, stack):
     from src.settings import settings
     from src.probe.protocol import redact
     output = args.output.resolve() / 'product-model'
+    run_limit_cny = getattr(args, 'run_limit_cny', 5)
     model_max_output_tokens = int(getattr(args, 'model_max_output_tokens', 4096))
     if model_max_output_tokens < 1024:
         raise ValueError('model max output tokens must be at least 1024')
@@ -343,28 +346,28 @@ def install_budget(args, stack):
     manifest_path = output / 'run-budget.json'
     manifest = {'version': 1, 'previous_sha256': baseline_hash,
                 'inherited_requests': len(baseline['requests']),
-                'inherited_reserved_cny': baseline['reserved_cny'], 'run_limit_cny': 5}
+                'inherited_reserved_cny': baseline['reserved_cny'], 'run_limit_cny': run_limit_cny}
     if manifest_path.exists() and json.loads(manifest_path.read_text(encoding='utf-8')) != manifest:
         raise ValueError('run budget baseline changed; cannot reset this round')
     previous = read_cost_ledger(ledger_path, for_resume=False, output=output,
-        timeout_authorization=None if resuming else args.timeout_authorization, run_limit_cny=5)
+        timeout_authorization=None if resuming else args.timeout_authorization, run_limit_cny=run_limit_cny)
     if resuming and (previous['requests'][:len(baseline['requests'])] != baseline['requests']
             or previous.get('request_limits', {}).get('inherited_requests') != len(baseline['requests'])):
         raise ValueError('resumed ledger does not match the original run baseline')
-    cumulative_limit = baseline['reserved_cny'] + 5
+    cumulative_limit = baseline['reserved_cny'] + run_limit_cny
     # A backend restart in the same round must reuse the existing ledger and
     # persisted run data so the frontend can restore the completed report.
     output.mkdir(exist_ok=True)
     save(manifest_path, manifest)
     budget = PaidRequestBudget(output, max_output_tokens=model_max_output_tokens, limit_cny=cumulative_limit,
-        run_limit_cny=5, api_base=settings.RESOLVED_LLM_API_BASE,
+        run_limit_cny=run_limit_cny, api_base=settings.RESOLVED_LLM_API_BASE,
         fallback_api_base=settings.LLM_FALLBACK_API_BASE if settings.LLM_FALLBACK_ENABLED else None,
         fallback_model=settings.LLM_FALLBACK_MODEL if settings.LLM_FALLBACK_ENABLED else None)
     budget.ledger = deepcopy(previous['requests'])
     budget.reserved = previous['reserved_cny']
     budget.inherited_reserved = baseline['reserved_cny']
     budget.inherited_requests = len(baseline['requests'])
-    budget.allow_inherited_unknown = True
+    budget.allow_inherited_unknown = not getattr(args, 'strict_inherited_usage', False)
     budget.blocked_requests = deepcopy(previous.get('blocked_requests', []))
     if args.timeout_authorization:
         if resuming:
@@ -372,14 +375,14 @@ def install_budget(args, stack):
             # ledger, then bind the same historical row in the resumed ledger.
             original = read_cost_ledger(args.previous_cost, for_resume=False)
             _, authorized = validate_timeout_authorization(args.timeout_authorization, args.previous_cost,
-                                                           original, output, previous['limit_cny'], 5)
+                                                           original, output, previous['limit_cny'], run_limit_cny)
             row = next((item for item in previous['requests']
                         if item.get('number') == authorized.get('number')), None)
             if row is None or row.get('status') != authorized.get('status'):
                 raise ValueError('timeout authorization row is missing from resumed ledger')
         else:
             _, row = validate_timeout_authorization(args.timeout_authorization, args.previous_cost, previous,
-                                                   output, previous['limit_cny'], 5)
+                                                   output, previous['limit_cny'], run_limit_cny)
         budget.authorized_historical_timeouts = [deepcopy(row)]
         save(output / 'timeout-authorization-use.json', {'path': str(args.timeout_authorization.resolve()),
              'sha256': hashlib.sha256(args.timeout_authorization.read_bytes()).hexdigest()})

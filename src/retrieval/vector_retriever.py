@@ -24,4 +24,5 @@ class VectorRetriever(BaseRetriever):
 
         results = self.milvus_client.search(query_vector, top_k=top_k, expr=expr)
 
-        return results
+        from src.agent.aiops.experience import filter_published_results
+        return filter_published_results(results)

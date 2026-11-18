@@ -10,16 +10,30 @@ FAULT_LABELS = {
     'expected_port_not_listening': '期望端口未监听',
     'dependency_tcp_failed': '配置依赖 TCP 探测失败',
     'dependency_http_failed': 'HTTP 探测返回失败状态',
+    'dependency_query_failed': '依赖的实际功能检查未通过',
     'port_owner_mismatch': '监听端口归属与服务 PID 不符',
     'configuration_error_log_matches_snapshot': '配置错误日志与当前独立配置快照字段及哈希一致',
     'configured_downstream_endpoint_mismatch': '应用加载的下游端点与登记端点不一致',
 }
 
 
+def dependency_healthy(payload):
+    """A reachable socket cannot establish adapter or HTTP health."""
+    if payload.get('error') or payload.get('tcp') != 'ok':
+        return False
+    if payload.get('probe_kind') not in (None, '', 'tcp') or 'query' in payload:
+        return payload.get('query') == 'ok' and not payload.get('error_type')
+    if 'http' in payload:
+        http = payload['http'] or {}
+        return (not http.get('error') and type(http.get('status')) is int
+                and 200 <= http['status'] < 300)
+    return True
+
+
 def observation_scope(value):
     payload = value.get('payload') or {}
     keys = ('service', 'dependency', 'path', 'local_port', 'listening_only',
-            'sort_by', 'channels', 'since_minutes', 'limit', 'line_limit')
+            'sort_by', 'channels', 'since_minutes', 'limit', 'line_limit', 'contains')
     return (value.get('target_id'), value.get('operation'),
             tuple((key, json.dumps(payload[key], sort_keys=True, ensure_ascii=False))
                   for key in keys if key in payload))
@@ -105,6 +119,8 @@ def observation_clues(records, scope=None):
                        for row in payload['ports']):
                 codes.append('port_not_listening')
         if complete and operation == 'dependency_probe':
+            if payload.get('query') in {'failed', 'no_worker_reply'}:
+                codes.append('dependency_query_failed')
             if payload.get('tcp') == 'failed':
                 codes.append('dependency_tcp_failed')
             if payload.get('http', {}).get('status', 200) >= 400:
@@ -124,7 +140,11 @@ def observation_clues(records, scope=None):
                             and json.loads(r['payload']).get('payload', {}).get('service') == service.get('probe_service')
                             and not json.loads(r['payload']).get('truncated')
                             and not json.loads(r['payload']).get('payload', {}).get('error')]
-                        service_pid = service_records[-1][1]['payload'].get('pid') if service_records else None
+                        service_body = service_records[-1][1]['payload'] if service_records else {}
+                        # Docker Desktop's Linux PID and the Windows port forwarder
+                        # live in different namespaces, so equality proves nothing.
+                        service_pid = (service_body.get('pid') if service_body.get('kind') != 'docker'
+                                       and service_body.get('pid_namespace', 'host') == 'host' else None)
                         if service_pid and all(p.get('pid') is not None and p['pid'] != service_pid for p in listeners):
                             codes.append('port_owner_mismatch')
                             key, value = service_records[-1]

@@ -142,11 +142,10 @@ async def test_probe_coverage_states_survive_real_sse_and_reopened_refresh(
             assert 'TCP failed' in summaries[-1]['summary'] and not summaries[-1]['error']
             assert {f['code'] for f in complete['diagnosis']['observed_findings']} == {'dependency_tcp_failed'}
             assert complete['diagnosis']['kind'] == 'localized_fault'
-            question = complete['diagnosis']['unresolved_questions'][0]
-            # The scripted repeat check is rejected as an unexplained resample, so the
-            # engine records that reviewed stop and drops the rejected check instead of
-            # advertising it as a pending question.  The still-unverified dependency gap
-            # remains the open question.
+            # Rejection does not resolve the model's question. Locate the independent
+            # dependency gap by identity, without assuming it is the first open item.
+            question = next(q for q in complete['diagnosis']['unresolved_questions']
+                            if q['id'].startswith('gap-dependency-'))
             assert question['id'].startswith('gap-dependency-')
             assert question['question'] == 'downstream 连接失败的更深原因是什么？'
             assert '无法核查退出或启动失败原因' in question['limitation']

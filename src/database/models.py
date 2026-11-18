@@ -282,6 +282,22 @@ class AiopsRun(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class AiopsExperience(Base):
+    """Immutable source snapshot; only reviewed publications enter retrieval."""
+
+    __tablename__ = "aiops_experiences"
+
+    id = Column(Integer, primary_key=True)
+    candidate_uid = Column(String(40), unique=True, nullable=False)
+    thread_id = Column(String(96), unique=True, index=True, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    status = Column(String(24), nullable=False, default="pending")
+    payload = Column(JSON, nullable=False)
+    document_id = Column(Integer, nullable=True)  # Retain the audit reference after document deletion.
+    history = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class AiopsApproval(Base):
     """AIOps 诊断人工审批记录（HITL）。"""
 
@@ -343,6 +359,47 @@ class ProbeSnapshot(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class OpsWatchServiceState(Base):
+    """Latest persisted state for one explicitly monitored service."""
+
+    __tablename__ = "ops_watch_service_states"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_name = Column(String(128), unique=True, index=True, nullable=False)
+    status = Column(String(16), nullable=False, default="unknown")
+    latest_observation = Column(String(16), nullable=False, default="unknown")
+    breach_count = Column(Integer, nullable=False, default=0)
+    recovery_count = Column(Integer, nullable=False, default=0)
+    latest_value = Column(Float, nullable=True)
+    latest_sample_at = Column(DateTime(timezone=True), nullable=True)
+    latest_sample_signature = Column(JSON, nullable=True)
+    last_observed_at = Column(DateTime(timezone=True), nullable=True)
+    data_source = Column(String(32), nullable=True)
+    last_error = Column(Text, nullable=True)
+    active_incident_id = Column(String(64), nullable=True, index=True)
+    recent_observations = Column(JSON, nullable=False, default=list)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OpsWatchIncident(Base):
+    """Durable incident opened by consecutive real Prometheus samples."""
+
+    __tablename__ = "ops_watch_incidents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    incident_uid = Column(String(64), unique=True, index=True, nullable=False)
+    service_name = Column(String(128), index=True, nullable=False)
+    status = Column(String(16), nullable=False, default="open")
+    opened_at = Column(DateTime(timezone=True), nullable=False)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    evidence = Column(JSON, nullable=False, default=dict)
+    diagnosis_status = Column(String(24), nullable=False, default="disabled")
+    diagnosis_thread_id = Column(String(96), nullable=True)
+    diagnosis_report = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AiopsEvidence(Base):
     """Evidence ledger row; raw data stays in a protected file directory."""
 
@@ -359,5 +416,30 @@ class AiopsEvidence(Base):
     summary_redacted = Column(Text, nullable=True)
     raw_ref = Column(String(512), nullable=True)
     raw_hash = Column(String(80), nullable=False)
+    stored_hash = Column(String(80), nullable=True)
     fresh_until = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiopsToolCall(Base):
+    """Redacted lifecycle record for one proposed AIOps tool call."""
+
+    __tablename__ = "aiops_tool_calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_uid = Column(String(40), unique=True, index=True, nullable=False)
+    thread_id = Column(String(96), index=True, nullable=False)
+    user_id = Column(Integer, nullable=True, index=True)
+    step_index = Column(Integer, nullable=True)
+    step = Column(Text, nullable=True)
+    tool_call_id = Column(String(128), nullable=True)
+    tool_name = Column(String(128), nullable=False)
+    status = Column(String(24), nullable=False, default="running")
+    reason = Column(Text, nullable=True)
+    arguments = Column(JSON, nullable=False, default=dict)
+    result = Column(Text, nullable=True)
+    result_truncated = Column(Boolean, nullable=False, default=False)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    elapsed_ms = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

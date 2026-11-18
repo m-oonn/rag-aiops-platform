@@ -35,6 +35,26 @@ def test_gateway_authentication_and_offline_status():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("connected,expected_status", [(False, 503), (True, 200)])
+async def test_health_endpoint_reflects_probe_connection(monkeypatch, connected, expected_status):
+    from mcp_servers import probe_gateway as module
+
+    gateway = ProbeGateway(target_id="windows-local-01", token="token")
+    if connected:
+        gateway.websocket = object()
+        gateway.hello = hello(target_id="windows-local-01", hostname="PC")
+    monkeypatch.setattr(module, "gateway", gateway)
+
+    response = await module.health()
+
+    if connected:
+        assert response == {"status": "ok"}
+    else:
+        assert response.status_code == expected_status
+        assert response.body == b'{"status":"unavailable"}'
+
+
+@pytest.mark.asyncio
 async def test_evidence_list_returns_bounded_metadata_not_history_payloads(monkeypatch):
     from mcp_servers import probe_gateway as module
     from src.probe.protocol import utc_now

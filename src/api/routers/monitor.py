@@ -5,11 +5,93 @@ from pydantic import BaseModel, ConfigDict
 from celery.result import AsyncResult
 from src.worker.celery_app import celery_app
 from src.database.sql_session import get_db
-from src.database.models import KnowledgeDocument, User, KnowledgeBase
-from src.api.dependencies import get_current_user
+from src.database.models import KnowledgeDocument, User, KnowledgeBase, OpsWatchServiceState, OpsWatchIncident
+from src.api.dependencies import get_current_user, require_admin
 from sqlalchemy import desc
+from datetime import datetime, timezone
+from src.agent.aiops.run_store import _utc_datetime, _utc_iso
+from src.settings import settings
 
 router = APIRouter()
+
+
+def _watch_state(state, enabled):
+    now = datetime.now(timezone.utc)
+    times = [_utc_datetime(value) for value in (state.last_observed_at, state.latest_sample_at)]
+    stale = not enabled or any(value is None or not -5 <= (now - value).total_seconds()
+                              <= settings.OPS_WATCH_STALE_AFTER_SECONDS for value in times)
+    return {
+        "service_name": state.service_name,
+        "status": ("alerting" if state.active_incident_id else "unknown") if stale else state.status,
+        "latest_observation": "unknown" if stale else state.latest_observation,
+        "breach_count": 0 if stale else state.breach_count,
+        "recovery_count": 0 if stale else state.recovery_count,
+        "latest_value": None if stale else state.latest_value,
+        "latest_sample_at": _utc_iso(state.latest_sample_at),
+        "last_observed_at": _utc_iso(state.last_observed_at),
+        "data_source": state.data_source,
+        "last_error": ("监察未启用或样本已过期，等待新鲜观测" if stale else state.last_error),
+        "active_incident_id": state.active_incident_id,
+        "stale": stale,
+    }
+
+
+@router.get("/watch/services")
+def get_watch_services(
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Read persisted continuous-monitor state; this endpoint never starts the worker."""
+    states = db.query(OpsWatchServiceState).order_by(OpsWatchServiceState.service_name).all()
+    enabled = settings_watch_enabled()
+    return {"enabled": enabled, "services": [_watch_state(state, enabled) for state in states]}
+
+
+@router.get("/watch/incidents")
+def get_watch_incidents(
+    limit: int = 50,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    limit = min(max(limit, 1), 200)
+    incidents = (db.query(OpsWatchIncident)
+                 .order_by(desc(OpsWatchIncident.opened_at)).limit(limit).all())
+    return [{
+        "incident_id": incident.incident_uid,
+        "service_name": incident.service_name,
+        "status": incident.status,
+        "opened_at": _utc_iso(incident.opened_at),
+        "resolved_at": _utc_iso(incident.resolved_at),
+        "diagnosis_status": incident.diagnosis_status,
+        "diagnosis_thread_id": incident.diagnosis_thread_id,
+    } for incident in incidents]
+
+
+@router.get("/watch/incidents/{incident_id}")
+def get_watch_incident(
+    incident_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    incident = db.query(OpsWatchIncident).filter_by(incident_uid=incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="监察事件不存在")
+    return {
+        "incident_id": incident.incident_uid,
+        "service_name": incident.service_name,
+        "status": incident.status,
+        "opened_at": _utc_iso(incident.opened_at),
+        "resolved_at": _utc_iso(incident.resolved_at),
+        "evidence": incident.evidence,
+        "diagnosis_status": incident.diagnosis_status,
+        "diagnosis_thread_id": incident.diagnosis_thread_id,
+        "diagnosis_report": incident.diagnosis_report,
+    }
+
+
+def settings_watch_enabled() -> bool:
+    from src.settings import settings
+    return settings.OPS_WATCH_ENABLED
 
 class QueueItem(BaseModel):
     task_id: Optional[str]

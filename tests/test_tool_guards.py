@@ -221,7 +221,8 @@ async def test_run_single_tool_applies_guard_chain():
         "name": "search_log",
         "args": {"topic_id": "log-topic-api-gateway-001", "query": "error OR exception OR timeout"},
     }
-    await _run_single_tool(tc, {"search_log": tool}, real_ids=_REAL_IDS)
+    await _run_single_tool(tc, {"search_log": tool}, real_ids=_REAL_IDS,
+                           state={"thread_id": "tool-guard-test", "user_id": 1})
 
     assert captured["topic_id"] == "topic-003"
     assert "query" not in captured

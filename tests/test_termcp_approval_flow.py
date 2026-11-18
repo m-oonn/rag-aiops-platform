@@ -152,6 +152,12 @@ async def test_aiops_service_restarts_and_reads_approved_output_without_replayin
     monkeypatch.setattr(module, "verify_terminal_approval", AsyncMock(return_value={"state": "approved"}))
     strategy = SimpleNamespace(decide=AsyncMock(return_value={"response": "CPU normal"}))
     output_tool = SimpleNamespace(name="shell_output", ainvoke=AsyncMock(return_value="load average 0.1"))
+    tool_call_starts = []
+    tool_call_finishes = []
+    monkeypatch.setattr(module.run_store, "start_tool_call",
+                        lambda *args: tool_call_starts.append(args) or "shell-output-audit")
+    monkeypatch.setattr(module.run_store, "finish_tool_call",
+                        lambda call_uid, **kwargs: tool_call_finishes.append((call_uid, kwargs)) or True)
     monkeypatch.setattr("src.agent.aiops.executor._get_tools_cached", AsyncMock(return_value=([output_tool], None)))
     monkeypatch.setattr(module.AIOpsService, "_create_strategy", lambda self: strategy)
 
@@ -165,6 +171,9 @@ async def test_aiops_service_restarts_and_reads_approved_output_without_replayin
         events2 = [e async for e in service2.resume(thread_id, {"action": "approve"})]
         assert events2[-1]["type"] == "complete"
         assert events2[-1]["response"] == "CPU normal"
+        assert tool_call_starts[0][5] == "shell_output"
+        assert tool_call_finishes[0][1]["status"] == "success"
+        assert tool_call_finishes[0][1]["result"] == "load average 0.1"
         assert terminal_executor.await_count == 1
         output_tool.ainvoke.assert_awaited_once_with({"shell_id": "shell1", "timeout": 1})
         step, raw = strategy.decide.await_args.args[0]["raw_evidence"][0]

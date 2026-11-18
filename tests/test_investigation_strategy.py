@@ -704,9 +704,12 @@ async def test_final_decision_rechecks_evidence_freshness_after_model_wait(monke
     monkeypatch.setattr(module, 'validate_evidence', at_current_time)
     quote = '"state": "' + raw['payload']['state'] + '"'
     citation = module.Citation(evidence_id='e1.1', quote=quote)
+    calls = []
     async def decide(*args, **kwargs):
-        assert 'e1.1' in json.loads(args[3]['evidence'])
-        if expired_after_wait:
+        calls.append(args[3])
+        assert ('e1.1' in json.loads(args[3]['evidence'])) is (
+            not (expired_after_wait and len(calls) > 1))
+        if expired_after_wait and len(calls) == 1:
             current[0] = start + timedelta(seconds=181)
         return decision(outcome=outcome, root_cause='service stopped' if outcome == 'root_cause' else '',
             conclusion_level='localized_fault' if outcome == 'root_cause' else 'healthy_within_scope',

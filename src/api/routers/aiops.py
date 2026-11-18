@@ -6,16 +6,20 @@
   - 解耦: 运维诊断自成一路,不动现有 RAG 链路,demo 时单独展示。
 """
 
+import asyncio
 import json
 import re
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 from src.agent.aiops import aiops_service, run_store
-from src.api.dependencies import get_current_user
+from src.api.dependencies import get_current_user, require_admin
+from src.database.sql_session import get_db
+from sqlalchemy.orm import Session
 from src.database.models import User
 from src.agent.aiops.termcp_tools import TerminalApprovalStatusError, verify_terminal_approval
 from src.settings import settings
@@ -27,14 +31,51 @@ from src.utils.metrics import (
 )
 
 router = APIRouter()
+_diagnosis_tasks: set[asyncio.Task] = set()
+
+
+async def _detached_events(events):
+    """Disconnect only the subscriber; the owned run keeps persisting its work."""
+    queue = asyncio.Queue()
+    end = object()
+    connected = True
+
+    async def produce():
+        try:
+            async for event in events:
+                if connected:
+                    queue.put_nowait(event)
+        except Exception:
+            logger.exception("[aiops] 后台诊断流异常")
+        finally:
+            queue.put_nowait(end)
+
+    task = asyncio.create_task(produce())
+    _diagnosis_tasks.add(task)
+    task.add_done_callback(_diagnosis_tasks.discard)
+    try:
+        while True:
+            event = await queue.get()
+            if event is end:
+                break
+            yield event
+    finally:
+        connected = False
 
 
 class AIOpsRequest(BaseModel):
     """诊断请求。"""
 
-    query: str                      # 故障现象 / 诊断任务描述
-    session_id: str | None = None   # 会话 ID(用于 checkpointer 隔离)
+    query: str = Field(min_length=1, max_length=12000)
+    session_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     terminal_enabled: bool = False
+
+    @field_validator("query")
+    @classmethod
+    def nonblank_query(cls, value):
+        if not value.strip():
+            raise ValueError("请描述故障现象")
+        return value.strip()
 
 
 @router.post("")
@@ -72,6 +113,7 @@ async def diagnose_stream(
                 user_input=request.query, session_id=session_id,
                 user_id=current_user.id,
                 terminal_enabled=request.terminal_enabled,
+                persist_run=True,
             ):
                 yield {
                     "event": "message",
@@ -117,29 +159,112 @@ async def diagnose_stream(
             except Exception as ue:
                 logger.warning(f"[aiops] token 计量汇总失败(不影响诊断): {ue}")
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(_detached_events(event_generator()))
 
 
 def _owned_run(thread_id: str, user: User):
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", thread_id):
         raise HTTPException(status_code=400, detail="thread_id 非法")
-    run = run_store.get_run(thread_id)
-    if not run or run.user_id != user.id:
+    try:
+        run = run_store.get_run(thread_id)
+    except run_store.RunReadError as exc:
+        raise HTTPException(status_code=503, detail="诊断记录暂不可读取") from exc
+    if not run or (run.user_id != user.id and not (
+        run.user_id is None and getattr(user, "role", "user") == "admin"
+        and run_store.is_watch_run(thread_id)
+    )):
         raise HTTPException(status_code=404, detail="诊断不存在")
     return run
+
+
+class ReviewRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    instruction: str | None = Field(default=None, max_length=4000)
+
+
+class ExperienceReviewRequest(BaseModel):
+    action: Literal["publish", "reject", "withdraw"]
+    note: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+    kb_id: int | None = Field(default=None, gt=0)
+
+
+@router.get("/runs/{thread_id}/experience")
+def get_experience(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from src.agent.aiops.experience import find_candidate, candidate_view
+    _owned_run(thread_id, current_user)
+    return {"experience": candidate_view(find_candidate(db, thread_id))}
+
+
+@router.post("/runs/{thread_id}/experience")
+def create_experience(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from src.agent.aiops.experience import capture_candidate, candidate_view, ExperienceConflict
+    run = _owned_run(thread_id, current_user)
+    try:
+        row = capture_candidate(db, run)
+        db.commit()
+        return {"experience": candidate_view(row)}
+    except ExperienceConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{thread_id}/experience/review")
+def review_experience(thread_id: str, request: ExperienceReviewRequest,
+                      current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from src.agent.aiops.experience import find_candidate, review_candidate, candidate_view, ExperienceConflict
+    _owned_run(thread_id, current_user)
+    row = find_candidate(db, thread_id)
+    if row is None:
+        raise HTTPException(status_code=409, detail="经验候选不存在，请先生成候选")
+    try:
+        row = review_candidate(db, row, reviewer_id=current_user.id, **request.model_dump())
+        return {"experience": candidate_view(row)}
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ExperienceConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        logger.warning("[aiops] 经验审核发布失败(error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="经验发布失败，未发布内容不会进入检索") from exc
+
+
+@router.post("/runs/{thread_id}/review")
+async def review_run(thread_id: str, request: ReviewRequest,
+                     current_user: User = Depends(get_current_user)):
+    run = _owned_run(thread_id, current_user)
+    if run.status != run_store.STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="诊断当前不处于报告待审状态")
+    decision = {**request.model_dump(), "reviewer_id": current_user.id}
+
+    async def event_generator():
+        async for event in aiops_service.resume(thread_id, decision):
+            yield {"event": "message", "data": json.dumps(event, ensure_ascii=False)}
+
+    return EventSourceResponse(_detached_events(event_generator()))
 
 
 @router.get("/runs/{thread_id}")
 async def get_run_status(thread_id: str, current_user: User = Depends(get_current_user)):
     run = _owned_run(thread_id, current_user)
-    approval = run.terminal_approval if isinstance(run.terminal_approval, dict) else None
+    approval = run.terminal_approval if run.status == run_store.STATUS_PENDING_TERMINAL and isinstance(run.terminal_approval, dict) else None
+    try:
+        details = {**await aiops_service.run_details(thread_id), "details_status": "available"}
+    except Exception as exc:
+        logger.warning("[aiops] 诊断详情暂不可读取(thread=%s, error_type=%s)", thread_id, type(exc).__name__)
+        details = {"diagnosis": None, "investigation": None, "knowledge_references": [], "details_status": "unavailable"}
     return {
         "thread_id": run.thread_id,
         "status": run.status,
         "report": run.report,
+        "query": run.query,
+        "created_at": run_store._utc_iso(run.created_at),
+        "updated_at": run_store._utc_iso(run.updated_at),
         "terminal_approval": approval,
         "termcp_ui_url": settings.TERMCP_UI_URL if approval else None,
-        **await aiops_service.run_details(thread_id),
+        **details,
     }
 
 
@@ -163,7 +288,7 @@ async def continue_run(thread_id: str, current_user: User = Depends(get_current_
         async for event in aiops_service.resume(thread_id, decision):
             yield {"event": "message", "data": json.dumps(event, ensure_ascii=False)}
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(_detached_events(event_generator()))
 
 
 @router.get("/runs/{thread_id}/steps")
@@ -176,27 +301,59 @@ async def get_run_steps(
     快照由 AIOpsService 在图执行时落库（ENABLE_STEP_SNAPSHOTS 开启时）；
     未开启或无记录时返回空列表。
     """
-    _owned_run(thread_id, current_user)
-    steps = run_store.list_step_snapshots(thread_id)
-    return {"thread_id": thread_id, "total": len(steps), "steps": steps}
+    run = _owned_run(thread_id, current_user)
+    try:
+        steps = run_store.list_step_snapshots(thread_id)
+    except run_store.StepSnapshotReadError as exc:
+        raise HTTPException(status_code=503, detail="步骤快照暂不可读取") from exc
+    status = ("write_failed" if run.degraded == "step_snapshot_write_failed" else
+              "partial" if any(row.get("status") == "corrupt" for row in steps) else
+              "available" if steps else "empty" if settings.ENABLE_STEP_SNAPSHOTS else "disabled")
+    return {"thread_id": thread_id, "total": len(steps), "steps": steps, "status": status}
+
+
+@router.get("/runs/{thread_id}/tool-calls")
+async def get_run_tool_calls(thread_id: str, current_user: User = Depends(get_current_user)):
+    """Return the redacted per-call execution ledger for an owned run."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", thread_id):
+        raise HTTPException(status_code=400, detail="thread_id 非法")
+    try:
+        run = run_store.get_run(thread_id)
+    except run_store.RunReadError as exc:
+        raise HTTPException(status_code=503, detail="工具调用审计记录暂不可读取") from exc
+    if run:
+        _owned_run(thread_id, current_user)
+    try:
+        calls = run_store.list_tool_calls(thread_id, run.user_id if run else current_user.id)
+    except run_store.ToolCallAuditReadError as exc:
+        raise HTTPException(status_code=503, detail="工具调用审计记录暂不可读取") from exc
+    if not run and not calls:
+        raise HTTPException(status_code=404, detail="诊断不存在")
+    return {"thread_id": thread_id, "total": len(calls), "tool_calls": calls}
 
 
 @router.get("/runs/{thread_id}/evidence")
 async def get_run_evidence(thread_id: str, current_user: User = Depends(get_current_user)):
     """Return the redacted evidence ledger for an owned run."""
-    _owned_run(thread_id, current_user)
-    rows = run_store.list_evidence(thread_id, current_user.id)
+    run = _owned_run(thread_id, current_user)
+    try:
+        rows = run_store.list_evidence(thread_id, run.user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="证据台账暂不可读取") from exc
     return {"thread_id": thread_id, "total": len(rows), "evidence": rows,
             "can_read_raw": getattr(current_user, "role", "user") in {"admin", "auditor"}}
 
 
 @router.get("/runs/{thread_id}/evidence/{evidence_id}")
 async def get_run_evidence_item(thread_id: str, evidence_id: str, current_user: User = Depends(get_current_user)):
-    _owned_run(thread_id, current_user)
+    run = _owned_run(thread_id, current_user)
     if not re.fullmatch(r"ev-[A-Za-z0-9]{16,80}", evidence_id):
         raise HTTPException(status_code=400, detail="evidence_id 非法")
     is_auditor = getattr(current_user, "role", "user") in {"admin", "auditor"}
-    row = run_store.get_evidence(thread_id, evidence_id, current_user.id, include_raw=is_auditor)
+    try:
+        row = run_store.get_evidence(thread_id, evidence_id, run.user_id, include_raw=is_auditor)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="证据暂不可读取") from exc
     if not row:
         raise HTTPException(status_code=404, detail="证据不存在")
     # Raw file paths remain hidden from normal operators.  Audit/admin users

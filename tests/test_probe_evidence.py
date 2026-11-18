@@ -71,14 +71,18 @@ def test_executor_event_summary_redacts_credentials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_operation_mismatch_never_reaches_model_as_evidence():
+async def test_tool_operation_mismatch_never_reaches_model_as_evidence(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+    import src.agent.aiops.executor as executor
     from src.agent.aiops.executor import _run_single_tool
     from src.settings import settings
+    monkeypatch.setattr(executor.run_store, 'start_tool_call', lambda *args: 'evidence-audit')
+    monkeypatch.setattr(executor.run_store, 'finish_tool_call', lambda *args, **kwargs: True)
     item = evidence(target_id=settings.PROBE_TARGET_ID, operation='resources', payload={'cpu_percent': 2})
     tool = SimpleNamespace(ainvoke=AsyncMock(return_value=item))
-    result = await _run_single_tool({'name': 'probe_inventory', 'args': {}, 'id': 'p1'}, {'probe_inventory': tool})
+    result = await _run_single_tool({'name': 'probe_inventory', 'args': {}, 'id': 'p1'},
+        {'probe_inventory': tool}, state={'thread_id': 'evidence-test', 'user_id': 1})
     assert 'probe_target' not in result.content
     assert 'EvidenceValidationError' in result.content
 
@@ -92,6 +96,8 @@ async def test_executor_rejects_unknown_alias_but_keeps_valid_sampling(monkeypat
     from langchain_core.messages import AIMessage
     from src.settings import settings
     ex = importlib.import_module('src.agent.aiops.executor')
+    monkeypatch.setattr(ex.run_store, 'start_tool_call', lambda *args: 'probe-evidence-audit')
+    monkeypatch.setattr(ex.run_store, 'finish_tool_call', lambda *args, **kwargs: True)
     inventory = evidence(target_id=settings.PROBE_TARGET_ID, operation='inventory', payload={
         'configured_services': {'eventlog': {'event_logs_available': True}}, 'configured_dependencies': []})
     sample = evidence(target_id=settings.PROBE_TARGET_ID, operation='resources', payload={'cpu_percent': 12})
@@ -105,7 +111,8 @@ async def test_executor_rejects_unknown_alias_but_keeps_valid_sampling(monkeypat
     invoke = AsyncMock(side_effect=[AIMessage(content='', tool_calls=calls), AIMessage(content='scope limited'),
                                    AIMessage(content='', tool_calls=[calls[1]]), AIMessage(content='resampled')])
     monkeypatch.setattr(ex, 'ainvoke_with_retry', invoke)
-    current = {'autonomous_investigation': True, 'raw_evidence': [('inventory', json.dumps(inventory))]}
+    current = {'thread_id': 'probe-evidence-run', 'autonomous_investigation': True,
+        'raw_evidence': [('inventory', json.dumps(inventory))]}
     result, raw = await ex._run_step('inspect host', current)
     denied.ainvoke.assert_not_awaited()
     assert 'service_not_configured' in raw
@@ -123,6 +130,8 @@ async def test_executor_rejects_unplanned_tool_but_runs_selected_resample(monkey
     from langchain_core.messages import AIMessage
     from src.settings import settings
     ex = importlib.import_module('src.agent.aiops.executor')
+    monkeypatch.setattr(ex.run_store, 'start_tool_call', lambda *args: 'probe-evidence-audit')
+    monkeypatch.setattr(ex.run_store, 'finish_tool_call', lambda *args, **kwargs: True)
     sample = evidence(target_id=settings.PROBE_TARGET_ID, operation='resources', payload={'cpu_percent': 12})
     denied = SimpleNamespace(name='probe_event_log', description='events', ainvoke=AsyncMock())
     allowed = SimpleNamespace(name='probe_resource_snapshot', description='resources', ainvoke=AsyncMock(return_value=sample))
@@ -132,7 +141,7 @@ async def test_executor_rejects_unplanned_tool_but_runs_selected_resample(monkey
         {'id': 'deny', 'name': 'probe_event_log', 'args': {'service': 'eventlog'}},
         {'id': 'sample', 'name': 'probe_resource_snapshot', 'args': {}}]), AIMessage(content='resampled')])
     monkeypatch.setattr(ex, 'ainvoke_with_retry', invoke)
-    current = {'autonomous_investigation': True,
+    current = {'thread_id': 'probe-evidence-run', 'autonomous_investigation': True,
         'investigation_tools': [{'name': 'probe_resource_snapshot'}, {'name': 'probe_event_log'}],
         'investigation_memory': {'next_check': '复核内存回落', 'next_tools': ['probe_resource_snapshot'],
             'discriminating_question': '是否为瞬时占用', 'expected_observation': '可用内存回升削弱持续耗尽解释'}}
@@ -203,7 +212,7 @@ async def test_tool_batch_respects_single_probe_capacity(monkeypatch, names, exp
     from types import SimpleNamespace
     ex = importlib.import_module('src.agent.aiops.executor')
     active = peak = 0
-    async def execute(tc, tool_map, real_ids):
+    async def execute(tc, tool_map, real_ids, state=None, step=None):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)

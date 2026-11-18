@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.agent.aiops.executor import (
+    _forced_search_log,
     _run_single_tool,
     _run_tool_calls,
 )
@@ -31,18 +32,22 @@ def _make_fake_tool(name: str, delay: float):
 
 
 @pytest.mark.asyncio
-async def test_run_tool_calls_executes_independent_tools_in_parallel():
+async def test_run_tool_calls_executes_independent_tools_in_parallel(monkeypatch):
     """一次步骤中的多个独立工具调用应并发执行，总耗时接近最慢者。"""
     tool_a = _make_fake_tool("tool_a", 0.1)
     tool_b = _make_fake_tool("tool_b", 0.1)
     tool_map = {"tool_a": tool_a, "tool_b": tool_b}
+    monkeypatch.setattr("src.agent.aiops.executor.run_store.start_tool_call",
+                        lambda *args: f"audit-{args[5]}")
+    monkeypatch.setattr("src.agent.aiops.executor.run_store.finish_tool_call", lambda *args, **kwargs: True)
     tool_calls = [
         {"id": "tc_a", "name": "tool_a", "args": {}},
         {"id": "tc_b", "name": "tool_b", "args": {}},
     ]
 
     start = time.monotonic()
-    messages = await _run_tool_calls(tool_calls, tool_map)
+    messages = await _run_tool_calls(tool_calls, tool_map,
+        state={"thread_id": "parallel-run", "user_id": 1, "past_steps": []})
     elapsed = time.monotonic() - start
 
     assert len(messages) == 2
@@ -55,16 +60,20 @@ async def test_run_tool_calls_executes_independent_tools_in_parallel():
 
 
 @pytest.mark.asyncio
-async def test_run_tool_calls_keeps_order_and_handles_missing_tool():
+async def test_run_tool_calls_keeps_order_and_handles_missing_tool(monkeypatch):
     """返回的 ToolMessage 顺序应与输入一致，缺失工具给出友好提示。"""
     tool_a = _make_fake_tool("tool_a", 0.0)
     tool_map = {"tool_a": tool_a}
+    monkeypatch.setattr("src.agent.aiops.executor.run_store.start_tool_call",
+                        lambda *args: f"audit-{args[5]}")
+    monkeypatch.setattr("src.agent.aiops.executor.run_store.finish_tool_call", lambda *args, **kwargs: True)
     tool_calls = [
         {"id": "tc_a", "name": "tool_a", "args": {}},
         {"id": "tc_missing", "name": "missing_tool", "args": {}},
     ]
 
-    messages = await _run_tool_calls(tool_calls, tool_map)
+    messages = await _run_tool_calls(tool_calls, tool_map,
+        state={"thread_id": "ordered-run", "user_id": 1, "past_steps": []})
 
     assert len(messages) == 2
     assert messages[0].tool_call_id == "tc_a"
@@ -138,8 +147,164 @@ async def test_run_single_tool_anchors_change_window():
 
     tc = {"id": "tc_change", "name": "search_changes",
           "args": {"service_name": "order-service", "start_time": 0, "end_time": 0}}
-    await _run_single_tool(tc, {"search_changes": tool})
+    await _run_single_tool(tc, {"search_changes": tool},
+                           state={"thread_id": "change-window-test", "user_id": 1})
 
     now_ms = int(time.time() * 1000)
     assert abs(captured["end_time"] - now_ms) < 5000
     assert abs((captured["end_time"] - captured["start_time"]) - 3600 * 1000) < 5000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises, expected_status", [(False, "success"), (True, "failed")])
+async def test_run_single_tool_persists_call_and_outcome(monkeypatch, raises, expected_status):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    started = []
+    finished = []
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call",
+                        lambda *args: started.append(args) or "tc-persisted")
+    monkeypatch.setattr(executor_module.run_store, "finish_tool_call",
+                        lambda call_uid, **kwargs: finished.append((call_uid, kwargs)) or True)
+    tool = MagicMock()
+    tool.name = "tool_a"
+    tool.ainvoke = AsyncMock(side_effect=RuntimeError("backend unavailable") if raises else None,
+                             return_value="observed result")
+    state = {"thread_id": "audit-run", "user_id": 7, "past_steps": [("previous", "done")]}
+
+    message = await _run_single_tool({
+        "id": "call-1", "name": "tool_a", "args": {"service": "mall"},
+    }, {"tool_a": tool}, state=state, step="check mall service")
+
+    assert started[0][:6] == ("audit-run", 7, 1, "check mall service", "call-1", "tool_a")
+    assert started[0][6]["proposed"] == {"service": "mall"}
+    assert finished[0][0] == "tc-persisted"
+    assert finished[0][1]["status"] == expected_status
+    assert finished[0][1]["elapsed_ms"] >= 0
+    assert message.artifact["status"] == expected_status
+
+
+def test_blocked_tool_proposal_is_persisted(monkeypatch):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    started = []
+    finished = []
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call",
+                        lambda *args: started.append(args) or "tc-blocked")
+    monkeypatch.setattr(executor_module.run_store, "finish_tool_call",
+                        lambda call_uid, **kwargs: finished.append((call_uid, kwargs)) or True)
+
+    executor_module._record_blocked_tool_call(
+        "probe_text_log", {"service": "mall"}, "call-2",
+        {"thread_id": "audit-run", "user_id": 7, "past_steps": []},
+        "read mall logs", "service_outside_business_scope",
+    )
+
+    assert started[0][5] == "probe_text_log"
+    assert started[0][6]["proposed"] == {"service": "mall"}
+    assert finished == [("tc-blocked", {
+        "status": "blocked", "reason": "service_outside_business_scope",
+        "result": {"blocked": True, "reason": "service_outside_business_scope"}, "elapsed_ms": 0,
+    })]
+
+
+@pytest.mark.asyncio
+async def test_run_single_tool_fails_closed_when_audit_cannot_start(monkeypatch):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call", lambda *args: None)
+    tool = _make_fake_tool("tool_a", 0)
+    message = await _run_single_tool({
+        "id": "call-3", "name": "tool_a", "args": {},
+    }, {"tool_a": tool}, state={"thread_id": "audit-run", "user_id": 7})
+
+    tool.ainvoke.assert_not_awaited()
+    assert message.artifact["status"] == "unavailable"
+    assert message.artifact["reason"] == "tool_call_audit_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_forced_log_fallback_uses_the_same_persisted_tool_path(monkeypatch):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    started = []
+    finished = []
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call",
+                        lambda *args: started.append(args) or "tc-fallback")
+    monkeypatch.setattr(executor_module.run_store, "finish_tool_call",
+                        lambda call_uid, **kwargs: finished.append((call_uid, kwargs)) or True)
+    tool = _make_fake_tool("search_log", 0)
+
+    result = await _forced_search_log(
+        {"search_log": tool}, "topic_id = topic-123", [],
+        state={"thread_id": "audit-run", "user_id": 7, "past_steps": []},
+        step="search error logs",
+    )
+
+    assert result == "search_log_result"
+    assert started[0][5] == "search_log"
+    assert started[0][6]["proposed"]["topic_id"] == "topic-123"
+    assert finished[0][1]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_run_single_tool_refuses_unscoped_diagnostic_state(monkeypatch):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    tool = _make_fake_tool("tool_a", 0)
+    message = await _run_single_tool({
+        "id": "call-no-thread", "name": "tool_a", "args": {},
+    }, {"tool_a": tool}, state={"user_id": 7, "past_steps": []})
+
+    tool.ainvoke.assert_not_awaited()
+    assert message.artifact["reason"] == "tool_call_audit_context_missing"
+
+
+@pytest.mark.asyncio
+async def test_run_single_tool_aborts_when_result_cannot_be_recorded(monkeypatch):
+    from importlib import import_module
+
+    executor_module = import_module("src.agent.aiops.executor")
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call", lambda *args: "tc-persisted")
+    monkeypatch.setattr(executor_module.run_store, "finish_tool_call", lambda *args, **kwargs: False)
+    tool = _make_fake_tool("tool_a", 0)
+
+    with pytest.raises(executor_module.run_store.ToolCallAuditError):
+        await _run_single_tool({
+            "id": "call-finish-failed", "name": "tool_a", "args": {},
+        }, {"tool_a": tool}, state={"thread_id": "audit-run", "user_id": 7})
+
+    tool.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_step_does_not_swallow_audit_persistence_failure(monkeypatch):
+    from importlib import import_module
+    from types import SimpleNamespace
+    from langchain_core.messages import AIMessage
+
+    executor_module = import_module("src.agent.aiops.executor")
+    tool = MagicMock()
+    tool.name = "query_metrics"
+    tool.description = "query metrics"
+    tool.ainvoke = AsyncMock(return_value={"cpu": 12})
+    monkeypatch.setattr(executor_module, "_get_tools_for_state",
+                        AsyncMock(return_value=([tool], None)))
+    monkeypatch.setattr(executor_module, "create_agent_llm",
+                        lambda **kwargs: SimpleNamespace(bind_tools=lambda _: object()))
+    monkeypatch.setattr(executor_module, "ainvoke_with_retry", AsyncMock(return_value=AIMessage(
+        content="", tool_calls=[{"id": "metric-1", "name": "query_metrics", "args": {}}])))
+    monkeypatch.setattr(executor_module.run_store, "start_tool_call", lambda *args: "tc-persisted")
+    monkeypatch.setattr(executor_module.run_store, "finish_tool_call", lambda *args, **kwargs: False)
+
+    with pytest.raises(executor_module.run_store.ToolCallAuditError):
+        await executor_module._run_step("check CPU", {
+            "thread_id": "audit-run", "user_id": 7, "past_steps": [],
+        })
+
+    tool.ainvoke.assert_awaited_once()

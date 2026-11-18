@@ -589,6 +589,12 @@ async def test_model_view_events_checkpoint_and_closed_reopen_are_identical(tmp_
     monkeypatch.setattr(settings, 'AIOPS_CHECKPOINT_DB_PATH', str(tmp_path / 'report.sqlite'))
     monkeypatch.setattr(run_store, 'SessionLocal', sessionmaker(bind=engine))
     current, diagnosis, _ = report_input()
+    current['raw_evidence'] = [*current['raw_evidence'], ('规划前知识检索', json.dumps({
+        'data_source': 'knowledge_base', 'kb_id': 15, 'results': [{
+            'source': '排查手册.pdf', 'doc_id': 34, 'chunk_id': 'handbook-1', 'page': 2,
+            'content': '连接可达不能证明业务正常，仍需检查失败请求。',
+        }],
+    }, ensure_ascii=False))]
     async def planner(state):
         return {key: current[key] for key in ('raw_evidence', 'target_resolution')} | {'plan': ['finish']}
     async def executor(state): return {'plan': []}
@@ -608,6 +614,9 @@ async def test_model_view_events_checkpoint_and_closed_reopen_are_identical(tmp_
         with reporting.report_model_session(tmp_path, lambda: []):
             events = [e async for e in service.execute('report fixture', user_id=17)]
         final = next(e for e in events if e['type'] == 'complete')
+        assert len(final['knowledge_references']) == 1
+        assert final['knowledge_references'][0]['chunk_id'] == 'handbook-1'
+        assert final['knowledge_references'][0]['doc_id'] == 34
         report_event = next(e for e in events if e['type'] == 'report')
         assert report_event['report'] == final['response']
         assert report_event['diagnosis'] == final['diagnosis']
@@ -621,6 +630,7 @@ async def test_model_view_events_checkpoint_and_closed_reopen_are_identical(tmp_
             graph = await reopened._persistent_graph(Strategy())
             saved = (await graph.aget_state({'configurable': {'thread_id': tid}})).values
             details = await reopened.run_details(tid)
+            assert details['knowledge_references'] == final['knowledge_references']
             assert details['diagnosis'] == final['diagnosis']
             assert saved['response'] == final['response']
             record = saved['investigation_memory']['report']

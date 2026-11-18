@@ -186,6 +186,10 @@ def test_explicit_hybrid_scope_keeps_reranking(db, runbooks, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('with_observation', [False, True])
 async def test_real_retrieval_consumed_by_graph_but_never_proves_handbook_cause(runbooks, monkeypatch, tmp_path, with_observation):
+    from src.agent.aiops import run_store
+    import src.database.sql_session as sql
+    monkeypatch.setattr(run_store, 'SessionLocal', sql.SessionLocal)
+    monkeypatch.setattr(settings, 'PROBE_EVIDENCE_DIR', str(tmp_path / 'evidence'))
     from langchain_core.messages import AIMessage
     from langchain_core.tools import StructuredTool
     from src.probe.protocol import evidence
@@ -241,7 +245,8 @@ async def test_real_retrieval_consumed_by_graph_but_never_proves_handbook_cause(
     try:
         graph = service._build_graph(service.replan_strategy)
         final = await graph.ainvoke({'input': '应用内部异常', 'plan': [], 'past_steps': [],
-            'raw_evidence': [], 'response': '', 'autonomous_investigation': True},
+            'raw_evidence': [], 'response': '', 'autonomous_investigation': True,
+            'thread_id': 'real-knowledge-' + str(with_observation), 'user_id': 17},
             {'configurable': {'thread_id': 'real-knowledge-' + str(with_observation)}})
     finally:
         await service.close()

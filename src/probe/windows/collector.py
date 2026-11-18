@@ -34,7 +34,7 @@ def _safe_dt(value: Any) -> str | None:
 
 
 class WindowsCollector:
-    def __init__(self, config: ProbeConfig, *, collector_version: str = "1.0.0"):
+    def __init__(self, config: ProbeConfig, *, collector_version: str = "1.0.1"):
         self.config = config
         self.collector_version = collector_version
 
@@ -55,12 +55,23 @@ class WindowsCollector:
                 "service_name": cfg.service_name if cfg.kind == 'windows_service' else None,
                 "process_names": list(cfg.process_names), "event_logs_available": bool(cfg.log_channels),
                 "process_identity_configured": bool(cfg.process_args),
+                "spring_configuration_observation_configured": cfg.docker_spring,
+                "spring_runtime_observation_configured": bool(cfg.spring_management_port),
                 "text_logs_available": bool(cfg.text_logs),
+                "text_log_contains_supported": bool(cfg.text_logs),
                 "text_logs": list(cfg.text_logs),
-                "configuration_available": bool(cfg.config_file and cfg.config_keys),
+                "configuration_available": bool((cfg.config_file and cfg.config_keys) or cfg.docker_django),
                 "configuration_file": cfg.config_file,
+                "static_resources": list(cfg.static_resources),
+                "static_mount_destinations": list(cfg.expected_static_mounts),
                 "configuration_keys": list(cfg.config_keys)} for name, cfg in self.config.services.items()},
             "configured_dependencies": sorted(self.config.dependencies),
+            "dependency_details": {name: {'host': cfg.host, 'port': cfg.port,
+                'source_service': cfg.source_service, 'probe_kind': cfg.probe_kind,
+                'http_timeout_seconds': cfg.http_timeout_seconds,
+                'bearer_authentication_configured': bool(cfg.bearer_token_file),
+                'health_path': cfg.health_path if cfg.health_scheme else None}
+                for name, cfg in self.config.dependencies.items()},
         })
 
     def resources(self) -> dict[str, Any]:
@@ -88,6 +99,9 @@ class WindowsCollector:
 
     def services(self, name: str) -> dict[str, Any]:
         cfg = self.config.service(name)
+        if cfg.kind == 'docker':
+            from .docker_readonly import state
+            return self._evidence('services', {'service': name, **state(cfg)})
         if cfg.kind == 'process':
             return self._evidence('services', {'service': name, 'kind': cfg.kind,
                 'state': 'not_applicable', 'reason': 'process application; use process and entry observations'})
@@ -119,6 +133,14 @@ class WindowsCollector:
     def processes(self, name: str | None = None, *, sort_by: str = 'memory') -> dict[str, Any]:
         if sort_by not in {'memory', 'cpu'}:
             raise ProbeConfigError('sort_by must be memory or cpu')
+        if name and self.config.service(name).kind == 'docker':
+            from .docker_readonly import state
+            item = state(self.config.service(name))
+            running = item['state'] == 'running'
+            return self._evidence('processes', {'service': name, 'kind': 'docker',
+                'matched_count': int(running), 'skipped_count': 0,
+                'processes': [{'pid': item['pid'], 'name': item['container']}] if running else [],
+                'coverage': 'container_main_process_only'})
         allowed = set(self.config.service(name).process_names) if name else None
         identity = self.config.service(name).process_args if name else ()
         rows = []
@@ -247,7 +269,20 @@ class WindowsCollector:
             payload["error"] = type(exc).__name__
         return self._evidence("event_logs", payload)
 
-    def text_logs(self, name: str, path: str, *, lines: int = 100) -> dict[str, Any]:
+    def text_logs(self, name: str, path: str, *, lines: int = 100, contains: str = '') -> dict[str, Any]:
+        if not isinstance(contains, str) or len(contains) > 120 or any(ord(c) < 32 for c in contains):
+            raise ProbeConfigError('log contains must be at most 120 printable characters')
+        cfg = self.config.service(name)
+        if cfg.kind == 'docker':
+            if path == f'docker://{cfg.docker_container}/http-exchanges' and cfg.spring_management_port:
+                from .spring_readonly import request_logs
+                body, truncated = request_logs(cfg, max(1, min(int(lines), 1000)), contains=contains)
+                return self._evidence('text_logs', {'service': name, **body}, truncated=truncated)
+            if path != f'docker://{cfg.docker_container}/stdout':
+                raise ProbeConfigError('Docker log reference is not configured')
+            from .docker_readonly import logs
+            body, truncated = logs(cfg, max(1, min(int(lines), 1000)), contains=contains)
+            return self._evidence('text_logs', {'service': name, **body}, truncated=truncated)
         if not allowed_text_path(self.config, name, path):
             raise ProbeConfigError("text log path is outside the configured allow-list")
         lines = max(1, min(int(lines), 1000))
@@ -260,10 +295,13 @@ class WindowsCollector:
             raise ProbeConfigError("matched log file is outside the configured allow-list")
         raw, actual, size, _ = self._read_allowed_bytes(name, selected_path, tail=True)
         text = redact(raw.decode("utf-8", errors="replace")).splitlines()
-        selected = text[-lines:]
+        matched = [row for row in text if contains in row] if contains else text
+        selected = matched[-lines:]
         return self._evidence("text_logs", {"service": name, "path": actual,
-                                             "line_limit": lines, "lines": selected},
-                              truncated=size > MAX_TEXT_BYTES or len(text) > lines or any(x in path for x in "*?["))
+                                             "line_limit": lines, "lines": selected,
+                                             **({'contains': contains, 'filtered_out_lines': len(text) - len(matched),
+                                                 'covers_full_history': False} if contains else {})},
+                              truncated=size > MAX_TEXT_BYTES or len(matched) > lines or any(x in path for x in "*?["))
 
     def _read_allowed_bytes(self, name, path, *, patterns=None, tail=False):
         if not allowed_text_path(self.config, name, path, patterns=patterns):
@@ -289,6 +327,11 @@ class WindowsCollector:
     def configuration(self, name: str) -> dict[str, Any]:
         cfg = self.config.service(name)
         body = {'service': name}
+        if cfg.kind == 'docker':
+            from .docker_readonly import configuration
+            payload = configuration(cfg)
+            payload.setdefault('source_sha256', hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest())
+            return self._evidence('configuration', {**body, **payload})
         if not cfg.config_file or not cfg.config_keys:
             return self._evidence('configuration', {**body, 'error': 'configuration_not_configured'})
         try:
@@ -311,6 +354,9 @@ class WindowsCollector:
 
     def dependency_probe(self, name: str) -> dict[str, Any]:
         cfg = self.config.dependency(name)
+        if cfg.source_service:
+            from .docker_readonly import dependency
+            return self._evidence('dependency_probe', {'dependency': name, **dependency(self.config, cfg)})
         result: dict[str, Any] = {"dependency": name, "host": cfg.host, "port": cfg.port}
         started = time.monotonic()
         try:
@@ -327,25 +373,42 @@ class WindowsCollector:
             host = f"[{cfg.host}]" if ":" in cfg.host else cfg.host
             url = f"{cfg.health_scheme}://{host}:{cfg.port}{cfg.health_path}"
             try:
-                req = Request(url, method="GET", headers={"Accept": "application/json"})
+                headers, token = {"Accept": "*/*"}, None
+                if cfg.bearer_token_file:
+                    path = Path(cfg.bearer_token_file)
+                    if (not path.is_file() or path.is_symlink() or path.stat().st_size > 8192
+                            or any(p.is_symlink() or p.is_junction() for p in path.parents)):
+                        raise ProbeConfigError('local bearer token unavailable')
+                    token = path.read_text(encoding='utf-8').strip()
+                    if not token or any(c.isspace() for c in token):
+                        raise ProbeConfigError('local bearer token invalid')
+                    headers['Authorization'] = 'Bearer ' + token
+                req = Request(url, method="GET", headers=headers)
                 class _NoRedirect(HTTPRedirectHandler):
                     def redirect_request(self, req, fp, code, msg, headers, newurl):
                         return None
                 try:
-                    response = build_opener(ProxyHandler({}), _NoRedirect()).open(req, timeout=3)
+                    response = build_opener(ProxyHandler({}), _NoRedirect()).open(req, timeout=cfg.http_timeout_seconds)
                 except HTTPError as exc:
                     # An HTTP error is still a response from the configured server.
                     response = exc
                 with response:
                     body = response.read(1025)
-                    result["http"] = {"status": response.code,
-                        "body_prefix": body[:1024].decode("utf-8", errors="replace"),
+                    result["http"] = {"status": response.code, "url": url,
+                        "body_prefix": body[:1024].decode("utf-8", errors="replace").replace(token, '[REDACTED]') if token else body[:1024].decode("utf-8", errors="replace"),
                         "truncated": len(body) > 1024}
+                    if token:
+                        result['http']['authenticated_request'] = True
+                    # A fixed exception label from the response title is an
+                    # observation, not a conclusion about configuration.
+                    if ('<title>DisallowedHost ' in result['http']['body_prefix']
+                            or result['http']['body_prefix'].startswith('DisallowedHost at /\n')):
+                        result['http']['exception_type'] = 'DisallowedHost'
             except Exception as exc:
                 result["http"] = {"error": type(exc).__name__}
         result["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
-        return self._evidence("dependency_probe", result,
-                              truncated=bool((result.get('http') or {}).get('truncated')))
+        # Only the body prefix is bounded; status and connection fields are complete.
+        return self._evidence("dependency_probe", result)
 
     def baseline(self) -> dict[str, Any]:
         return {
@@ -369,7 +432,7 @@ class WindowsCollector:
         if operation == "ports": return self.ports(limit=params.get("limit", MAX_PORT_ROWS),
             local_port=params.get('local_port'), listening_only=params.get('listening_only', False))
         if operation == "event_logs": return self.event_logs(str(params.get("service")), since_minutes=params.get("since_minutes", 60), limit=params.get("limit", MAX_EVENT_ROWS))
-        if operation == "text_logs": return self.text_logs(str(params.get("service")), str(params.get("path")), lines=params.get("lines", 100))
+        if operation == "text_logs": return self.text_logs(str(params.get("service")), str(params.get("path")), lines=params.get("lines", 100), contains=params.get('contains', ''))
         if operation == "dependency_probe": return self.dependency_probe(str(params.get("dependency")))
         raise ProbeConfigError(f"unsupported operation: {operation}")
 

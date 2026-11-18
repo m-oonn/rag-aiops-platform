@@ -235,12 +235,20 @@ async def probe_config_snapshot(service: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def probe_text_log(service: str, path: str, lines: int = 100) -> dict[str, Any]:
+async def probe_text_log(service: str, path: str, lines: int = 100, contains: str = '') -> dict[str, Any]:
     """Tail an allow-listed text log path. service is a configured service name;
     path must be a concrete path published in inventory configured_services[service].text_logs,
     never a service name or business-catalog log_refs entry. Read inventory first if unknown.
+    contains is an optional literal substring (not a regex or command), at most 120 characters;
+    it filters only the bounded source window, not the entire log history.
     """
-    return await _tool("text_logs", {"service": service, "path": path, "lines": max(1, min(lines, 1000))})
+    params = {"service": service, "path": path, "lines": max(1, min(lines, 1000))}
+    if contains:
+        params['contains'] = contains
+    result = await _tool("text_logs", params)
+    if contains and (result.get('payload') or {}).get('contains') != contains:
+        raise ValueError('Probe did not confirm the literal log filter; update the collector before using contains')
+    return result
 
 
 @mcp.tool()
@@ -343,6 +351,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.get("/health")
+async def health():
+    """Report ready only after the configured Windows Probe has connected."""
+    if gateway.status()["status"] != "online":
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    return {"status": "ok"}
 
 
 @app.middleware("http")

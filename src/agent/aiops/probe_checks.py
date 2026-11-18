@@ -7,7 +7,7 @@ from datetime import datetime
 from src.probe.evidence import PROBE_TOOL_OPERATIONS
 
 
-def _log_repeat_has_new_evidence(row, ids, records):
+def _log_repeat_has_new_evidence(row, ids, records, resolution=None):
     """Require a changed same-service observation or a cited fresh failed request log."""
     from src.agent.aiops.strategies.investigation import probe_query_key, _probe_summary_status
     from src.probe.evidence import diagnostic_fingerprint
@@ -48,7 +48,21 @@ def _log_repeat_has_new_evidence(row, ids, records):
                 or _probe_summary_status(raw, body) == 'not_applicable' or not tool
                 or datetime.fromisoformat(raw['collected_at'].replace('Z', '+00:00')) <= boundary):
             continue
-        same_service = (body.get('service') == service or
+        consumer_matches = False
+        if operation == 'dependency_probe' and body.get('source_service') == service:
+            scope = resolution or {}
+            inventories = [json.loads(record['payload']) for record in records.values()]
+            inventories = [item for item in inventories if item.get('operation') == 'inventory'
+                and item.get('data_source') == 'probe_target'
+                and item.get('target_id') == raw.get('target_id')
+                and not item.get('truncated') and not (item.get('payload') or {}).get('error')]
+            inventory = max(inventories, key=lambda item: item['collected_at'], default={}).get('payload') or {}
+            registered = (inventory.get('dependency_details') or {}).get(body.get('dependency')) or {}
+            consumer_matches = (scope.get('status') == 'resolved'
+                and service in scope.get('allowed_services', [])
+                and body.get('dependency') in scope.get('allowed_dependencies', [])
+                and registered.get('source_service') == service)
+        same_service = (body.get('service') == service or consumer_matches or
                         (operation == 'dependency_probe' and body.get('dependency') == service))
         if not same_service:
             failed_request_ids = request_ids(raw, after=boundary, failed_only=True)
@@ -96,6 +110,9 @@ def arguments_error(tool, arguments, state, records):
             return '检查参数不能用空值替代工具默认值。'
         if key in {'service', 'dependency', 'path', 'sort_by'} and value is not None and not isinstance(value, str):
             return '检查参数字符串类型错误。'
+        if key == 'contains' and (not isinstance(value, str) or len(value) > 120
+                                  or any(ord(c) < 32 for c in value)):
+            return '日志筛选只允许最多120个可打印字符的普通文字。'
         if key in {'lines', 'limit', 'since_minutes', 'local_port'} and value is not None and type(value) is not int:
             return '检查参数整数类型错误。'
         if key == 'listening_only' and type(value) is not bool:
@@ -140,6 +157,8 @@ def arguments_error(tool, arguments, state, records):
         if operation == 'configuration' and config.get('configuration_available') is not True:
             return '该服务的配置快照路径与字段未配置。'
         if operation == 'text_logs':
+            if arguments.get('contains') and config.get('text_log_contains_supported') is not True:
+                return '当前采集器未声明支持日志文字筛选；不能将未筛选结果当作筛选结果。'
             if config.get('text_logs_available') is False:
                 return '该服务的文本日志未配置。'
             path = ntpath.normcase(ntpath.normpath(arguments['path']))
@@ -152,6 +171,7 @@ def arguments_error(tool, arguments, state, records):
 def check_progress(check, state, records):
     from src.agent.aiops.strategies.investigation import probe_query_key, _probe_summary_status, execution_checks
     rows = []
+    expired = None
     for tool, args in (check.get('next_arguments') or {}).items():
         error = arguments_error(tool, args, state, records)
         if tool == 'read_run_evidence':
@@ -192,14 +212,28 @@ def check_progress(check, state, records):
         failure = attempts[-1] if attempts and attempts[-1].get('status') in {'failed', 'unavailable', 'cancelled'} else None
         if failure:
             error = '该具体查询上次未取得有效结果：' + str(failure.get('reason') or failure['status']) + '；不原样自动重试。'
+        expired_ids = []
+        if not error and latest is None:
+            from src.agent.aiops.strategies.investigation import expired_probe_index, in_business_scope
+            if expired is None:
+                expired = expired_probe_index(state)
+            expired_ids = [ident for ident, record in expired.items()
+                if (value := json.loads(record['payload'])).get('operation') == PROBE_TOOL_OPERATIONS[tool]
+                and probe_query_key(tool, value.get('payload') or {}, observation=True) == key
+                and _probe_summary_status(value, value.get('payload') or {}) not in {'unavailable', 'not_applicable'}
+                and in_business_scope(value, state.get('target_resolution'), records)]
         status = 'unavailable' if error else _probe_summary_status(latest, latest['payload']) if latest else 'unexecuted'
+        if expired_ids:
+            status = 'expired'
         body = latest['payload'] if latest else {}
         operation = PROBE_TOOL_OPERATIONS.get(tool)
         observation = None
         unknown = '尚无有效结果，不能裁决该解释。'
         if latest and status not in {'unavailable', 'not_applicable'}:
             observation = {key: body[key] for key in
-                ('tcp', 'http', 'state', 'matched_count', 'inspected_count', 'skipped_count', 'selection') if key in body}
+                ('tcp', 'http', 'state', 'matched_count', 'inspected_count', 'skipped_count', 'selection',
+                 'query', 'health_query', 'health_component', 'health_endpoint_binding_confirmed',
+                 'endpoint_source', 'limitation') if key in body}
             unknown = '这些是采样时的有限事实，不能单独确认因果解释。'
             if operation == 'text_logs':
                 observation = {'line_count': len(body.get('lines') or []), 'truncated': bool(latest.get('truncated'))}
@@ -212,27 +246,55 @@ def check_progress(check, state, records):
                 unknown = '只说明查询端口在采样时的监听状态，不能单独确认绑定或退出原因。'
             elif operation == 'configuration':
                 observation = {key: body[key] for key in
-                    ('path', 'source_sha256', 'values', 'missing_keys') if key in body}
-                unknown = '只证明采集时白名单文件的字段和哈希；不能单独证明进程实际加载、配置历史或因果。'
+                    ('path', 'source', 'source_sha256', 'values', 'missing_keys',
+                     'runtime_effective_values_confirmed', 'bound_configuration_confirmed',
+                     'runtime_identity', 'binding_hashes', 'limitation', 'mount_matches_registered_file',
+                     'startup_config_argument_present') if key in body}
+                unknown = ('尚缺进程实际加载值及同次启动或请求的失败关联；挂载和启动参数不能代替加载证明。'
+                    if body.get('runtime_effective_values_confirmed') is False else
+                    '只覆盖工具实际读取的字段及来源；实际加载状态仍须按来源核验，不能单独证明全部业务、配置历史或因果。')
         rows.append({'next_check': check.get('next_check', ''), 'question': check.get('discriminating_question', ''),
             'expected_observation': check.get('expected_observation', ''),
             'tool': tool, 'arguments': args, 'status': status,
             'evidence_ids': [ident for ident, _ in matches[-2:]],
+            **({'expired_evidence_ids': expired_ids, 'not_citable': True} if expired_ids else {}),
             'observation': observation, 'remaining_unknown': unknown,
-            'limitation': error or ('该具体查询返回不适用。' if status == 'not_applicable' else
+            'limitation': error or ('上次结果已过期，须明确引用旧记录并说明重新采集目的；旧结果不能作为当前现场事实。' if status == 'expired' else
+                '该具体查询返回不适用。' if status == 'not_applicable' else
                 '已有该查询的现场结果；只证明返回内容，不证明因果。' if matches else '该具体查询尚未取得有效观测。')})
     return rows
+
+
+def progress_records(state, records):
+    """Historical samples are only used to police repeats, never conclusions."""
+    from src.agent.aiops.strategies.investigation import evidence_index, expired_probe_index, in_business_scope
+    history = ({**expired_probe_index(state), **evidence_index(state)}
+               if 'raw_evidence' in state else records)
+    return {key: record for key, record in history.items()
+            if in_business_scope(json.loads(record['payload']), state.get('target_resolution'), records)}
+
+
+def completed_check_error(check, state, records):
+    if check.get('next_check', '').strip() not in {step.strip() for step, _ in state.get('past_steps', [])}:
+        return ''
+    rows = check_progress(check, state, records)
+    # Legacy prose without recorded queries cannot establish what was executed.
+    history = progress_records(state, records)
+    known_queries = any(record.get('step', '').strip() == check.get('next_check', '').strip()
+        and json.loads(record['payload']).get('operation') in
+        set(PROBE_TOOL_OPERATIONS.values()) - {'inventory'} for record in history.values())
+    if not rows or (any(row['status'] == 'unexecuted' for row in rows) and not known_queries):
+        return '该检查步骤此前已执行'
+    return progress_error(check, state, records)
 
 
 def progress_error(check, state, records):
     """A repeated query needs a stated purpose tied to the returned evidence."""
     if check.get('next_arguments') is None:
         return ''  # Legacy checkpoint continuation keeps its previous validation path.
-    from src.agent.aiops.strategies.investigation import repeated_probe_arguments, evidence_index, in_business_scope
+    from src.agent.aiops.strategies.investigation import repeated_probe_arguments, in_business_scope
     # The latest-per-query view is right for conclusions, but cannot count repeats.
-    history = evidence_index(state) if 'raw_evidence' in state else records
-    history = {key: record for key, record in history.items()
-               if in_business_scope(json.loads(record['payload']), state.get('target_resolution'), records)}
+    history = progress_records(state, records)
     for row in check_progress(check, state, records):
         if row['status'] in {'unavailable', 'not_applicable'}:
             return row['limitation'] + ' 请改用适用检查或说明实际限制。'
@@ -240,13 +302,15 @@ def progress_error(check, state, records):
             if row['evidence_ids']:
                 return row['limitation']
             continue
-        if row['evidence_ids']:
+        query_ids = row['evidence_ids'] or row.get('expired_evidence_ids', [])
+        if query_ids:
             if repeated_probe_arguments(row['tool'], row['arguments'], state, records=history):
                 return '下一项检查只会重复已有查询，raw_hash 未变化；请改查有效鉴别对象或说明停止原因。'
             ids = set(check.get('repeat_evidence_ids') or [])
             if (not str(check.get('repeat_reason') or '').strip()
-                    or not ids & set(row['evidence_ids']) or not ids <= set(records)):
-                return '已有该对象和参数的检查结果；再次采样须说明复核目的并关联原证据，不能换句话重复检查。'
+                    or not ids & set(query_ids) or not ids <= set(history)):
+                return (row['limitation'] if row['status'] == 'expired' else
+                    '已有该对象和参数的检查结果；再次采样须说明复核目的并关联原证据，不能换句话重复检查。')
             from src.agent.aiops.strategies.investigation import probe_check_contract_version
             version = probe_check_contract_version(state)
             if version >= 2 and row['tool'] == 'probe_text_log':
@@ -254,7 +318,7 @@ def progress_error(check, state, records):
                 relevant = {**history, **records}
                 relevant = {key: record for key, record in relevant.items()
                     if in_business_scope(json.loads(record['payload']), state.get('target_resolution'), records)}
-                if not _log_repeat_has_new_evidence(row, ids & set(relevant), relevant):
+                if not _log_repeat_has_new_evidence({**row, 'evidence_ids': query_ids}, ids & set(relevant), relevant, state.get('target_resolution')):
                     return ('相同日志检查已完成；复查须关联旧日志之后同服务有变化的新证据，或同一现场新出现的失败请求日志，'
                             '不能仅凭可能遗漏启动记录重复读取；请改查未执行的鉴别检查或保留未知后结束。')
     return ''

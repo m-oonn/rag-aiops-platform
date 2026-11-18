@@ -35,16 +35,32 @@ def stored_excerpt(raw, query=None, offset=0, limit=4000):
             'truncated': bool(offset or len(excerpt) < len(text))}
 
 
+def can_read_run_evidence(thread_id, user_id):
+    if not thread_id:
+        return False
+    if user_id is not None:
+        run = run_store.get_run(thread_id)
+        return run is None or run.user_id == user_id  # Legacy unpersisted runs keep their tools.
+    return run_store.is_watch_run(thread_id)
+
+
 def read_run_evidence(thread_id, user_id, evidence_id, query=None, offset=0, limit=4000):
     validate_read_arguments(evidence_id, query, offset, limit)
-    if user_id is None:
-        raise ValueError('invalid evidence identity')
     run = run_store.get_run(thread_id)
-    if not run or run.user_id != user_id:
+    if not run or run.user_id != user_id or not can_read_run_evidence(thread_id, user_id):
         raise PermissionError('evidence unavailable for this run')
     row = run_store.get_evidence(thread_id, evidence_id, user_id)
     if not row or not row.get('raw_ref'):
         raise PermissionError('evidence unavailable for this run')
+    raw = read_stored_evidence(row, evidence_id)
+    return {'data_source': 'evidence_excerpt', 'evidence_id': evidence_id,
+            'target_id': row['target_id'], 'operation': row['kind'],
+            'collected_at': row['collected_at'], 'raw_hash': row['raw_hash'],
+            'fresh': row['fresh'], **stored_excerpt(raw, query, offset, limit), 'new_observation': False}
+
+
+def read_stored_evidence(row, evidence_id):
+    """Use the same path, size and integrity boundary for model and UI reads."""
     root = Path(settings.PROBE_EVIDENCE_DIR).resolve(strict=True)
     path = Path(row['raw_ref'])
     if (path.is_symlink() or any(getattr(p.lstat(), 'st_file_attributes', 0) & 0x400
@@ -71,12 +87,11 @@ def read_run_evidence(thread_id, user_id, evidence_id, query=None, offset=0, lim
             or raw.get('data_source') != 'probe_target' or raw.get('platform') != 'windows'
             or raw.get('operation') != row['kind']
             or run_store._parse_utc(raw.get('collected_at')) != run_store._parse_utc(row['collected_at'])
-            or raw_hash(raw.get('payload')) != row['raw_hash'] or raw.get('raw_hash') != row['raw_hash']):
+            or raw.get('raw_hash') != row['raw_hash']
+            or (raw_hash(raw) != row['stored_hash'] if row.get('stored_hash')
+                else raw_hash(raw.get('payload')) != row['raw_hash'])):
         raise ValueError('evidence integrity check failed')
-    return {'data_source': 'evidence_excerpt', 'evidence_id': evidence_id,
-            'target_id': row['target_id'], 'operation': row['kind'],
-            'collected_at': row['collected_at'], 'raw_hash': row['raw_hash'],
-            'fresh': row['fresh'], **stored_excerpt(raw, query, offset, limit), 'new_observation': False}
+    return raw
 
 
 def evidence_read_tool(thread_id, user_id):

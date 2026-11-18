@@ -156,8 +156,8 @@ async def _get_tools_cached(include_termcp: bool = False) -> tuple[list, str | N
 async def _get_tools_for_state(state: PlanExecuteState) -> tuple[list, str | None]:
     """Keep the established zero-argument loader path for ordinary diagnostics."""
     tools, err = (await _get_tools_cached(True)) if state.get("terminal_enabled") else await _get_tools_cached()
-    if state.get('autonomous_investigation') and state.get('thread_id') and state.get('user_id') is not None:
-        from src.agent.aiops.evidence_reader import evidence_read_tool
+    from src.agent.aiops.evidence_reader import evidence_read_tool, can_read_run_evidence
+    if state.get('autonomous_investigation') and can_read_run_evidence(state.get('thread_id'), state.get('user_id')):
         tools = [*tools, evidence_read_tool(state['thread_id'], state['user_id'])]
     return tools, err
 
@@ -208,28 +208,69 @@ def _local_log_fallback(tool_args: dict) -> str | None:
         return None
 
 
-async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> ToolMessage:
+async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "",
+                           state: PlanExecuteState | None = None, step: str | None = None) -> ToolMessage:
     """执行单个工具调用(带超时保护),返回 ToolMessage。
 
     real_ids: _extract_real_identifiers 生成的标识符文本块（可为空）。
+    state/step: 可选的运行审计上下文；不进入实际工具参数。
               用于 search_log 降级/调用前的 topic_id 对齐，修复重规划验证步骤
               的 topic 漂移（stub/LLM 对"验证 X"步骤提取不到服务名时可能生成
               默认或错误 topic）。
     """
     tool_name = tc.get("name", "")
-    tool_args = dict(tc.get("args", {}) or {})
+    proposed_args = dict(tc.get("args", {}) or {})
+    tool_args = dict(proposed_args)
     tool_id = tc.get("id", "")
     tool = tool_map.get(tool_name)
     status = 'success'
     reason = ''
     started = time.monotonic()
 
+    if state is None or not state.get("thread_id"):
+        content = "工具调用未执行：诊断缺少审计标识，无法持久化调用记录"
+        return ToolMessage(content=content, tool_call_id=tool_id, artifact={
+            'data_source': 'tool_execution', 'tool': tool_name,
+            'arguments': redact(proposed_args), 'status': 'unavailable',
+            'reason': 'tool_call_audit_context_missing',
+            'action': 'evidence_read' if tool_name == 'read_run_evidence' else 'observation_query',
+            'checked_at': datetime.now(timezone.utc).isoformat(), 'elapsed_ms': 0})
+
     # ── 工具守卫层（LLM 提议 → 确定性净化 → MCP 执行）─────────────
     # topic 对齐 / 检索词泛词净化 / 指标与变更时间窗锚定，统一由守卫链处理
     # （见 tool_guards.run_guards）；各守卫行为与迁移前内联逻辑一致，
     # 可用 settings.DISABLED_TOOL_GUARDS 停用单个守卫（消融实验用）。
-    gr = run_guards(tool_name, tool_args, GuardContext(real_ids=real_ids))
-    tool_args = gr.rewritten
+    record_id = None
+    try:
+        gr = run_guards(tool_name, tool_args, GuardContext(real_ids=real_ids))
+        tool_args = gr.rewritten
+    except Exception as e:
+        if state and state.get("thread_id"):
+            record_id = run_store.start_tool_call(
+                str(state["thread_id"]), state.get("user_id"),
+                len(state.get("past_steps") or []), step, tool_id,
+                tool_name, {"proposed": proposed_args, "executed": {}},
+            )
+            run_store.finish_tool_call_or_raise(record_id, status="failed", reason="tool_guard_error",
+                                                result=type(e).__name__,
+                                                elapsed_ms=(time.monotonic() - started) * 1000)
+        raise
+    if state and state.get("thread_id"):
+        record_id = run_store.start_tool_call(
+            str(state["thread_id"]), state.get("user_id"),
+            len(state.get("past_steps") or []), step, tool_id,
+            tool_name, {"proposed": proposed_args, "executed": tool_args},
+        )
+        if record_id is None:
+            content = "工具调用未执行：无法持久化本次调用审计记录"
+            status, reason = "unavailable", "tool_call_audit_unavailable"
+            AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="audit_unavailable").inc()
+            return ToolMessage(content=content, tool_call_id=tool_id, artifact={
+                'data_source': 'tool_execution', 'tool': tool_name,
+                'arguments': redact(tool_args), 'status': status, 'reason': reason,
+                'action': 'evidence_read' if tool_name == 'read_run_evidence' else 'observation_query',
+                'checked_at': datetime.now(timezone.utc).isoformat(),
+                'elapsed_ms': round((time.monotonic() - started) * 1000, 2)})
 
     if not tool:
         status, reason = 'unavailable', 'tool_not_loaded'
@@ -261,7 +302,20 @@ async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> Tool
             content = (json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list))
                        else str(result))
             AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="success").inc()
-        except (TerminalApprovalPending, TerminalProtocolError):
+        except TerminalApprovalPending:
+            status, reason = 'pending_approval', 'approval_required'
+            run_store.finish_tool_call_or_raise(record_id, status=status, reason=reason,
+                                                elapsed_ms=(time.monotonic() - started) * 1000)
+            raise
+        except TerminalProtocolError:
+            status, reason = 'failed', 'terminal_protocol_error'
+            run_store.finish_tool_call_or_raise(record_id, status=status, reason=reason,
+                                                elapsed_ms=(time.monotonic() - started) * 1000)
+            raise
+        except asyncio.CancelledError:
+            status, reason = 'cancelled', 'tool_call_cancelled'
+            run_store.finish_tool_call_or_raise(record_id, status=status, reason=reason,
+                                                elapsed_ms=(time.monotonic() - started) * 1000)
             raise
         except asyncio.TimeoutError:
             status, reason = 'failed', 'timeout'
@@ -278,6 +332,8 @@ async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> Tool
             AIOPS_TOOL_CALLS_TOTAL.labels(tool_name=tool_name, result="failed").inc()
             logger.warning("[executor] 工具 '%s' 调用异常: %s", tool_name, e)
 
+    run_store.finish_tool_call_or_raise(record_id, status=status, reason=reason, result=content,
+                                        elapsed_ms=(time.monotonic() - started) * 1000)
     logger.info(f"[executor] 工具 '{tool_name}' 调用完成,结果长度 {len(content)}")
     return ToolMessage(content=content, tool_call_id=tool_id, artifact={
         'data_source': 'tool_execution', 'tool': tool_name,
@@ -287,7 +343,8 @@ async def _run_single_tool(tc: dict, tool_map: dict, real_ids: str = "") -> Tool
         'elapsed_ms': round((time.monotonic() - started) * 1000, 2)})
 
 
-async def _run_tool_calls(tool_calls: list, tool_map: dict, real_ids: str = "") -> list:
+async def _run_tool_calls(tool_calls: list, tool_map: dict, real_ids: str = "",
+                          state: PlanExecuteState | None = None, step: str | None = None) -> list:
     """手动执行多个工具调用,返回 ToolMessage 列表。
 
     Windows Probe 串行采集，同批查询依次发出，避免排队耗尽单工具超时。
@@ -297,12 +354,29 @@ async def _run_tool_calls(tool_calls: list, tool_map: dict, real_ids: str = "") 
     if any(str(tc.get("name", "")).startswith(("session_", "shell_", "probe_")) for tc in tool_calls):
         results = []
         for tc in tool_calls:
-            results.append(await _run_single_tool(tc, tool_map, real_ids))
+            results.append(await _run_single_tool(tc, tool_map, real_ids, state, step))
         return results
-    return await asyncio.gather(*(_run_single_tool(tc, tool_map, real_ids) for tc in tool_calls))
+    return await asyncio.gather(*(_run_single_tool(tc, tool_map, real_ids, state, step)
+                                  for tc in tool_calls))
 
 
-async def _forced_search_log(tool_map: dict, real_ids: str, histories: list) -> str:
+def _record_blocked_tool_call(tool_name: str, arguments: dict, tool_call_id: str | None,
+                              state: PlanExecuteState, step: str, reason: str) -> None:
+    if not state.get("thread_id"):
+        raise run_store.ToolCallAuditError("tool_call_audit_context_missing")
+    call_uid = run_store.start_tool_call(
+        str(state["thread_id"]), state.get("user_id"),
+        len(state.get("past_steps") or []), step, tool_call_id, tool_name,
+        {"proposed": arguments, "executed": {}},
+    )
+    if call_uid is None:
+        raise run_store.ToolCallAuditError("tool_call_audit_start_failed")
+    run_store.finish_tool_call_or_raise(call_uid, status="blocked", reason=reason,
+                                        result={"blocked": True, "reason": reason}, elapsed_ms=0)
+
+
+async def _forced_search_log(tool_map: dict, real_ids: str, histories: list,
+                             state: PlanExecuteState | None = None, step: str | None = None) -> str:
     """确定性兜底: 用真实 topic_id 的一段时间窗强制调一次 search_log。
 
     仅用于 LLM 没产出 search_log 结果、但步骤确实需要日志证据的场景。
@@ -315,21 +389,12 @@ async def _forced_search_log(tool_map: dict, real_ids: str, histories: list) -> 
     if not topic_id:
         return ""
     now_ms = int(time.time() * 1000)
-    try:
-        res = await asyncio.wait_for(
-            tool.ainvoke({"topic_id": topic_id,
-                          "start_time": now_ms - 10 * 60 * 1000,
-                          "end_time": now_ms,
-                          "query": "error OR timeout OR connection refused",
-                          "limit": 50}),
-            timeout=_TOOL_INVOKE_TIMEOUT,
-        )
-        return str(res)
-    except (TerminalApprovalPending, TerminalProtocolError):
-        raise
-    except Exception as e:
-        logger.warning("[executor] 兜底调用 search_log 失败: %s", e)
-        return ""
+    message = await _run_single_tool({
+        "id": "forced-search-log", "name": "search_log",
+        "args": {"topic_id": topic_id, "start_time": now_ms - 10 * 60 * 1000,
+                 "end_time": now_ms, "query": "error OR timeout OR connection refused", "limit": 50},
+    }, tool_map, real_ids, state, step)
+    return message.content if (message.artifact or {}).get("status") in {"success", "fallback"} else ""
 
 
 def _is_parallel_step(task: str) -> bool:
@@ -376,7 +441,7 @@ def _record_probe_evidence(state: PlanExecuteState, raw_text: str, kind: str) ->
         events.append({"evidence_id": evidence_id, "target_id": str(target_id), "kind": str(operation),
                        'raw_hash': value['raw_hash'],
                        "source": "windows_probe", "collected_at": collected,
-                       "summary": json.dumps(redact(value.get("payload", {})), ensure_ascii=False, default=str)[:300],
+                       "summary": run_store.evidence_summary(value.get("payload", {})),
                        "fresh": True})
     return events
 
@@ -535,8 +600,10 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
                     artifact = {'data_source': 'tool_execution', 'tool': name, 'arguments': redact(args),
                         'status': 'unavailable', 'reason': refusal,
                         'checked_at': datetime.now(timezone.utc).isoformat(), 'elapsed_ms': 0}
+                    _record_blocked_tool_call(name, args, f'planned-{i}', state, raw_task, refusal)
                 else:
-                    message = await _run_single_tool({'name': name, 'args': args, 'id': f'planned-{i}'}, tool_map)
+                    message = await _run_single_tool({'name': name, 'args': args, 'id': f'planned-{i}'},
+                                                     tool_map, state=state, step=raw_task)
                     raw_evidence_parts.append(json.dumps(message.content, ensure_ascii=False))
                     artifact = dict(message.artifact or {})
                 artifact.update(question=redact(memory.get('discriminating_question', '')),
@@ -630,7 +697,8 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
                     executed[tc.get("name", "")] = True
                 autonomous = state.get('autonomous_investigation')
                 permitted = [tc for tc in tcs if not _probe_request_limit(tc, state)] if not autonomous else []
-                executed_messages = None if autonomous else iter(await _run_tool_calls(permitted, tool_map, real_ids))
+                executed_messages = None if autonomous else iter(await _run_tool_calls(
+                    permitted, tool_map, real_ids, state=state, step=raw_task))
                 tool_msgs = []
                 for tc in tcs:
                     # Include this step's prior returns; same-batch duplicates cannot bypass the guard.
@@ -642,11 +710,14 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
                                   'arguments': redact(tc.get('args') or {}),
                                   'status': 'unavailable', 'reason': limitation,
                                   'checked_at': datetime.now(timezone.utc).isoformat(), 'elapsed_ms': 0}
+                        _record_blocked_tool_call(tc['name'], tc.get('args') or {}, tc.get('id'),
+                                                  state, raw_task, limitation)
                         tm = ToolMessage(content=json.dumps({**record,
                             'message': '该调用超出本次检查计划或主机允许范围；请记录限制并交由调查器重新规划。'}, ensure_ascii=False),
                             tool_call_id=tc['id'], artifact=record)
                     else:
-                        tm = (await _run_single_tool(tc, tool_map, real_ids)) if autonomous else next(executed_messages)
+                        tm = (await _run_single_tool(tc, tool_map, real_ids, state, raw_task)
+                              if autonomous else next(executed_messages))
                     tool_msgs.append(tm)
                     # Save each return before validating the next proposed call.
                     _raw = getattr(tm, "content", "")
@@ -666,7 +737,8 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
             needs_log_evidence = ("search_log" in raw_task) or ("日志" in raw_task)
             if ((not result) and needs_log_evidence and (not executed.get("search_log"))
                     and not _probe_request_limit({'name': 'search_log'}, state)):
-                fallback = await _forced_search_log(tool_map, real_ids, histories=state.get("past_steps", []))
+                fallback = await _forced_search_log(tool_map, real_ids, histories=state.get("past_steps", []),
+                                                    state=state, step=raw_task)
                 if fallback:
                     result = fallback
                     raw_evidence_parts.append(fallback)
@@ -682,7 +754,7 @@ async def _run_step(task: str, state: PlanExecuteState) -> tuple[str, str]:
         raw_evidence = "\n".join(raw_evidence_parts)
         return result, raw_evidence
 
-    except (TerminalApprovalPending, TerminalProtocolError):
+    except (TerminalApprovalPending, TerminalProtocolError, run_store.ToolCallAuditError):
         raise
     except Exception as e:
         logger.warning("[executor] 执行步骤 '%s' 异常降级: %s", raw_task, e)
@@ -768,6 +840,8 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             "investigation_tools": catalog,
         }
     except TerminalProtocolError:
+        raise
+    except run_store.ToolCallAuditError:
         raise
     except Exception as e:
         logger.warning("[executor] 执行步骤 '%s' 异常降级: %s", task, e)

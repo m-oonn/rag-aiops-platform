@@ -171,6 +171,7 @@ class CompleteEvent(TypedDict, total=False):
     thread_id: str
     diagnosis: dict
     investigation: dict
+    knowledge_references: List[Dict[str, Any]]
 
 
 class ErrorEvent(TypedDict):
@@ -289,6 +290,7 @@ def make_complete_event(
     evidence_source_availability: List | None = None,
     diagnosis: dict | None = None,
     investigation: dict | None = None,
+    knowledge_references: List[dict] | None = None,
 ) -> Dict[str, Any]:
     event = {
         "type": EVENT_COMPLETE,
@@ -306,6 +308,8 @@ def make_complete_event(
         event['diagnosis'] = diagnosis
     if investigation is not None:
         event['investigation'] = investigation
+    if knowledge_references is not None:
+        event['knowledge_references'] = knowledge_references
     return event
 
 
