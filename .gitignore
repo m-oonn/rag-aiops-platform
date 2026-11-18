@@ -48,6 +48,8 @@ reports/
 /.local/
 /.runtime/
 /runtime/
+# 前端命令产生的本机运行缓存，与根 runtime 一样仅保留本地
+/frontend/runtime/
 /.demo_pids.json
 /.playwright-cli/
 /.pytest-tmp*/
