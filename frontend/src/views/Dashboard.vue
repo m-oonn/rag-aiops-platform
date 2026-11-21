@@ -1,8 +1,8 @@
 <script setup>
-import { ref } from "vue";
+import { onUnmounted, ref, watch } from "vue";
 import { request } from "../lib/api";
 import { useLoad, dateTime, docStatus, tone, runStatus } from "../lib/ui";
-import { getHistory } from "../lib/history";
+import { getHistory, rememberRun, mergeHistoryList, markHistoryRunUnavailable } from "../lib/history";
 import { session } from "../lib/session";
 import PageHeader from "../components/PageHeader.vue";
 import Feedback from "../components/Feedback.vue";
@@ -14,8 +14,42 @@ const kbs = ref([]),
   dependencies = ref({}),
   partialError = ref("");
 const available = ref([]);
-const recent = getHistory(session.user.id).slice(0, 4);
+const recent = ref(getHistory(session.user?.id).slice(0, 4)), recentLoading = ref(false);
+const recentError = ref("");
+let recentVersion = 0;
+async function loadRecent() {
+  const version = ++recentVersion, userId = session.user?.id;
+  let saved;
+  recentError.value = "";
+  try {
+    const result = await request("/aiops/runs", { query: { limit: 100 } });
+    if (version !== recentVersion || userId !== session.user?.id) return;
+    saved = mergeHistoryList(getHistory(userId), result.runs, userId, 4);
+    saved.forEach(row => rememberRun(userId, row));
+  } catch (e) {
+    if (version !== recentVersion || userId !== session.user?.id) return;
+    recentError.value = `服务器历史暂不可读取，显示此浏览器已保存的记录：${e.message}`;
+    saved = getHistory(userId).slice(0, 4);
+  }
+  recent.value = saved;
+  recentLoading.value = true;
+  const results = await Promise.allSettled(saved.map(row => request(`/aiops/runs/${encodeURIComponent(row.thread_id)}`)));
+  if (version !== recentVersion || userId !== session.user?.id) return;
+  recent.value = mergeHistoryList(results.map((result, index) => {
+    if (result.status === "rejected") return markHistoryRunUnavailable(saved[index], result.reason);
+    const row = {...saved[index], ...result.value, readError: ""};
+    rememberRun(userId, row);
+    return row;
+  }), null, userId, 4);
+  recentLoading.value = false;
+}
+watch(() => session.user?.id, () => {
+  recent.value = [];
+  loadRecent();
+});
+onUnmounted(() => { recentVersion++; });
 const { loading, error, refresh } = useLoad(async () => {
+  const recentRead = loadRecent();
   const paths = [
     "/knowledge-bases/",
     "/assistants/",
@@ -24,6 +58,7 @@ const { loading, error, refresh } = useLoad(async () => {
     "/health/dependencies",
   ];
   const results = await Promise.allSettled(paths.map((path) => request(path)));
+  await recentRead;
   available.value = results.map((row) => row.status === "fulfilled");
   const targets = [kbs, assistants, tasks, stats, dependencies];
   results.forEach((result, i) => {
@@ -43,7 +78,7 @@ const { loading, error, refresh } = useLoad(async () => {
         ><Icon name="plus" :size="18" />新建诊断</RouterLink
       ></PageHeader
     ><Feedback :loading="loading" :error="error" @retry="refresh()" /><template
-      v-if="!error"
+      v-if="!error || recent.length || recentLoading"
       ><div v-if="partialError" class="inline-feedback" role="alert">
         部分数据未能读取：{{ partialError }}
       </div>
@@ -78,11 +113,13 @@ const { loading, error, refresh } = useLoad(async () => {
         <section>
           <div class="section-heading">
             <h2>最近诊断</h2>
+            <button class="text-button" :disabled="recentLoading" @click="loadRecent">重新读取诊断</button>
             <RouterLink to="/aiops/history" class="text-button"
               >查看全部 <Icon name="arrow" :size="16"
             /></RouterLink>
           </div>
-          <div v-if="!recent.length" class="empty-state compact">
+          <div v-if="recentError" class="inline-feedback" role="alert">{{ recentError }}</div>
+          <div v-if="!recent.length && !recentError" class="empty-state compact">
             <span>暂无诊断记录</span
             ><RouterLink to="/aiops" class="text-button">开始诊断 →</RouterLink>
           </div>
@@ -96,7 +133,9 @@ const { loading, error, refresh } = useLoad(async () => {
               <strong>{{ run.query || run.thread_id }}</strong
               ><span class="muted">{{ dateTime(run.updated_at) }}</span>
             </div>
-            <span :class="['status', tone(run.status)]">{{
+            <span v-if="recentLoading" class="muted">状态核实中</span>
+            <span v-else-if="run.readError" class="text-danger" role="alert">状态未核实：{{ run.readError }}</span>
+            <span v-else :class="['status', tone(run.status)]">{{
               runStatus(run.status)
             }}</span
             ><Icon name="chevron" :size="16"

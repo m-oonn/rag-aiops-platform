@@ -1,13 +1,47 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import DiagnosisWorkspace from "./DiagnosisWorkspace.vue";
+import { session } from "../lib/session";
 const evidence = Array.from({ length: 10 }, (_, index) => ({ evidence_id: `ev-${String(index).padStart(16, "0")}`, kind: "processes", target_id: "host", summary: JSON.stringify({ service: index % 2 ? "downstream" : "app", matched_count: index % 2 ? 0 : 1 }), collected_at: `2026-11-14T01:07:${String(index).padStart(2, "0")}Z` }));
 const props = { runId: "saved-run", status: "completed", evidence, plans: Array.from({ length: 6 }, (_, index) => ({ text: `计划${index + 1}`, done: false })), diagnosis: { kind: "localized_fault", observed_findings: [{ evidence_id: evidence[1].evidence_id, scope: { service: "downstream" } }] }, investigation: { candidates: [{ id: "h1", explanation: "下游停止", status: "active", relation: "neutral", evidence_ids: [evidence[1].evidence_id] }] } };
 const button = (wrapper, text) => wrapper.findAll("button").find(node => node.text() === text);
 let wrapper;
+beforeEach(() => { sessionStorage.clear(); session.user = { id: 7, role: "user" }; });
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); });
 describe("diagnosis workspace interactions", () => {
+  it("restores navigation, evidence and replay cursor after remount without following later status", async () => {
+    wrapper = mount(DiagnosisWorkspace, { props });
+    await wrapper.get("#diagnosis-tab-process").trigger("click");
+    await wrapper.findAll(".check-list button")[4].trigger("click");
+    wrapper.unmount();
+    wrapper = mount(DiagnosisWorkspace, { props });
+    expect(wrapper.get('[aria-current="step"]').text()).toContain("05");
+    await wrapper.get("#diagnosis-tab-evidence").trigger("click");
+    await wrapper.findAll(".evidence-index button")[2].trigger("click");
+    const heading = wrapper.get(".evidence-heading").text();
+    wrapper.unmount();
+    wrapper = mount(DiagnosisWorkspace, { props });
+    expect(wrapper.get(".evidence-heading").text()).toBe(heading);
+    await wrapper.setProps({ status: "running" });
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain("现场证据");
+    await wrapper.setProps({ runId: "other-run" });
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain("排查过程");
+  });
+
+  it("restores the selected candidate only for its user and run", async () => {
+    const options = { ...props, investigation: { candidates: [...props.investigation.candidates,
+      { id: "h2", explanation: "第二个候选", status: "active" }] } };
+    wrapper = mount(DiagnosisWorkspace, { props: options });
+    await wrapper.get("#diagnosis-tab-causes").trigger("click");
+    await wrapper.findAll(".candidate-index button")[1].trigger("click");
+    wrapper.unmount();
+    wrapper = mount(DiagnosisWorkspace, { props: options });
+    expect(wrapper.get(".candidate-detail h2").text()).toContain("第二个候选");
+    session.user = { id: 8, role: "user" };
+    await nextTick();
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain("诊断报告");
+  });
   it("does not show another business from host inventory while registration is pending", async () => {
     wrapper = mount(DiagnosisWorkspace, { props: { status: 'running', diagnosis: {}, evidence: [
       { evidence_id: 'catalog', kind: 'inventory', summary: JSON.stringify({ configured_services: { ecom_web: {}, mall_portal: {}, mall_mysql: {} } }) },
@@ -90,13 +124,15 @@ describe("diagnosis workspace interactions", () => {
     expect(wrapper.get(".evidence-heading").text()).toContain("E02");
     await button(wrapper, "来源与原文").trigger("click");
     expect(wrapper.emitted("evidence")).toEqual([[evidence[1].evidence_id]]);
+    await button(wrapper, "返回诊断报告").trigger("click");
+    expect(wrapper.get('#diagnosis-tab-report').attributes("aria-selected")).toBe("true");
   });
   it("replays ten actual records, pauses and stops at the end without looping", async () => {
     vi.useFakeTimers();
     wrapper = mount(DiagnosisWorkspace, { props });
     await wrapper.get("#diagnosis-tab-process").trigger("click");
     expect(wrapper.findAll(".check-list li")).toHaveLength(10);
-    expect(wrapper.text()).toContain("排查计划 · 6");
+    expect(wrapper.text()).toContain("排查计划 · 0/6 项完成");
     await button(wrapper, "回放").trigger("click");
     await vi.advanceTimersByTimeAsync(1600);
     expect(wrapper.get('[aria-current="step"]').text()).toContain("02");
@@ -111,6 +147,18 @@ describe("diagnosis workspace interactions", () => {
     await button(wrapper, "重新回放").trigger("click");
     await wrapper.get("#diagnosis-tab-report").trigger("click");
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it("keeps the live cursor independent of tabs and retains a manually selected record when data arrives", async () => {
+    wrapper = mount(DiagnosisWorkspace, { props: { ...props, status: "running", evidence: evidence.slice(0, 8) } });
+    await wrapper.get("#diagnosis-tab-evidence").trigger("click");
+    await wrapper.get("#diagnosis-tab-process").trigger("click");
+    expect(button(wrapper, "跟随最新").attributes("aria-pressed")).toBe("true");
+    await wrapper.setProps({ evidence: evidence.slice(0, 9) });
+    expect(wrapper.get('[aria-current="step"]').text()).toContain("09");
+    await wrapper.findAll(".check-list button")[2].trigger("click");
+    await wrapper.setProps({ evidence });
+    expect(wrapper.get('[aria-current="step"]').text()).toContain("03");
+    expect(button(wrapper, "跟随最新").attributes("aria-pressed")).toBe("false");
   });
   it("keeps an unresolved cause unresolved and links its evidence without fabricating support", async () => {
     wrapper = mount(DiagnosisWorkspace, { props });

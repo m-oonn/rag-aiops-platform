@@ -956,6 +956,7 @@ a.record-row:hover {
   max-width: calc(100vw - 32px);
   padding: 24px !important;
 }
+.el-message-box.aiops-confirm { width: min(440px, calc(100vw - 32px)); }
 .el-message-box__message {
   overflow-wrap: anywhere;
 }

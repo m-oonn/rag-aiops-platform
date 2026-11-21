@@ -3,16 +3,16 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { reactive } from "vue";
 import Diagnosis from "./Diagnosis.vue";
 import { session } from "../lib/session";
-import { rememberRun } from "../lib/history";
+import { rememberRun, getHistory } from "../lib/history";
 const mocks = vi.hoisted(() => ({ request: vi.fn(), stream: vi.fn(), replace: vi.fn(() => Promise.resolve()), route: { query: { run: "saved-run" } } }));
 vi.mock("../lib/api", () => ({ request: mocks.request, stream: mocks.stream }));
-vi.mock("vue-router", () => ({ useRoute: () => mocks.route, useRouter: () => ({ replace: mocks.replace }) }));
+vi.mock("vue-router", () => ({ RouterLink: { template: "<a><slot /></a>" }, useRoute: () => mocks.route, useRouter: () => ({ replace: mocks.replace }) }));
 vi.mock("../lib/session", async () => {
   const { reactive } = await import("vue");
   return { session: reactive({ user: { id: 7, role: "user" } }) };
 });
 const ev = { evidence_id: "ev-0123456789abcdef", kind: "processes", summary: '{"service":"downstream","matched_count":0}', collected_at: "2026-11-14T01:00:00Z" };
-const run = { thread_id: "saved-run", status: "completed", diagnosis: { kind: "localized_fault", observed_findings: [{ evidence_id: ev.evidence_id, scope: { service: "downstream" } }] } };
+const run = { thread_id: "saved-run", status: "completed", updated_at: "2026-11-18T10:00:00+00:00", diagnosis: { kind: "localized_fault", observed_findings: [{ evidence_id: ev.evidence_id, scope: { service: "downstream" } }] } };
 let wrapper;
 const button = (text) => wrapper.findAll("button").find(node => node.text() === text);
 beforeEach(() => {
@@ -40,6 +40,30 @@ const mountView = async () => {
   wrapper = mount(Diagnosis, { global: { stubs: { Modal: { props: ["modelValue"], template: '<div v-if="modelValue" role="dialog"><slot /></div>' } } } });
   await flushPromises();
 };
+it("updates the local history when rereading an explicitly cleared diagnosis", async () => {
+  rememberRun(7, {...run, diagnosis:{kind:"confirmed_cause"}});
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({...run, diagnosis:null}) : original(path));
+  await mountView();
+  expect(getHistory(7)[0].diagnosis).toBeNull();
+});
+it("leaves the previous review when a history link has an invalid id", async () => {
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({ ...run, status: "pending_review", report: "上一场待审报告" }) : original(path));
+  await mountView();
+  expect(button("通过报告")).toBeDefined();
+
+  mocks.route.query = { run: "bad/id" };
+  await flushPromises();
+  expect(wrapper.get('[role="alert"]').text()).toContain("诊断编号格式无效");
+  expect(button("通过报告")).toBeUndefined();
+  expect(wrapper.text()).not.toContain("上一场待审报告");
+  expect(wrapper.find("#diagnosis-query").exists()).toBe(false);
+  expect(mocks.request.mock.calls.some(([path]) => path.includes("bad%2Fid"))).toBe(false);
+});
+
 it("shows each persisted tool call, refusal, parameters, result and truncation", async () => {
   const original = mocks.request.getMockImplementation();
   mocks.request.mockImplementation(path => path.endsWith("/tool-calls") ? Promise.resolve({ tool_calls: [{
@@ -48,13 +72,15 @@ it("shows each persisted tool call, refusal, parameters, result and truncation",
     result_truncated: true,
   }] }) : original(path));
   await mountView();
+  await wrapper.get("#diagnosis-tab-process").trigger("click");
   const ledger = wrapper.get('[aria-label="逐次工具调用"]');
   expect(ledger.text()).toContain("核对失败日志");
   expect(ledger.text()).toContain("outside_scope");
   expect(ledger.text()).toContain("mall");
   expect(ledger.text()).toContain("拒绝采集");
   expect(ledger.text()).toContain("结果已截断");
-  await button("新建诊断").trigger("click");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   await flushPromises();
   expect(wrapper.find('[aria-label="逐次工具调用"]').exists()).toBe(false);
 });
@@ -63,9 +89,11 @@ it("keeps a tool audit read failure distinct from zero calls", async () => {
   mocks.request.mockImplementation(path => path.endsWith("/tool-calls")
     ? Promise.reject(new Error("审计库暂不可读")) : original(path));
   await mountView();
+  await wrapper.get("#diagnosis-tab-process").trigger("click");
   const ledger = wrapper.get('[aria-label="逐次工具调用"]');
   expect(ledger.text()).toContain("审计库暂不可读");
   expect(ledger.text()).not.toContain("尚无调用记录");
+  await wrapper.get("#diagnosis-tab-report").trigger("click");
   expect(wrapper.find(".fact-strip").exists()).toBe(true);
 });
 it("approves a paused report through its own review endpoint", async () => {
@@ -78,7 +106,54 @@ it("approves a paused report through its own review endpoint", async () => {
   await mountView();
   await button("通过报告").trigger("click");
   await flushPromises();
-  expect(mocks.stream).toHaveBeenCalledWith("/aiops/runs/saved-run/review", { action: "approve" }, expect.any(Object));
+  expect(mocks.stream).toHaveBeenCalledWith("/aiops/runs/saved-run/review", { action: "approve", expected_updated_at: run.updated_at }, expect.any(Object));
+});
+
+it("invalidates a rejected conclusion while showing the new review plan", async () => {
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({ ...run, status: "pending_review", report: "旧草稿", diagnosis: { kind: "confirmed_cause" } }) : original(path));
+  let finish;
+  mocks.stream.mockImplementation((_path, _body, { onEvent }) => {
+    onEvent({ type: "plan", plan: ["核查另一条入口"], diagnosis: null });
+    return new Promise(resolve => { finish = resolve; });
+  });
+  await mountView();
+  await button("退回补查").trigger("click");
+  await flushPromises();
+  expect(wrapper.find(".conclusion-label.confirmed").exists()).toBe(false);
+  expect(wrapper.text()).toContain("核查另一条入口");
+  finish();
+  await flushPromises();
+});
+
+it("restores a review note after rereading, remounting and a failed submission", async () => {
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({ ...run, status: "pending_review", report: "草稿" }) : original(path));
+  await mountView();
+  await wrapper.get(".decision-panel textarea").setValue("请核对失败请求和下游日志");
+  wrapper.unmount();
+  await mountView();
+  expect(wrapper.get(".decision-panel textarea").element.value).toBe("请核对失败请求和下游日志");
+  mocks.stream.mockRejectedValue(Object.assign(new Error("暂不可提交"), { status: 503 }));
+  await button("退回补查").trigger("click");
+  await flushPromises();
+  expect(wrapper.get(".decision-panel textarea").element.value).toBe("请核对失败请求和下游日志");
+});
+
+it("clears an accepted review note before a new review cycle", async () => {
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({ ...run, status: "pending_review", report: "草稿" }) : original(path));
+  await mountView();
+  await wrapper.get(".decision-panel textarea").setValue("补采证据");
+  mocks.stream.mockImplementation(async (_path, _body, { onEvent }) => {
+    onEvent({ type: "pending_review", thread_id: "saved-run", draft: "补采后的草稿" });
+  });
+  await button("退回补查").trigger("click");
+  await flushPromises();
+  expect(wrapper.get(".decision-panel textarea").element.value).toBe("");
 });
 it("restores knowledge references, verifies original chunks through authorized endpoints and clears them for a new run", async () => {
   const original = mocks.request.getMockImplementation();
@@ -100,11 +175,12 @@ it("restores knowledge references, verifies original chunks through authorized e
   expect(mocks.request.mock.calls.some(([path]) => path.endsWith("/preview"))).toBe(false);
   await button("核对原文").trigger("click");
   await flushPromises();
-  expect(mocks.request).toHaveBeenCalledWith("/knowledge-bases/documents/34/chunks", { query: { limit: 100 } });
+  expect(mocks.request).toHaveBeenCalledWith("/knowledge-bases/documents/34/chunks", { query: { chunk_uid: "original-chunk", limit: 1 } });
   expect(mocks.request).toHaveBeenCalledWith("/knowledge-bases/documents/34/preview", { blob: true });
   expect(wrapper.get('[role="dialog"]').text()).toContain("完整手册：连接可达不能证明业务正常，继续检查失败请求。");
   expect(wrapper.get('[role="dialog"]').text()).not.toContain("无关片段");
-  await button("新建诊断").trigger("click");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   await flushPromises();
   expect(wrapper.find('[aria-label="本轮知识参考"]').exists()).toBe(false);
   expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
@@ -163,7 +239,8 @@ it("ignores an old refresh response after the user starts a new diagnosis", asyn
   let finish;
   mocks.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await button("重新载入").trigger("click");
-  await button("新建诊断").trigger("click");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   finish(run);
   await flushPromises();
   expect(wrapper.find(".fact-strip").exists()).toBe(false);
@@ -171,9 +248,10 @@ it("ignores an old refresh response after the user starts a new diagnosis", asyn
   expect(wrapper.get("textarea").attributes("disabled")).toBeUndefined();
   expect(wrapper.text()).not.toContain("故障层已定位");
 });
-it("starts a new stream, shows actual evidence and can stop reading while the form is collapsed", async () => {
+it("starts a new stream, shows actual evidence and can pause reading in the detail view", async () => {
   await mountView();
-  await button("新建诊断").trigger("click");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   let emit;
   mocks.stream.mockImplementation((_path, _body, { signal, onEvent }) => {
     emit = onEvent;
@@ -187,25 +265,23 @@ it("starts a new stream, shows actual evidence and can stop reading while the fo
   expect(wrapper.find("textarea").exists()).toBe(false);
   expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain("排查过程");
   expect(wrapper.findAll(".check-list li")).toHaveLength(1);
-  await button("停止读取").trigger("click");
+  await button("暂停读取进度").trigger("click");
   await flushPromises();
-  expect(wrapper.text()).toContain("诊断连接已中断");
-  await button("新建诊断").trigger("click");
+  expect(wrapper.text()).toContain("服务端诊断仍可继续");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   emit({ type: "evidence", ...ev });
   await flushPromises();
   expect(wrapper.findAll(".check-list li")).toHaveLength(0);
 });
 
-it("restores the last viewed diagnosis and evidence when returning through the sidebar", async () => {
-  await mountView();
-  wrapper.unmount();
+it("shows a new diagnosis rather than opening the last run from the sidebar", async () => {
+  rememberRun(7, { ...run, query: "上一场问题" });
   mocks.route.query = {};
-  mocks.request.mockClear();
   await mountView();
-  expect(wrapper.text()).toContain("故障层已定位");
-  expect(wrapper.find(".fact-strip").exists()).toBe(true);
-  expect(mocks.route.query).toEqual({ run: "saved-run" });
-  expect(mocks.request).toHaveBeenCalledWith("/aiops/runs/saved-run/evidence");
+  expect(wrapper.get("#diagnosis-query").element.value).toBe("");
+  expect(wrapper.find(".fact-strip").exists()).toBe(false);
+  expect(mocks.request.mock.calls.some(([path]) => path.startsWith("/aiops/runs/"))).toBe(false);
   expect(mocks.stream).not.toHaveBeenCalled();
 });
 
@@ -228,7 +304,8 @@ it("updates a restored running diagnosis from persisted state without submitting
 
 it("keeps an explicitly new diagnosis blank after refresh instead of reopening history", async () => {
   await mountView();
-  await button("新建诊断").trigger("click");
+  mocks.route.query = { new: "1" };
+  await flushPromises();
   await flushPromises();
   expect(mocks.route.query).toEqual({ new: "1" });
   wrapper.unmount();
@@ -264,8 +341,8 @@ it("restores the server query when this browser has no history", async () => {
   mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
     ? Promise.resolve({ ...run, query: "服务器保存的原始故障" }) : original(path));
   await mountView();
-  await button("故障描述").trigger("click");
-  expect(wrapper.get("textarea").element.value).toBe("服务器保存的原始故障");
+  expect(wrapper.get(".run-context").text()).toContain("服务器保存的原始故障");
+  expect(wrapper.find("textarea").exists()).toBe(false);
 });
 
 it("continues polling after a transient run read failure", async () => {
@@ -369,4 +446,162 @@ it("does not transfer an unsent diagnosis to another identity", async () => {
   await flushPromises();
   expect(wrapper.get("textarea").element.value).toBe("");
   expect(sessionStorage.getItem("aiops:draft:8") || "").not.toContain("账号7的私有输入");
+});
+
+it("restores another identity's own draft and retains the prior draft", async () => {
+  mocks.route.query = { new: "1" };
+  sessionStorage.setItem("aiops:draft:8", JSON.stringify({ query: "账号8的草稿", terminalEnabled: true }));
+  await mountView();
+  await wrapper.get("textarea").setValue("账号7的草稿");
+  session.user = { id: 8, role: "user" };
+  await flushPromises();
+  expect(wrapper.get("textarea").element.value).toBe("账号8的草稿");
+  expect(wrapper.get('input[type="checkbox"]').element.checked).toBe(true);
+  expect(JSON.parse(sessionStorage.getItem("aiops:draft:7")).query).toBe("账号7的草稿");
+});
+
+it("retains an input after connection failure before any run ID is received", async () => {
+  mocks.route.query = { new: "1" };
+  mocks.stream.mockRejectedValue(new Error("连接失败"));
+  await mountView();
+  await wrapper.get("textarea").setValue("失败后仍可纠正的输入");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  wrapper.unmount();
+  await mountView();
+  expect(wrapper.get("textarea").element.value).toBe("失败后仍可纠正的输入");
+});
+
+it("does not let an older status read replace a newer result on the same run", async () => {
+  await mountView();
+  let finishOld;
+  mocks.request.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+  const oldRead = wrapper.vm.refreshRunDetails();
+  mocks.request.mockImplementationOnce(() => Promise.resolve({ ...run, report: "最新报告" }));
+  await wrapper.vm.refreshRunDetails();
+  finishOld({ ...run, status: "running", report: "旧草稿" });
+  await oldRead;
+  expect(wrapper.findComponent({ name: "DiagnosisWorkspace" }).props("report")).toBe("最新报告");
+});
+
+it("hydrates a completed run even when usage follows the complete event", async () => {
+  await mountView();
+  let finishRead;
+  mocks.request.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+  wrapper.vm.onEvent({ type: "complete", response: "即时报告" });
+  wrapper.vm.onEvent({ type: "usage", llm_calls: 1 });
+  finishRead({ ...run, report: "持久报告", hypothesis_space: [{ id: "saved-hypothesis" }] });
+  await flushPromises();
+  const workspace = wrapper.findComponent({ name: "DiagnosisWorkspace" });
+  expect(workspace.props("report")).toBe("持久报告");
+  expect(workspace.props("hypotheses")).toEqual([{ id: "saved-hypothesis" }]);
+});
+
+it("does not let a delayed step snapshot erase a newer completion event", async () => {
+  await mountView();
+  wrapper.vm.onEvent({ type: "plan", plan: ["检查服务"] });
+  const original = mocks.request.getMockImplementation();
+  let finishSteps;
+  mocks.request.mockImplementation(path => path.endsWith("/steps")
+    ? new Promise(resolve => { finishSteps = resolve; }) : original(path));
+  wrapper.vm.onEvent({ type: "step_complete", current_step: "检查服务", message: "已经完成" });
+  finishSteps({ steps: [{ node: "planner", payload: { plan: ["检查服务"] } }] });
+  await flushPromises();
+  const steps = wrapper.findComponent({ name: "DiagnosisWorkspace" }).props("plans");
+  expect(steps[0].done).toBe(true);
+  expect(steps[0].result).toContain("已经完成");
+});
+
+it("retains previously read tool calls while a later ledger read is unavailable", async () => {
+  const original = mocks.request.getMockImplementation();
+  let failing = false;
+  mocks.request.mockImplementation(path => path.endsWith("/tool-calls")
+    ? failing ? Promise.reject(new Error("审计库暂不可读")) : Promise.resolve({ tool_calls: [
+      { call_id: "saved-call", tool: "probe_inventory", status: "success", result: "已读取的记录" },
+    ] }) : original(path));
+  await mountView();
+  failing = true;
+  await wrapper.vm.loadEvidence();
+  await wrapper.get("#diagnosis-tab-process").trigger("click");
+  const ledger = wrapper.get('[aria-label="逐次工具调用"]');
+  expect(ledger.text()).toContain("已读取的记录");
+  expect(ledger.text()).toContain("审计库暂不可读");
+});
+
+it("replaces old evidence with an authoritative empty persisted list", async () => {
+  await mountView();
+  mocks.request.mockImplementationOnce(() => Promise.resolve({ evidence: [] }));
+  await wrapper.vm.loadEvidence();
+  expect(wrapper.findComponent({ name: "DiagnosisWorkspace" }).props("evidence")).toEqual([]);
+});
+
+it("clears previous progress when the authoritative snapshot is empty", async () => {
+  await mountView();
+  wrapper.vm.onEvent({type:'plan', plan:['旧检查']});
+  await wrapper.vm.loadEvidence();
+  expect(wrapper.findComponent({name:'DiagnosisWorkspace'}).props("plans")).toEqual([]);
+});
+
+it("requires rereading or explicitly starting new after a known run disconnects", async () => {
+  await mountView();
+  wrapper.vm.onEvent({type:'error', stage:'stream_exception', recoverable:true, message:'重新读取'});
+  await wrapper.vm.start();
+  expect(mocks.stream).not.toHaveBeenCalled();
+  mocks.route.query = { new: "1" };
+  await flushPromises();
+  await flushPromises();
+  await wrapper.get('textarea').setValue('明确开始另一场');
+  await wrapper.vm.start();
+  expect(mocks.stream).toHaveBeenCalledTimes(1);
+});
+
+it("retains a pending report when a resume stream fails recoverably", async () => {
+  const original = mocks.request.getMockImplementation();
+  mocks.request.mockImplementation(path => path === "/aiops/runs/saved-run"
+    ? Promise.resolve({ ...run, status: "pending_review", report: "可重新读取的草稿" }) : original(path));
+  mocks.stream.mockImplementation(async (_path, _body, { onEvent }) => {
+    onEvent({ type: "error", stage: "stream_exception", recoverable: true, message: "请重新读取已保存状态后继续" });
+  });
+  await mountView();
+  await button("通过报告").trigger("click");
+  await flushPromises();
+  expect(wrapper.findComponent({ name: "DiagnosisWorkspace" }).props("report")).toBe("可重新读取的草稿");
+  expect(wrapper.findComponent({ name: "DiagnosisWorkspace" }).props("status")).toBe("disconnected");
+  expect(button("重新载入")?.element.disabled).toBe(false);
+});
+
+it('recovers an unsent description after opening a saved diagnosis and returning to new', async () => {
+  mocks.route.query = {new:'1'};
+  await mountView();
+  await wrapper.get('#diagnosis-query').setValue('保留未提交描述');
+  await wrapper.get('input[type="checkbox"]').setValue(true);
+  mocks.route.query = {run:'saved-run'};
+  await flushPromises();
+  expect(wrapper.text()).toContain('故障层已定位');
+  mocks.route.query = {new:'1'};
+  await flushPromises();
+  expect(wrapper.get('#diagnosis-query').element.value).toBe('保留未提交描述');
+  expect(wrapper.get('input[type="checkbox"]').element.checked).toBe(true);
+  expect(mocks.stream).not.toHaveBeenCalled();
+});
+
+it("retries temporarily unavailable raw evidence from the same dialog", async () => {
+  session.user.role = "auditor";
+  const original = mocks.request.getMockImplementation();
+  let detailReads = 0;
+  mocks.request.mockImplementation(async path => {
+    if (path.includes(`/evidence/${ev.evidence_id}`) && ++detailReads === 1)
+      return { ...ev, raw_status: "unavailable", raw: null };
+    return original(path);
+  });
+  await mountView();
+  await wrapper.get(".fact-strip button").trigger("click");
+  await button("来源与原文").trigger("click");
+  await flushPromises();
+  expect(wrapper.get('[role="dialog"]').text()).toContain("留存原文暂不可读取");
+  await button("重试").trigger("click");
+  await flushPromises();
+  await button("读取现场原文").trigger("click");
+  expect(wrapper.get('[role="dialog"]').text()).toContain("private-payload");
+  expect(detailReads).toBe(2);
 });

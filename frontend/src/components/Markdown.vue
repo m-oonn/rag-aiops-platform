@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-const props = defineProps({ content: String });
+const props = defineProps({ content: String, plainCitations: Boolean });
 defineEmits(["evidence"]);
 const html = computed(() =>
   DOMPurify.sanitize(marked.parse(props.content || "", { breaks: true }), {
@@ -10,7 +10,7 @@ const html = computed(() =>
     FORBID_ATTR: ["style"],
   }).replace(/\bev-[A-Za-z0-9]{16,80}\b/g, (id, offset, text) => {
     // Evidence links are added only to text, outside HTML tags.
-    return text.lastIndexOf("<", offset) > text.lastIndexOf(">", offset)
+    return props.plainCitations || text.lastIndexOf("<", offset) > text.lastIndexOf(">", offset)
       ? id
       : `<button type="button" class="citation" data-evidence="${id}">${id}</button>`;
   }),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evidenceRows, logEvents, readableText, visualCandidates, topology, reportFacts, reportActions, reportOverview } from "./diagnosisVisuals";
 const record = (id, kind, payload, second = 1, target = "host-a") => ({ evidence_id: id, kind, summary: JSON.stringify(payload), collected_at: `2026-11-14T01:00:${String(second).padStart(2, '0')}Z`, target_id: target });
+const nodeId = (service, target = "host-a") => JSON.stringify([target, service]);
 
 describe("diagnosis visual projections", () => {
   it("keeps a partial inventory usable when dependency details contain null", () => {
@@ -9,13 +10,13 @@ describe("diagnosis visual projections", () => {
       dependency_details: { missing: null, query: { source_service: "web" } },
     })]);
     const graph = topology(rows, { dependency_services: { missing: "db", query: "db" } });
-    expect(graph.edges).toEqual([{ from: "web", to: "db", evidence: "inventory", label: "登记依赖 · 因果需另行核验" }]);
-    expect(graph.nodes.map(node => node.id)).toContain("web");
+    expect(graph.edges).toEqual([{ from: nodeId("web"), to: nodeId("db"), evidence: "inventory", label: "登记依赖 · 因果需另行核验" }]);
+    expect(graph.nodes.map(node => node.id)).toContain(nodeId("web"));
   });
   it("limits host inventory nodes to the resolved business registration", () => {
     const rows = evidenceRows([record("inventory", "inventory", { configured_services: { old_web: {}, new_web: {}, new_db: {} } })]);
     const graph = topology(rows, { allowed_services: ["new_web", "new_db"] });
-    expect(graph.nodes.map(node => node.id)).toEqual(["new_web", "new_db", "主机"]);
+    expect(graph.nodes.map(node => node.id)).toEqual([nodeId("new_web"), nodeId("new_db"), nodeId(null)]);
   });
   it("does not promote a TCP failure to a function test and prefers a real query in a confirmed chain", () => {
     const rows = evidenceRows([
@@ -52,8 +53,8 @@ describe("diagnosis visual projections", () => {
     ]);
     expect(rows.filter(row => row.state === "abnormal")).toHaveLength(2);
     const graph = topology(rows, { dependency_services: { query: "db" } });
-    expect(graph.edges).toEqual([{from: "web", to: "db", evidence: "inventory", label: "登记依赖 · 因果需另行核验"}]);
-    expect(graph.nodes.find(node => node.id === "db").evidence).toHaveLength(2);
+    expect(graph.edges).toEqual([{from: nodeId("web"), to: nodeId("db"), evidence: "inventory", label: "登记依赖 · 因果需另行核验"}]);
+    expect(graph.nodes.find(node => node.id === nodeId("db")).evidence).toHaveLength(2);
   });
   it("orders and deduplicates actual observations without treating stale data as a collection failure", () => {
     const rows = evidenceRows([
@@ -90,11 +91,32 @@ describe("diagnosis visual projections", () => {
       record("port", "ports", { local_port: 4634, matched_count: 0 }),
     ]);
     const graph = topology(rows);
-    expect(graph.edges).toEqual([{ from: "app", to: "downstream", evidence: "app-log", label: "日志配置指向 · 因果未确认" }]);
-    expect(graph.nodes.find(node => node.id === "downstream").evidence.map(row => row.id)).toEqual(["down-log", "port"]);
-    expect(graph.nodes.find(node => node.id === "edge").evidence).toEqual([]);
+    expect(graph.edges).toEqual([{ from: nodeId("app"), to: nodeId("downstream"), evidence: "app-log", label: "日志配置指向 · 因果未确认" }]);
+    expect(graph.nodes.find(node => node.id === nodeId("downstream")).evidence.map(row => row.id)).toEqual(["down-log", "port"]);
+    expect(graph.nodes.find(node => node.id === nodeId("edge")).evidence).toEqual([]);
     rows.find(row => row.id === "app-log").target = "other-host";
     expect(topology(rows).edges).toEqual([]);
+  });
+  it("keeps same-named services and ports isolated by target", () => {
+    const log = (service, port, upstream) => ({ service, lines: [JSON.stringify({ event: "service_started", listen_port: port, ...(upstream ? { upstream } : {}) })] });
+    const rows = evidenceRows([
+      record("app-a", "text_logs", log("app", 4101, { host: "127.0.0.1", port: 4102 }), 1, "target-a"),
+      record("down-a", "text_logs", log("downstream", 4102), 2, "target-a"),
+      record("app-b", "text_logs", log("app", 5101, { host: "127.0.0.1", port: 5102 }), 3, "target-b"),
+      record("down-b", "text_logs", log("downstream", 5102), 4, "target-b"),
+      record("port-a", "ports", { local_port: 4102, matched_count: 0 }, 5, "target-a"),
+    ]);
+    const graph = topology(rows);
+    expect(graph.nodes.map(node => node.id)).toEqual([
+      nodeId("app", "target-a"), nodeId("downstream", "target-a"), nodeId("app", "target-b"), nodeId("downstream", "target-b"),
+    ]);
+    expect(graph.nodes.find(node => node.id === nodeId("downstream", "target-a")).evidence.map(row => row.id))
+      .toEqual(["down-a", "port-a"]);
+    expect(graph.nodes.find(node => node.id === nodeId("downstream", "target-b")).evidence.map(row => row.id))
+      .toEqual(["down-b"]);
+    expect(graph.edges.map(edge => [edge.from, edge.to])).toEqual([
+      [nodeId("app", "target-a"), nodeId("downstream", "target-a")], [nodeId("app", "target-b"), nodeId("downstream", "target-b")],
+    ]);
   });
   it("deduplicates findings by evidence and actions by text while retaining all references", () => {
     const data = { observed_findings: [{ evidence_id: "ev1", scope: { local_port: 4634 }, summary: "端口未监听" }, { evidence_id: "ev1", scope: { local_port: 4634 }, summary: "期望端口未监听" }], recommendations: [{ action: "复测", evidence: [{ evidence_id: "ev1" }] }, { action: "复测", evidence: [{ evidence_id: "ev2" }] }] };

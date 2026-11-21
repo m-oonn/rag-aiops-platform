@@ -9,9 +9,11 @@ export async function confirmAction(
   message,
   button = "确认",
   danger = false,
+  customClass = "",
 ) {
   try {
     await ElMessageBox.confirm(message, title, {
+      customClass,
       confirmButtonText: button,
       cancelButtonText: "取消",
       type: danger ? "warning" : "info",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getHistory, rememberRun, validRunId } from "./history";
+import { getHistory, markHistoryRunUnavailable, rememberRun, validRunId } from "./history";
 
 afterEach(() => localStorage.clear());
 
@@ -20,6 +20,13 @@ describe("saved diagnosis history", () => {
       status: "completed",
     });
   });
+  it("clears cached diagnosis when detail refresh is unavailable", () => {
+    const row = {thread_id: "r", diagnosis: {kind: "localized_fault"}, details_status: "available"};
+    expect(markHistoryRunUnavailable(row, new Error("详情暂不可读取"))).toMatchObject({
+      diagnosis: null, details_status: "unavailable", readError: "详情暂不可读取", knowledge_references: [],
+    });
+  });
+
   it("keeps valid records when old storage contains null or duplicate rows", () => {
     localStorage.setItem("aiops:runs:v2:4", JSON.stringify([null, { thread_id: "r" }, { thread_id: "r" }, 2, { thread_id: "other" }]));
     expect(getHistory(4).map(row => row.thread_id)).toEqual(["r", "other"]);

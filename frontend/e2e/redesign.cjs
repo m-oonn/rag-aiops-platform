@@ -461,12 +461,14 @@ async (page) => {
   await page.getByRole("button", { name: "开始诊断" }).click();
   await page.getByText("上游服务未响应").first().waitFor();
   await page.getByRole("tab", { name: /排查过程/ }).click();
+  await page.getByText(/排查计划 ·/).click();
   await page.getByText("检查 API 日志").waitFor();
 
   await page.getByRole("tab", { name: /候选原因/ }).click();
   await page.getByText("上游服务连接失败", { exact: true }).waitFor();
   await page.getByRole("tab", { name: /现场证据/ }).click();
   await page.getByRole("button", { name: /上游连接超时/ }).click();
+  await page.getByRole("button", { name: "来源与原文" }).click();
   await page.getByRole("button", { name: "读取现场原文" }).click();
   await page.getByText(/"redacted": true/).waitFor();
   check(
@@ -647,10 +649,10 @@ async (page) => {
   await page.getByLabel("故障现象").fill("连接中断测试");
   await page.getByRole("button", { name: "开始诊断" }).click();
   await page
-    .getByText("连接已结束，请重新载入查看诊断状态", { exact: true })
+    .getByText("连接已结束，正在读取已保存的诊断", { exact: true })
     .waitFor();
   check(
-    await page.getByRole("button", { name: "恢复诊断" }).isVisible(),
+    await page.getByRole("button", { name: "重新载入" }).isVisible(),
     "Incomplete SSE was marked complete",
   );
 
@@ -660,7 +662,7 @@ async (page) => {
   await page.getByRole("button", { name: "开始诊断" }).click();
   await page.getByText("终端命令待审批", { exact: true }).waitFor();
   check(
-    await page.getByRole("button", { name: "开始诊断" }).isDisabled(),
+    (await page.getByRole("button", { name: "开始诊断" }).count()) === 0,
     "Paused diagnosis can be resubmitted",
   );
   check(
@@ -719,7 +721,8 @@ async (page) => {
   await page.goto(`${base}/aiops?run=browser-run-1`);
   await page.getByRole("tab", { name: /现场证据/ }).click();
   await page.getByRole("button", { name: /上游连接超时/ }).click();
-  await page.getByText("上游服务连接失败", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "来源与原文" }).click();
+  await page.getByText("上游服务连接失败", { exact: true }).first().waitFor();
   check(
     (await page.getByRole("button", { name: "读取现场原文" }).count()) === 0,
     "Member can open raw evidence",

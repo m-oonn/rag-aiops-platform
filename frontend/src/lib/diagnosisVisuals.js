@@ -4,6 +4,9 @@ const operationNames = {
   metrics: "指标", events: "系统事件",
 };
 const unique = (values) => [...new Set(values.filter(Boolean))];
+const objectRows = value => Array.isArray(value) ? value.filter(row => row && typeof row === "object" && !Array.isArray(row)) : [];
+const textRows = value => Array.isArray(value) ? value.filter(row => typeof row === "string" && row.trim()) : [];
+const evidenceIds = value => objectRows(value).map(row => row.evidence_id).filter(id => typeof id === "string" && id);
 // Presentation vocabulary only. Original evidence and candidate text remain available.
 const vocabulary = {
   mall_portal: "商城买家业务服务", mall_admin: "商城后台业务服务", mall_search: "商城搜索服务",
@@ -67,7 +70,7 @@ export function clockTime(value) {
 }
 export function conditionText(condition, fallback = "") {
   if (!condition) return fallback;
-  const object = serviceLabel((condition.object_name || "对象").split("#")[0]);
+  const object = serviceLabel(String(condition.object_name || "对象").split("#")[0]);
   const expected = condition.expected;
   if (condition.field === "state") return `${object}${({running: "正在运行", stopped: "已停止", paused: "已暂停", stop_pending: "正在停止", start_pending: "正在启动"})[expected] || "的运行状态待核对"}`;
   if (condition.field === "query") return `${object}${({ok: "实际功能检查通过", failed: "实际功能检查失败", no_worker_reply: "未收到后台任务进程回应"})[expected] || "功能状态待核对"}`;
@@ -87,7 +90,7 @@ export function conditionText(condition, fallback = "") {
   return fallback;
 }
 export function questionText(question) {
-  const text = typeof question === "string" ? question : question?.question || "";
+  const text = typeof question === "string" ? question : typeof question?.question === "string" ? question.question : "";
   const match = text.match(/^(dependency_probe|services|ports|processes)\/([^:]+):\s*([\w.]+)\s*==\s*(.+)$/);
   if (match) {
     try {
@@ -95,6 +98,17 @@ export function questionText(question) {
     } catch { /* Preserve unrecognized original text. */ }
   }
   return readableText(text);
+}
+export function reportQuestions(diagnosis = {}) {
+  const alternatives = objectRows(diagnosis?.alternatives);
+  const questions = Array.isArray(diagnosis?.unresolved_questions) ? diagnosis.unresolved_questions : [];
+  return questions.flatMap(question => {
+    const text = typeof question === "string" ? question : question?.question;
+    if (typeof text !== "string" || !text.trim()) return [];
+    const alternative = alternatives.find(item => item.explanation === text);
+    return [{ id: question?.id, text: questionText(question),
+      reason: alternative?.critical === false ? alternative.noncritical_reason : "" }];
+  });
 }
 export function logEvents(payload) {
   return (Array.isArray(payload?.lines) ? payload.lines : []).map((line, index) => {
@@ -144,9 +158,9 @@ function observationText(kind, payload, fallback) {
   return fallback || "已取得现场记录";
 }
 export function evidenceRows(items = [], investigation = {}) {
-  const summaries = investigation?.evidence_summaries || [];
+  const summaries = objectRows(investigation?.evidence_summaries);
   const rows = new Map();
-  for (const item of items) {
+  for (const item of Array.isArray(items) ? items : []) {
     if (!item || typeof item !== "object") continue;
     const id = item.evidence_id || item.id;
     if (!id) continue;
@@ -178,28 +192,70 @@ export function evidenceRows(items = [], investigation = {}) {
   }).map((row, index) => ({ ...row, number: index + 1, label: `E${String(index + 1).padStart(2, "0")}` }));
 }
 export function topology(rows = [], registration = {}) {
-  const services = new Set();
+  const entries = new Map();
   const ports = new Map();
-  const mapping = registration.dependency_services || {};
+  const targetOf = (value) => value == null ? "" : String(value);
+  const keyOf = (service, target) => JSON.stringify([targetOf(target), service]);
+  const registered = (target) => !registration.target_id || targetOf(registration.target_id) === targetOf(target);
+  const mappingFor = (target) => registered(target) ? registration.dependency_services || {} : {};
+  const addService = (service, target) => {
+    if (!service) return "";
+    const key = keyOf(service, target);
+    if (!entries.has(key)) entries.set(key, { service, target: targetOf(target) });
+    return key;
+  };
   for (const row of rows) {
+    const mapping = mappingFor(row.target);
     Object.keys(row.payload?.configured_services || {}).filter((name) =>
-      !registration.allowed_services || registration.allowed_services.includes(name)).forEach((name) => services.add(name));
-    if (row.subject) services.add(mapping[row.subject] || row.subject);
-    if (row.subject && row.payload?.port != null) ports.set(row.subject, row.payload.port);
+      !registered(row.target) || !registration.allowed_services || registration.allowed_services.includes(name)).forEach((name) => addService(name, row.target));
+    if (row.subject) {
+      const service = mapping[row.subject] || row.subject;
+      addService(service, row.target);
+      if (row.payload?.port != null) ports.set(keyOf(service, row.target), row.payload.port);
+    }
     for (const event of logEvents(row.payload)) {
-      if (row.subject && event.data?.listen_port != null) ports.set(row.subject, event.data.listen_port);
+      if (row.subject && event.data?.listen_port != null) {
+        const service = mapping[row.subject] || row.subject;
+        ports.set(keyOf(service, row.target), event.data.listen_port);
+      }
     }
   }
-  const owner = (row) => mapping[row.subject] || row.subject || (row.port != null
-    ? [...ports].find(([, port]) => String(port) === String(row.port))?.[0] : "");
-  const nodes = [...services].map((name) => ({ id: name, port: ports.get(name),
-    evidence: rows.filter((row) => owner(row) === name),
+  const counts = new Map();
+  for (const entry of entries.values()) counts.set(entry.service, (counts.get(entry.service) || 0) + 1);
+  const owner = (row) => {
+    const mapping = mappingFor(row.target);
+    const service = row.subject && (mapping[row.subject] || row.subject);
+    if (service) {
+      const key = keyOf(service, row.target);
+      if (entries.has(key)) return key;
+    }
+    if (row.port != null) {
+      const sameTarget = [...ports].filter(([key, port]) => String(port) === String(row.port) &&
+        entries.get(key)?.target === targetOf(row.target));
+      if (sameTarget.length === 1) return sameTarget[0][0];
+    }
+    return "";
+  };
+  const nodes = [...entries].map(([key, entry]) => ({
+    id: key, service: entry.service, target: entry.target,
+    label: serviceLabel(entry.service) + (counts.get(entry.service) > 1 ? " · " + (entry.target || "未知目标") : ""),
+    port: ports.get(key), evidence: rows.filter((row) => owner(row) === key),
   }));
-  if (rows.some((row) => !owner(row))) nodes.push({ id: "主机", evidence: rows.filter((row) => !owner(row)) });
+  const hostRows = new Map();
+  for (const row of rows.filter((item) => !owner(item))) {
+    const target = targetOf(row.target);
+    if (!hostRows.has(target)) hostRows.set(target, []);
+    hostRows.get(target).push(row);
+  }
+  for (const [target, evidence] of hostRows) nodes.push({ id: keyOf(null, target), service: "主机", target,
+    label: "主机" + (target ? " · " + target : " · 未知目标"), evidence });
   const edges = [];
   for (const row of rows) for (const [dependency, detail] of Object.entries(row.payload?.dependency_details || {})) {
-    const from = detail?.source_service, to = mapping[dependency];
-    if (from && to && from !== to && services.has(from) && services.has(to) &&
+    const mapping = mappingFor(row.target);
+    const fromKey = detail?.source_service && keyOf(detail.source_service, row.target);
+    const toKey = mapping[dependency] && keyOf(mapping[dependency], row.target);
+    const from = entries.has(fromKey) ? fromKey : "", to = entries.has(toKey) ? toKey : "";
+    if (from && to && from !== to &&
         !edges.some(edge => edge.from === from && edge.to === to))
       edges.push({ from, to, evidence: row.id, label: "登记依赖 · 因果需另行核验" });
   }
@@ -207,22 +263,23 @@ export function topology(rows = [], registration = {}) {
     const upstream = event.data?.upstream;
     if (upstream?.port == null || !row.subject) continue;
     // Match a port only within this target; equal ports on other hosts are not a service mapping.
-    const matches = nodes.filter((node) => String(node.port) === String(upstream.port) && node.evidence.some((item) => item.target === row.target));
+    const matches = nodes.filter((node) => String(node.port) === String(upstream.port) && node.target === targetOf(row.target));
     const target = matches.length === 1 ? matches[0].id : "";
     const localHost = ["127.0.0.1", "localhost", "::1"].includes(upstream.host);
-    if (target && localHost && target !== row.subject && !edges.some((edge) => edge.from === row.subject && edge.to === target))
-      edges.push({ from: row.subject, to: target, evidence: row.id, label: "日志配置指向 · 因果未确认" });
+    const source = owner(row);
+    if (target && source && localHost && target !== source && !edges.some((edge) => edge.from === source && edge.to === target))
+      edges.push({ from: source, to: target, evidence: row.id, label: "日志配置指向 · 因果未确认" });
   }
   return { nodes, edges };
 }
 export function visualCandidates(investigation = {}, diagnosis = {}, hypotheses = []) {
-  const candidates = investigation?.candidates || investigation?.hypotheses || hypotheses;
-  const alternatives = diagnosis?.alternatives || [];
+  const candidates = objectRows(investigation?.candidates || investigation?.hypotheses || hypotheses);
+  const alternatives = objectRows(diagnosis?.alternatives);
   const source = candidates.length ? candidates : alternatives;
   return source.map((item, index) => {
     const id = item.id || item.hypothesis_id || String(index);
     const alternative = alternatives.find((row) => row.hypothesis_id === id) || {};
-    const checks = investigation?.candidate_check_progress?.[id] || [];
+    const checks = objectRows(investigation?.candidate_check_progress?.[id]);
     const condition = item.condition || alternative.condition;
     const confirmed = diagnosis?.kind === "confirmed_cause" && diagnosis.hypothesis_id === id;
     // Lifecycle "dropped" means no longer pursued, not disproved. Only use explicit verdicts.
@@ -230,14 +287,15 @@ export function visualCandidates(investigation = {}, diagnosis = {}, hypotheses 
       : ["supported", "excluded"].includes(alternative.status) ? alternative.status : item.status || item.state || "unresolved";
     // A cited alternative can remain unresolved even when its prose argues against it.
     const relation = ["support", "contradict"].includes(item.relation) ? item.relation : "neutral";
-    const citations = confirmed ? (diagnosis.evidence || []).map(row => row.evidence_id) : [];
-    const evidence = unique([...citations, ...(item.evidence_ids || []), ...(alternative.evidence || []).map((row) => row.evidence_id), ...checks.flatMap((check) => check.evidence_ids || [])]);
+    const citations = confirmed ? evidenceIds(diagnosis.evidence) : [];
+    const ownEvidence = textRows(item.evidence_ids);
+    const evidence = unique([...citations, ...ownEvidence, ...evidenceIds(alternative.evidence), ...checks.flatMap(check => textRows(check.evidence_ids))]);
     const original = item.explanation || item.hypothesis || item.name || item.cause || "";
     return { id, number: `H${index + 1}`, text: confirmed ? reportOverview(diagnosis).causeTitle : conditionText(condition, candidateTitle(original)), original,
       status, statusLabel: { confirmed: "已确认原因", supported: "有证据支持", excluded: "已排除", dropped: "已停止排查" }[status] || "待验证",
       type: confirmed ? "原因解释" : condition ? "现场条件" : "原因解释", relation, evidence,
       relations: evidence.map((evidenceId) => ({ id: evidenceId,
-        relation: citations.includes(evidenceId) ? "citation" : (item.evidence_ids || []).includes(evidenceId) ? relation : "neutral" })),
+        relation: citations.includes(evidenceId) ? "citation" : ownEvidence.includes(evidenceId) ? relation : "neutral" })),
       limitation: readableText(alternative.limitation || item.limitation || ""),
       question: readableText(item.check?.discriminating_question || alternative.check?.discriminating_question || checks[0]?.question || ""),
       nextCheck: readableText(item.check?.next_check || alternative.check?.next_check || checks[0]?.next_check || ""),
@@ -263,7 +321,7 @@ export function reportOverview(diagnosis = {}, rows = []) {
     : kind === "healthy_within_scope" ? "本次检查未发现故障"
     : kind === "confirmed_cause" ? "已确认本次故障原因" : kind === "unlocated" ? "暂时还没找到故障位置" : "诊断结果");
   const causeTitle = titles[code]?.[1] || candidateTitle(diagnosis?.conclusion || "已确认本次故障原因");
-  const cited = new Set((diagnosis?.evidence || []).map(item => item.evidence_id));
+  const cited = new Set(evidenceIds(diagnosis?.evidence));
   const logs = rows.filter(row => cited.has(row.id) && row.kind === "text_logs");
   const steps = [];
   if (code === "registered_service_stopped") {
@@ -289,12 +347,18 @@ export function reportOverview(diagnosis = {}, rows = []) {
     if (stopped) {
       steps.push({ id: stopped.id, object: serviceLabel(stopped.subject), title: "收到停止请求后退出", icon: "logout", tone: "cause" });
       const graph = topology(rows);
-      const app = logs.find(row => row.target === stopped.target && graph.edges.some(edge => edge.from === row.subject && edge.to === stopped.subject)
+      const linked = (edge, fromRow, toRow) => {
+        const from = graph.nodes.find(node => node.id === edge.from);
+        const to = graph.nodes.find(node => node.id === edge.to);
+        return from?.service === fromRow.subject && from?.target === fromRow.target &&
+          to?.service === toRow.subject && to?.target === toRow.target;
+      };
+      const app = logs.find(row => row.target === stopped.target && graph.edges.some(edge => linked(edge, row, stopped))
         && logEvents(row.payload).some(event => event.data?.status >= 400 && event.data?.upstream_request?.connection_established === false));
       if (app) {
         const request = logEvents(app.payload).find(event => event.data?.status >= 400 && event.data?.upstream_request?.connection_established === false)?.data;
         steps.push({ id: app.id, object: serviceLabel(app.subject), title: "无法连接下游服务", icon: "close", tone: "affected" });
-        const entry = request?.request_id && logs.find(row => row.target === app.target && graph.edges.some(edge => edge.from === row.subject && edge.to === app.subject)
+        const entry = request?.request_id && logs.find(row => row.target === app.target && graph.edges.some(edge => linked(edge, row, app))
           && logEvents(row.payload).some(event => event.data?.request_id === request.request_id && event.data?.upstream_request?.response_status >= 400));
         if (entry) steps.push({ id: entry.id, object: serviceLabel(entry.subject), title: "用户请求失败", icon: "close", tone: "affected" });
       }
@@ -303,12 +367,12 @@ export function reportOverview(diagnosis = {}, rows = []) {
   return { title, causeTitle, steps };
 }
 export function reportFacts(diagnosis = {}, rows = []) {
-  const findings = diagnosis?.observed_findings || [];
+  const findings = objectRows(diagnosis?.observed_findings);
   const seen = new Set();
   return findings.flatMap((finding) => {
     const id = finding.evidence_id;
     const evidence = rows.find((row) => row.id === id);
-    if (seen.has(id)) return [];
+    if (!id || seen.has(id)) return [];
     seen.add(id);
     const scope = finding.scope || {};
     return [{ id, object: scope.service || scope.dependency || (scope.local_port != null ? `端口 ${scope.local_port}` : "现场"),
@@ -317,24 +381,25 @@ export function reportFacts(diagnosis = {}, rows = []) {
 }
 export function reportActions(diagnosis = {}) {
   const actions = [];
-  for (const item of diagnosis?.recommendations || []) {
+  for (const item of Array.isArray(diagnosis?.recommendations) ? diagnosis.recommendations : []) {
     if (!item) continue;
     const action = typeof item === "string" ? item : item.action || item.recommendation;
     if (!action) continue;
     const scope = item.scope || {};
+    const target = item.target_id || diagnosis?.target_id || "";
     const sameScope = row => {
       const keys = unique([...Object.keys(row.scope), ...Object.keys(scope)]);
       return keys.every(key => row.scope[key] === scope[key]);
     };
-    const previous = actions.find((row) => row.action === action && sameScope(row));
+    const previous = actions.find((row) => row.action === action && row.target === target && sameScope(row));
     if (previous) {
-      previous.evidence = unique([...previous.evidence, ...(item.evidence || []).map((row) => row.evidence_id)]);
-      previous.preconditions = unique([...previous.preconditions, ...(item.preconditions || [])]);
-      previous.risks = unique([...previous.risks, ...(item.risks || [])]);
-      previous.verification = unique([...previous.verification, ...(item.verification_steps || [])]);
+      previous.evidence = unique([...previous.evidence, ...evidenceIds(item.evidence)]);
+      previous.preconditions = unique([...previous.preconditions, ...textRows(item.preconditions)]);
+      previous.risks = unique([...previous.risks, ...textRows(item.risks)]);
+      previous.verification = unique([...previous.verification, ...textRows(item.verification_steps)]);
     }
-    else actions.push({ action, evidence: (item.evidence || []).map((row) => row.evidence_id),
-      scope: item.scope || {}, preconditions: item.preconditions || [], risks: item.risks || [], verification: item.verification_steps || [] });
+    else actions.push({ action, evidence: evidenceIds(item.evidence),
+      target, scope: item.scope || {}, preconditions: textRows(item.preconditions), risks: textRows(item.risks), verification: textRows(item.verification_steps) });
   }
   return actions;
 }

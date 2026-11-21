@@ -39,6 +39,11 @@ function state(node) {
   const rows = node.evidence;
   return rows.some((row) => row.state === "abnormal") ? "存在异常观测" : node.evidence.length ? `${node.evidence.length} 项观测` : "尚无观测";
 }
+function nodeLabel(node) { return node.label || serviceLabel(node.service || node.id); }
+function edgeLabel(id) {
+  const node = props.graph.nodes.find((item) => item.id === id);
+  return nodeLabel(node || { id });
+}
 </script>
 <template>
   <div ref="canvas" class="diagnostic-topology" aria-label="服务与现场观测">
@@ -54,13 +59,13 @@ function state(node) {
           :style="{ left: `${points[node.id].x / 9}%`, top: `${points[node.id].y / height * 100}%` }"
           :aria-pressed="node.id === selected" @click="$emit('select', node.id)">
           <span class="node-symbol"><Icon name="server" :size="24" /></span>
-          <strong>{{ serviceLabel(node.id) }}</strong>
+          <strong>{{ nodeLabel(node) }}</strong>
           <small :class="{ 'observation-alert': node.evidence.some(row => row.state === 'abnormal') }">{{ state(node) }}</small>
         </button>
       </div>
       <div v-if="graph.edges.length" class="topology-relations">
         <button v-for="edge in graph.edges" :key="`${edge.from}-${edge.to}`" class="text-button" @click="$emit('evidence', edge.evidence)">
-          {{ serviceLabel(edge.from) }} → {{ serviceLabel(edge.to) }}<span>{{ edge.label }}</span>
+          {{ edgeLabel(edge.from) }} → {{ edgeLabel(edge.to) }}<span>{{ edge.label }}</span>
         </button>
       </div>
     </template>

@@ -7,6 +7,7 @@ const props = defineProps({
   selectable: Boolean,
   modelValue: { type: Array, default: () => [] },
   pageSize: { type: Number, default: 12 },
+  paginationLabel: { type: String, default: "" },
 });
 const emit = defineEmits(["update:modelValue"]);
 const page = ref(1);
@@ -94,7 +95,7 @@ function selectPage(checked) {
     </table>
   </div>
   <footer v-if="rows.length > pageSize" class="pagination">
-    <span>共 {{ rows.length }} 项</span>
+    <span>{{ paginationLabel }}共 {{ rows.length }} 项</span>
     <div class="actions">
       <button
         class="button small"

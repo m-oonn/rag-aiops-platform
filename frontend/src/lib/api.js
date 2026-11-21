@@ -38,7 +38,7 @@ export async function request(
     } catch {
       data = { detail: `请求失败（${response.status}）` };
     }
-    if (response.status === 401 && !path.includes("login")) {
+    if (response.status === 401 && token && localStorage.getItem("token") === token && !path.includes("login")) {
       localStorage.removeItem("token");
       window.dispatchEvent(new Event("session-expired"));
     }
@@ -84,10 +84,8 @@ export async function stream(path, body, { signal, onEvent } = {}) {
         frame(buffer.slice(0, match.index));
         buffer = buffer.slice(match.index + match[0].length);
       }
-      if (done) {
-        if (buffer.trim()) frame(buffer);
-        break;
-      }
+      // EOF does not commit an SSE frame without its blank line.
+      if (done) break;
     }
   } finally {
     await reader.cancel().catch(() => {});

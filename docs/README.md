@@ -1,5 +1,7 @@
 # 项目文档导航
 
+- [AIOps 桌面体验优化](aiops-desktop-ux-20261121.md)：代码完成 50/50，逐项记录根因、修改和页面证据；页面验收 45 项通过，5 项待验。
+
 - [项目流程逐项修复与验收](project-workflow-fixes-20261117.md)：监察身份/人工审核/页面工具账本/快照错误语义、HTTP 与桌面信号适配、经验候选审核发布及撤回；区分免费回归、本地真实 HTTP 和未完成的 mall/DSH 现场验收。
 
 - [DSH 排查经验、节点与工具参考](dsh-autonomous-investigation-reference-20261117.md)、[配置接线示例](dsh-autonomous-investigation-config.example.env)：按实际调查步骤整理工具、输入输出、失败换路、复现及恢复检查；区分已有配置和待实现接口，本轮仅文档与记录。
