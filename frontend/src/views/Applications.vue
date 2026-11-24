@@ -8,6 +8,8 @@ import Feedback from "../components/Feedback.vue";
 import DataTable from "../components/DataTable.vue";
 import Modal from "../components/Modal.vue";
 import Markdown from "../components/Markdown.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import Icon from "../components/Icon.vue";
 const props = defineProps({ kind: String });
 const isAgent = computed(() => props.kind === "agents"),
@@ -70,9 +72,12 @@ const form = reactive({
   },
   toolRows: [],
 });
+const modelFilter = ref('');
+const modelOf = row => row.llm_config?.model || row.llm_model || '默认模型';
+const modelChart = computed(() => breakdown(rows.value, modelOf).sort((a, b) => b.count - a.count));
 const filtered = computed(() =>
   rows.value.filter((row) =>
-    `${row.name} ${row.description || ""}`
+    (!modelFilter.value || modelOf(row) === modelFilter.value) && `${row.name} ${row.description || ""}`
       .toLowerCase()
       .includes(search.value.toLowerCase()),
   ),
@@ -297,6 +302,8 @@ async function restoreVersion(version) {
         }}
       </button></PageHeader
     >
+    <InsightBreakdown v-if="!error" v-model="modelFilter" :items="modelChart" :title="`${title}模型配置分布`" icon="spark"
+      description="统计已配置的模型，不代表实际调用量；点击柱子筛选。" unit="个" />
     <div class="toolbar">
       <label class="search-input"
         ><Icon name="search" /><input
@@ -335,7 +342,7 @@ async function restoreVersion(version) {
       ><template #type="{ row }"
         ><span class="tag">{{ row.type || "对话助手" }}</span></template
       ><template #model="{ row }">{{
-        row.llm_config?.model || row.llm_model || "默认模型"
+        modelOf(row)
       }}</template
       ><template #created_at="{ row }">{{ dateTime(row.created_at) }}</template
       ><template #actions="{ row }"

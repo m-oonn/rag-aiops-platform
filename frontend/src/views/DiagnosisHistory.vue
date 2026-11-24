@@ -9,6 +9,8 @@ import PageHeader from "../components/PageHeader.vue";
 import DataTable from "../components/DataTable.vue";
 import Feedback from "../components/Feedback.vue";
 import Icon from "../components/Icon.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import { reportOverview } from "../lib/diagnosisVisuals";
 const rows = ref([]),
   query = ref(""),
@@ -21,9 +23,11 @@ const rows = ref([]),
 const PAGE_SIZE = 100;
 const matchQuery = computed(() => query.value.trim().toLowerCase());
 const hasFilter = computed(() => Boolean(matchQuery.value || statusFilter.value));
-const statusChoices = computed(() => [...new Set(rows.value.filter(row => !row.readError && row.status).map(row => row.status))]);
+const historyKey = row => row.readError ? 'read-error' : row.status || 'unknown';
+const historyChart = computed(() => breakdown(rows.value, historyKey,
+  key => key === 'read-error' ? '状态未核实' : key === 'unknown' ? '状态未知' : runStatus(key), tone));
 const filtered = computed(() => rows.value.filter(row =>
-  (!statusFilter.value || (!row.readError && row.status === statusFilter.value)) &&
+  (!statusFilter.value || historyKey(row) === statusFilter.value) &&
   ((row.query || "").toLowerCase().includes(matchQuery.value) || row.thread_id.toLowerCase().includes(matchQuery.value)),
 ));
 function clearFilters() { query.value = ""; statusFilter.value = ""; }
@@ -131,8 +135,8 @@ async function remove(row) {
           placeholder="搜索已加载诊断" aria-label="搜索诊断" /></label>
         <select v-model="statusFilter" aria-label="按诊断状态筛选">
           <option value="">全部状态</option>
-          <option v-if="statusFilter && !statusChoices.includes(statusFilter)" :value="statusFilter">{{ runStatus(statusFilter) }}</option>
-          <option v-for="item in statusChoices" :key="item" :value="item">{{ runStatus(item) }}</option>
+          <option v-if="statusFilter && !historyChart.some(item => item.key === statusFilter)" :value="statusFilter">{{ runStatus(statusFilter) }}</option>
+          <option v-for="item in historyChart" :key="item.key" :value="item.key">{{ item.label }}</option>
         </select>
         <button v-if="hasFilter" class="text-button" @click="clearFilters">清除筛选</button>
       </div>
@@ -141,6 +145,8 @@ async function remove(row) {
     <p v-if="notice" role="alert">{{ notice }}</p>
     <Feedback v-if="error" :error="error" @retry="load" />
     <Feedback v-else-if="loading && !rows.length" :loading="true" />
+    <InsightBreakdown v-if="!error" v-model="statusFilter" :items="historyChart" title="诊断状态分布" icon="history"
+      description="只统计已加载的记录；点击状态筛选下方列表。" variant="composition" unit="场" />
     <section :aria-busy="loading || loadingMore" aria-label="诊断记录列表">
       <p v-if="rows.length || hasFilter" class="history-count muted" role="status">{{ hasFilter ? `匹配 ${filtered.length} 条 · ` : '' }}已加载 {{ rows.length }} 条</p>
       <div v-if="!filtered.length && !loading" class="empty-state">

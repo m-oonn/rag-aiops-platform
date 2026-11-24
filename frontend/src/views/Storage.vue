@@ -14,6 +14,8 @@ import Feedback from "../components/Feedback.vue";
 import DataTable from "../components/DataTable.vue";
 import Modal from "../components/Modal.vue";
 import FilePreview from "../components/FilePreview.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import Icon from "../components/Icon.vue";
 const files = ref([]),
   selected = ref([]),
@@ -23,9 +25,16 @@ const files = ref([]),
   busy = ref(false),
   previewing = ref(null),
   previewBlob = ref(null);
+const fileType = ref('');
+function extensionOf(file) {
+  const filename = (file.object_name || file.name || '').split('/').at(-1);
+  return /[^.]+\.([^.]+)$/.exec(filename)?.[1]?.toLowerCase() || '无扩展名';
+}
+const storageChart = computed(() => breakdown(files.value, extensionOf, key => key.toUpperCase())
+  .sort((a, b) => b.count - a.count));
 const visible = computed(() =>
   files.value.filter((file) =>
-    `${file.object_name || file.name || ""}`
+    (!fileType.value || extensionOf(file) === fileType.value) && `${file.object_name || file.name || ""}`
       .toLowerCase()
       .includes(search.value.toLowerCase()),
   ),
@@ -40,6 +49,7 @@ const { loading, error, refresh } = useLoad(async () => {
     },
   });
   files.value = result.files || [];
+  if (!files.value.some(file => extensionOf(file) === fileType.value)) fileType.value = '';
 });
 async function saveUpload() {
   if (!upload.value) return;
@@ -153,6 +163,8 @@ async function removeSelected() {
         删除 {{ selected.length }} 项
       </button>
     </div>
+    <InsightBreakdown v-if="!error" v-model="fileType" :items="storageChart" title="文件类型分布" icon="folder"
+      description="统计当前查询返回的文件数，不代表占用容量；点击类型筛选。" unit="个" @update:model-value="selected = []" />
     <Feedback
       :loading="loading"
       :error="error"

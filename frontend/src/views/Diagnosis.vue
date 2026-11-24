@@ -592,7 +592,8 @@ onUnmounted(() => { stopRefresh(); loadVersion.value += 1; abortController.value
       <form class="diagnosis-form" @submit.prevent="start">
         <label class="field" for="diagnosis-query">
           <span>故障现象</span>
-          <textarea id="diagnosis-query" v-model="query" maxlength="12000"
+          <span id="diagnosis-hint" class="muted">写清受影响的服务、出现时间和错误表现，便于核对现场证据。</span>
+          <textarea id="diagnosis-query" v-model="query" maxlength="12000" aria-describedby="diagnosis-hint"
             placeholder="例如：支付接口从 09:00 开始间歇返回 503" :disabled="inputLocked" required />
         </label>
         <div class="form-settings">
@@ -697,15 +698,21 @@ onUnmounted(() => { stopRefresh(); loadVersion.value += 1; abortController.value
 </template>
 
 <style scoped>
-.diagnosis-compose { display: grid; grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr); gap: 40px; max-width: 1120px; align-items: start; }
-.diagnosis-form textarea { min-height: 176px; }
+.diagnosis-page { --desk-line: #d9e3ef; }
+.diagnosis-page :deep(.page-header) { margin-bottom: 20px; }
+.diagnosis-page :deep(.page-heading h1) { color: #172e47; font-weight: 700; }
+.diagnosis-compose { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; align-items: start; }
+.diagnosis-form, .diagnosis-compose .source-list { background: #fff; border: 1px solid var(--desk-line); border-radius: 10px; padding: clamp(16px, 2vw, 26px); }
+.diagnosis-form .field > span:first-child { font-size: 16px; font-weight: 700; color: #172e47; }
+#diagnosis-hint { margin-bottom: 6px; font-size: 13px; font-weight: 400; }
+.diagnosis-form textarea { min-height: 176px; border-radius: 6px; background: #fbfcfe; }
 .form-settings { margin: 16px 0 24px; }
 .form-settings p { margin: 4px 0 0 24px; }
-.diagnosis-compose .source-list { margin: 0; border-left: 1px solid var(--line); padding-left: 24px; }
+.diagnosis-compose .source-list { margin: 0; background: #f5f8fc; }
 .section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .section-heading h2, .decision-panel h2 { margin: 0; font-size: 16px; }
-.run-strip { justify-content: space-between; padding-bottom: 12px; }
-.run-context { padding: 10px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.run-strip { justify-content: space-between; gap: 8px; padding: 8px 12px; background: #fff; border: 1px solid var(--desk-line); border-radius: 8px; }
+.run-context { padding: 8px 0 10px; overflow-wrap: anywhere; color: #495d72; }
 .run-context summary { cursor: pointer; width: fit-content; }
 .run-context p { margin: 8px 0; }
 .run-description { white-space: pre-wrap; max-width: 90ch; }
@@ -718,6 +725,5 @@ onUnmounted(() => { stopRefresh(); loadVersion.value += 1; abortController.value
 .source-identifiers summary { cursor: pointer; }
 @media (max-width: 960px) {
   .diagnosis-compose { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-  .diagnosis-compose .source-list { border-left: 0; border-top: 1px solid var(--line); padding: 16px 0 0; }
 }
 </style>

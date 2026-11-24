@@ -5,6 +5,8 @@ import { request } from "../lib/api";
 import { useLoad, dateTime, tone } from "../lib/ui";
 import PageHeader from "../components/PageHeader.vue";
 import Feedback from "../components/Feedback.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import Icon from "../components/Icon.vue";
 const route = useRoute(),
   router = useRouter(),
@@ -35,6 +37,17 @@ const rows = computed(() =>
     ...value,
   })),
 );
+const serviceFilter = ref(''), queueFilter = ref('');
+const serviceKey = row => ['ok', 'disabled'].includes(row.status) ? row.status : 'unavailable';
+const serviceText = key => ({ ok: '正常', disabled: '未启用', unavailable: '不可用' })[key];
+const serviceChart = computed(() => breakdown(rows.value, serviceKey, serviceText, tone));
+const shownServices = computed(() => rows.value.filter(row => !serviceFilter.value || serviceKey(row) === serviceFilter.value));
+const queueStages = [['active', '执行中', 'info'], ['reserved', '等待中', 'warning'], ['scheduled', '定时任务', 'muted']];
+const queueChart = computed(() => queueStages.flatMap(([key, label, tone]) => {
+  const count = queues.value?.summary?.[`${key}_tasks`];
+  return Number.isSafeInteger(count) && count >= 0 ? [{ key, label, tone, count }] : [];
+}));
+const queueDetails = computed(() => queueStages.filter(([key]) => !queueFilter.value || key === queueFilter.value));
 const { loading, error, refresh } = useLoad(
   async () => {
     const results = await Promise.allSettled([
@@ -120,7 +133,9 @@ function setTab(value) {
           :empty="!loading"
           text="暂无服务数据"
         />
-        <div v-for="row in rows" :key="row.name" class="service-line">
+        <InsightBreakdown v-model="serviceFilter" :items="serviceChart" title="依赖健康分布" icon="server"
+          description="最新一次检查的状态；点击查看对应服务和错误详情。" variant="composition" unit="个" />
+        <div v-for="row in shownServices" :key="row.name" class="service-line">
           <span>{{ row.name }}</span>
           <div class="actions">
             <span :class="['status', tone(row.status)]">{{
@@ -148,48 +163,24 @@ function setTab(value) {
         >
           {{ queues.message || `队列状态：${queues.status}` }}
         </div>
-        <template v-else
-          ><div class="metric-strip queue-metrics">
-            <div>
-              <span>执行中</span
-              ><strong>{{ queues.summary?.active_tasks ?? 0 }}</strong>
+        <template v-else>
+          <InsightBreakdown v-model="queueFilter" :items="queueChart" title="队列任务分布" icon="tasks"
+            description="当前队列快照；点击一项查看相应任务与处理节点。" />
+          <div class="summary-line" v-if="queues.summary?.workers != null">在线处理节点：{{ queues.summary.workers }}</div>
+          <section v-for="[key, label] in queueDetails" :key="key" :aria-label="`${label}明细`">
+            <h2 class="section">{{ label }}</h2>
+            <div v-for="(tasks, worker) in queues.details?.[key] || {}" :key="worker">
+              <template v-if="tasks.length"><h3 class="section">{{ worker }}</h3>
+                <div v-for="(item, index) in tasks" :key="item.request?.id || item.id || index" class="record-row">
+                  <Icon name="tasks" />
+                  <div class="grow"><strong>{{ item.request?.name || item.name || '未命名任务' }}</strong>
+                    <span class="muted truncate">{{ item.request?.id || item.id || '无任务编号' }}</span></div>
+                  <time v-if="item.eta || item.time_start" class="muted">{{ dateTime(item.eta || item.time_start * 1000) }}</time>
+                </div>
+              </template>
             </div>
-            <div>
-              <span>等待中</span
-              ><strong>{{ queues.summary?.reserved_tasks ?? 0 }}</strong>
-            </div>
-            <div>
-              <span>定时任务</span
-              ><strong>{{ queues.summary?.scheduled_tasks ?? 0 }}</strong>
-            </div>
-            <div>
-              <span>在线处理节点</span
-              ><strong>{{ queues.summary?.workers ?? 0 }}</strong>
-            </div>
-          </div>
-          <h2>执行任务</h2>
-          <div
-            v-for="(tasks, worker) in queues.details?.active || {}"
-            :key="worker"
-          >
-            <h3 class="section">{{ worker }}</h3>
-            <div v-for="task in tasks" :key="task.id" class="record-row">
-              <Icon name="tasks" />
-              <div class="grow">
-                <strong>{{ task.name }}</strong
-                ><span class="muted truncate">{{ task.id }}</span>
-              </div>
-              <time class="muted">{{
-                task.time_start ? dateTime(task.time_start * 1000) : "—"
-              }}</time>
-            </div>
-          </div>
-          <div
-            v-if="!Object.values(queues.details?.active || {}).flat().length"
-            class="empty-state compact"
-          >
-            当前没有执行中的任务
-          </div>
+            <p v-if="!Object.values(queues.details?.[key] || {}).some(tasks => tasks.length)" class="empty-state compact">该阶段暂无任务明细</p>
+          </section>
           <h2 class="section">处理节点</h2>
           <div
             v-for="(worker, name) in queues.details?.worker_stats || {}"

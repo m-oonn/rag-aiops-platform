@@ -76,6 +76,12 @@ class TestMonitorFunctional:
         assert stats["total_completed"] == 1
         assert stats["total_failed"] == 1
 
+        completed = client.get(
+            "/api/v1/monitor/", params={"status_filter": "completed"}, headers=auth_headers
+        )
+        assert completed.status_code == 200, completed.text
+        assert [(row["filename"], row["status"]) for row in completed.json()] == [("file2.txt", "SUCCESS")]
+
     def test_monitor_delete_task(self, client, auth_headers, db, test_user):
         """删除 monitor 任务（实际为文档）。"""
         kb = KnowledgeBase(name="Delete KB", kb_uid="delete-uid", owner_id=test_user.id)

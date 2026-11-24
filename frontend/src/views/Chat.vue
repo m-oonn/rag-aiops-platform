@@ -287,20 +287,13 @@ watch(() => messages.value.length, scrollBottom);
               <summary>
                 参考资料 · {{ message.source_documents.length }}
               </summary>
-              <div
-                v-for="(source, j) in message.source_documents"
-                :key="j"
-                class="detail-line"
-              >
-                <strong>{{
-                  source.metadata?.filename ||
-                  source.filename ||
-                  source.name ||
-                  `资料 ${j + 1}`
-                }}</strong>
-                <p>
-                  {{ source.content || source.text || source.page_content }}
-                </p>
+              <div class="citation-cards">
+                <details v-for="(source, j) in message.source_documents" :key="j" class="citation-card">
+                  <summary><span class="citation-index">{{ j + 1 }}</span><strong>{{
+                    source.metadata?.filename || source.filename || source.name || `资料 ${j + 1}`
+                  }}</strong><Icon name="down" :size="14" /></summary>
+                  <p>{{ source.content || source.text || source.page_content || '这条引用未提供原文片段。' }}</p>
+                </details>
               </div>
             </details>
           </article>
@@ -374,3 +367,13 @@ watch(() => messages.value.length, scrollBottom);
     </div>
   </div>
 </template>
+
+<style scoped>
+.citation-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); align-items: start; gap: 8px; margin-top: 9px; }
+.citation-card { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.citation-card[open] { grid-column: 1 / -1; }
+.citation-card summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center; list-style: none; padding: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.citation-card[open] summary svg { transform: rotate(180deg); }
+.citation-card p { margin: 0; padding: 0 10px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.citation-index { min-width: 23px; padding: 2px; text-align: center; border-radius: 5px; color: #265eb3; background: #e9f1fe; }
+</style>

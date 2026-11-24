@@ -7,6 +7,8 @@ import PageHeader from "../components/PageHeader.vue";
 import Feedback from "../components/Feedback.vue";
 import DataTable from "../components/DataTable.vue";
 import Modal from "../components/Modal.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import Icon from "../components/Icon.vue";
 const rows = ref([]),
   search = ref(""),
@@ -14,9 +16,14 @@ const rows = ref([]),
   busy = ref(false),
   form = ref({ username: "", email: "", password: "" }),
   errorText = ref("");
+const roleFilter = ref('');
+const roles = { user: '成员', auditor: '审计员', admin: '管理员' };
+const roleOf = row => row.role || 'user';
+const roleChart = computed(() => breakdown(rows.value, roleOf, key => roles[key] || key,
+  key => key === 'admin' ? 'warning' : key === 'auditor' ? 'success' : 'info'));
 const visible = computed(() =>
   rows.value.filter((row) =>
-    `${row.username} ${row.email}`
+    (!roleFilter.value || roleOf(row) === roleFilter.value) && `${row.username} ${row.email}`
       .toLowerCase()
       .includes(search.value.toLowerCase()),
   ),
@@ -62,6 +69,8 @@ async function create() {
         <Icon name="plus" :size="16" />新建用户
       </button></PageHeader
     >
+    <InsightBreakdown v-if="!error" v-model="roleFilter" :items="roleChart" title="账号角色分布" icon="users"
+      description="含已停用账号；点击角色查看对应人员，不会修改权限。" variant="composition" unit="人" />
     <div class="toolbar">
       <label class="search-input"
         ><Icon name="search" /><input

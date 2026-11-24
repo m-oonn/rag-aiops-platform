@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { clockTime, evidenceRows, fieldLabel, logEvents, readableText, reportActions, reportFacts, reportOverview, reportQuestions, serviceLabel, topology, visualCandidates } from "../lib/diagnosisVisuals";
+import { clockTime, endpointComparison, evidenceRows, fieldLabel, logEvents, readableText, reportActions, reportFacts, reportOverview, reportQuestions, serviceLabel, topology, visualCandidates } from "../lib/diagnosisVisuals";
 import DiagnosisTopology from "./DiagnosisTopology.vue";
+import DiagnosisCharts from "./DiagnosisCharts.vue";
 import KnowledgeReferences from "./KnowledgeReferences.vue";
 import Markdown from "./Markdown.vue";
 import Icon from "./Icon.vue";
@@ -25,7 +26,14 @@ const facts = computed(() => reportFacts(props.diagnosis, records.value));
 const healthyChecks = computed(() => props.diagnosis?.kind === 'healthy_within_scope'
   ? records.value.filter(row => ['services', 'ports', 'dependency_probe'].includes(row.kind)) : []);
 const actions = computed(() => reportActions(props.diagnosis));
+const comparedEndpoints = computed(() => props.status === "pending_review" ? [] : endpointComparison(props.diagnosis, records.value));
 const overview = computed(() => reportOverview(props.diagnosis, records.value));
+const leadEvidence = computed(() => {
+  const ids = new Set((props.diagnosis?.evidence || []).map(item => item.evidence_id));
+  const cited = records.value.filter(row => ids.has(row.id));
+  return ['configuration', 'dependency_probe', 'text_logs']
+    .map(kind => cited.find(row => row.kind === kind)).filter(Boolean);
+});
 const currentCandidates = computed(() => candidates.value.filter(row => row.status !== "dropped")
   .sort((a, b) => Number(b.status === "confirmed") - Number(a.status === "confirmed")));
 const pastCandidates = computed(() => candidates.value.filter(row => row.status === "dropped"));
@@ -61,13 +69,24 @@ const selectedCandidate = computed(() => candidates.value.find((row) => row.id =
   candidates.value.find((row) => props.diagnosis?.kind === "confirmed_cause" && row.id === props.diagnosis.hypothesis_id) ||
   candidates.value.find((row) => row.id === props.investigation?.leading_id) || candidates.value[0]);
 const groups = computed(() => graph.value.nodes.filter(node => node.evidence.length));
+const evidenceState = ref(""), evidenceGroup = ref("");
+const chartFilter = computed(() => groups.value.find(node => node.id === evidenceGroup.value));
+const evidenceFilters = computed(() => [
+  { id: "", label: "全部", count: records.value.length },
+  ...[["abnormal", "发现异常"], ["observed", "已采集"], ["partial", "部分结果"], ["unavailable", "未取得"]]
+    .map(([id, label]) => ({ id, label, count: records.value.filter(row => row.state === id).length }))
+    .filter(item => item.count),
+]);
 const filteredGroups = computed(() => {
   const term = evidenceQuery.value.trim().toLowerCase();
-  if (!term) return groups.value;
-  return groups.value.map(node => ({ ...node, evidence: node.evidence.filter(row =>
-    [node.label, row.label, row.title, row.result].some(text => text?.toLowerCase().includes(term)),
+  return groups.value.filter(node => !evidenceGroup.value || node.id === evidenceGroup.value).map(node => ({ ...node, evidence: node.evidence.filter(row =>
+    (!evidenceState.value || row.state === evidenceState.value) &&
+    (!term || [node.label, row.label, row.title, row.result].some(text => text?.toLowerCase().includes(term))),
   ) })).filter(node => node.evidence.length);
 });
+function clearEvidenceFilters() { evidenceQuery.value = ""; evidenceState.value = ""; evidenceGroup.value = ""; }
+const candidateStatuses = computed(() => [...new Set(candidates.value.map(row => row.statusLabel))]
+  .map(label => ({ label, count: candidates.value.filter(row => row.statusLabel === label).length })));
 const excludedCandidates = computed(() => candidates.value.filter(row => row.status === 'excluded'));
 const selectedIsHidden = computed(() => selectedRecord.value && !filteredGroups.value.some(group => group.evidence.some(row => row.id === selectedRecord.value.id)));
 const candidateLinks = computed(() => (selectedCandidate.value?.relations || []).map((link) => ({ ...link, record: records.value.find((row) => row.id === link.id) })));
@@ -78,7 +97,7 @@ const relationLabel = (value) => ({ citation: "结论依据", support: "支持",
 const questions = computed(() => reportQuestions(props.diagnosis));
 const selectedEvents = computed(() => logEvents(selectedRecord.value?.payload));
 function selectTab(value) { followStatus.value = false; if (value !== "evidence") evidenceOrigin.value = null; tab.value = value; }
-const panel = ref(null), evidenceIndex = ref(null);
+const panel = ref(null), evidenceIndex = ref(null), evidenceDetail = ref(null);
 const evidenceOrigin = ref(null);
 const evidenceQuery = ref("");
 async function goTab(value) {
@@ -90,10 +109,23 @@ defineExpose({ showReport: () => goTab('report') });
 async function openEvidence(id) {
   if (tab.value !== 'evidence') {
     evidenceOrigin.value = { tab: tab.value, trigger: document.activeElement };
-    evidenceQuery.value = "";
+    clearEvidenceFilters();
     selectedId.value = id;
     await goTab('evidence');
   } else selectedId.value = id;
+}
+async function openChartGroup(id) {
+  const group = groups.value.find(node => node.id === id);
+  if (!group) return;
+  const row = group.evidence.find(item => item.state === "abnormal") || group.evidence[0];
+  const navigation = openEvidence(row.id);
+  evidenceGroup.value = id;
+  await navigation;
+}
+async function openEvidenceNode(id) {
+  await openEvidence(id);
+  await nextTick();
+  evidenceDetail.value?.focus();
 }
 async function returnFromEvidence() {
   const origin = evidenceOrigin.value;
@@ -134,7 +166,7 @@ function keyboardTabs(event) {
 }
 watch(tab, () => pause());
 watch([() => props.runId, () => session.user?.id], () => {
-  pause(); cursor.value = 0; evidenceQuery.value = ""; evidenceOrigin.value = null;
+  pause(); cursor.value = 0; clearEvidenceFilters(); evidenceOrigin.value = null;
   const saved = readWorkspace(session.user?.id, props.runId);
   const text = key => typeof saved?.[key] === "string" ? saved[key] : "";
   selectedId.value = text("evidenceId"); selectedNode.value = text("nodeId"); selectedCandidateId.value = text("candidateId");
@@ -195,11 +227,46 @@ onUnmounted(pause);
     <section ref="panel" tabindex="-1" :id="`diagnosis-panel-${tab}`" role="tabpanel" :aria-labelledby="`diagnosis-tab-${tab}`" class="workspace-panel">
       <div v-if="tab === 'report' || evidenceOrigin?.tab === 'report'" v-show="tab === 'report'">
         <template v-if="diagnosis || report">
-          <header class="report-lead">
+          <header :class="['report-lead', { healthy: status !== 'pending_review' && diagnosis?.kind === 'healthy_within_scope', 'has-lead-evidence': leadEvidence.length }]">
+            <div class="lead-summary">
             <span :class="['conclusion-label', { confirmed: status !== 'pending_review' && diagnosis?.kind === 'confirmed_cause' }]">{{ conclusionLabel }}</span>
             <h2>{{ overview.title }}</h2>
             <p v-if="records.length || usage?.elapsed_s != null" class="report-scope"><span v-if="records.length">{{ records.length }} 项现场证据</span><span v-if="usage?.elapsed_s != null">{{ records.length ? ' · ' : '' }}用时 {{ Math.round(usage.elapsed_s) }} 秒</span></p>
+            </div>
+            <section v-if="leadEvidence.length" class="lead-evidence" aria-label="报告引用">
+              <h3>报告引用</h3>
+              <button v-for="row in leadEvidence" :key="row.id" type="button" @click="openEvidence(row.id)">
+                <code>{{ row.label }}</code><span>{{ row.title }}</span><Icon name="arrow" :size="15" />
+              </button>
+            </section>
           </header>
+          <DiagnosisCharts v-if="records.length" :groups="groups" :records="records" @group="openChartGroup" @evidence="openEvidence" />
+          <section v-if="comparedEndpoints.length" class="service-map endpoint-map" aria-label="连接端口对照">
+            <div class="map-heading"><div><h3>连接端口对照</h3><p>点开任一端口，查看本次连接探测记录。</p></div></div>
+            <div class="endpoint-comparison">
+              <button v-for="item in comparedEndpoints" :key="item.evidence" type="button" :class="item.tone" @click="openEvidence(item.evidence)">
+                <span class="endpoint-icon"><Icon :name="item.tone === 'failed' ? 'close' : 'server'" :size="20" /></span>
+                <span class="endpoint-port"><span>{{ item.label }}</span><strong>{{ item.port }}</strong></span>
+                <span class="endpoint-result">{{ item.detail }}</span><Icon name="arrow" :size="16" />
+              </button>
+            </div>
+          </section>
+          <section v-if="records.length && graph.nodes.length" class="service-map" aria-label="现场服务拓扑">
+            <div class="map-heading">
+              <div><h3>现场服务拓扑</h3><p>{{ graph.edges.length ? "连线表示已登记或观测到的依赖，不等同于故障传播。" : "本次没有可绘制的依赖连线；点击节点可查看各自的现场观测。" }}</p></div>
+              <span v-if="graph.nodes.some(node => node.evidence.some(row => row.state === 'abnormal'))" class="map-key">红色标记：存在异常观测</span>
+            </div>
+            <DiagnosisTopology :graph="graph" :selected="activeNode?.id" @select="selectNode" @evidence="openEvidence" />
+            <div v-if="activeNode" class="map-evidence">
+              <h4>{{ activeNode.label || serviceLabel(activeNode.service || activeNode.id) }} · 现场观测</h4>
+              <p v-if="!activeNode.evidence.length" class="muted">该对象暂无独立观测。</p>
+              <div v-else class="map-observations">
+                <button v-for="row in activeNode.evidence" :key="row.id" class="text-button" @click="openEvidence(row.id)">
+                  <code>{{ row.label }}</code> {{ row.title }} <Icon name="arrow" :size="14" />
+                </button>
+              </div>
+            </div>
+          </section>
           <h3 v-if="diagnosis && !overview.steps.length">{{ healthyChecks.length ? '本次已检查的对象' : '现场发现' }}</h3><p v-if="diagnosis && !facts.length && !overview.steps.length && !healthyChecks.length">{{ diagnosis?.kind === 'healthy_within_scope' ? '本次已检查的对象和时间内未发现异常，不能代表所有功能长期正常。' : '当前证据尚未形成可确认的故障事实。' }}</p>
           <ul v-if="healthyChecks.length" class="checked-paths" aria-label="本次实际检查"><li v-for="row in healthyChecks" :key="row.id"><button class="text-button" @click="openEvidence(row.id)">{{ row.label }} · {{ row.title }}</button><span>{{ row.result }}</span></li></ul>
           <section v-if="overview.steps.length" class="failure-story" aria-label="故障影响过程">
@@ -243,16 +310,6 @@ onUnmounted(pause);
               <ul><li v-for="(text, index) in diagnosis.limitations" :key="index">{{ readableText(text) }}</li></ul>
             </details>
           </section>
-          <details v-if="graph.nodes.length" class="report-fold service-map">
-            <summary>服务与依赖关系</summary>
-            <p>连线表示登记或观测到的依赖，不单独证明故障传播。</p>
-            <DiagnosisTopology :graph="graph" :selected="activeNode?.id" @select="selectNode" @evidence="openEvidence" />
-            <div v-if="activeNode" class="map-evidence">
-              <h3>{{ activeNode.label || serviceLabel(activeNode.service || activeNode.id) }} · 现场观测</h3>
-              <p v-if="!activeNode.evidence.length" class="muted">该对象暂无独立观测。</p>
-              <button v-for="row in activeNode.evidence" :key="row.id" class="observation-link" @click="openEvidence(row.id)"><span>{{ row.label }} · {{ row.title }}</span><strong>{{ row.result }}</strong></button>
-            </div>
-          </details>
           <KnowledgeReferences v-if="knowledgeReferences.length" :references="knowledgeReferences" />
           <details v-if="report || diagnosis" class="report-fold"><summary>完整报告与技术详情</summary><p>以下保留模型原始叙述，其中自由文本的因果解释未经逐句核验；确认等级及证据边界见上方结论。</p><p v-if="diagnosis?.scope">{{ diagnosis.scope }}</p><Markdown v-if="report" :content="report" @evidence="openEvidence" /><p v-else>{{ diagnosis?.conclusion }}</p></details>
         </template>
@@ -267,11 +324,12 @@ onUnmounted(pause);
             <button class="button" :disabled="!records.length || cursor === records.length - 1" @click="seek(cursor + 1)" aria-label="下一项" title="下一项观测"><Icon name="arrow" :size="16" /></button></div>
         </div>
         <div v-if="records.length" class="process-split">
+          <div class="timeline-board"><header class="visual-heading"><Icon name="clock" :size="18" /><div><h3>采集时间线</h3><p>按实际采集顺序排列，点击节点查看当时的观测。</p></div></header>
           <ol class="check-list" aria-label="实际采集顺序"><li v-for="(row, index) in records" :key="row.id"><button :class="{ selected: cursor === index }" :aria-current="cursor === index ? 'step' : undefined" @click="seek(index)">
-            <span class="check-number">{{ String(index + 1).padStart(2, '0') }}</span><span class="check-copy"><strong>{{ row.title }}</strong><small>{{ row.result }}</small><time v-if="row.time" :datetime="row.time">{{ clockTime(row.time) }}</time></span>
-          </button></li></ol>
-          <div class="replay-scene">
-            <div v-if="current" class="current-observation" :aria-live="playing ? 'off' : 'polite'"><span>{{ current.label }} · {{ clockTime(current.time) }}</span><h3>{{ current.title }}</h3><p>{{ current.result }}</p><button class="text-button" @click="openEvidence(current.id)">查看证据<Icon name="arrow" :size="16" /></button></div>
+            <span :class="['check-number', row.state]">{{ String(index + 1).padStart(2, '0') }}</span><span class="check-copy"><strong>{{ row.title }}</strong><small>{{ row.result }}</small><time v-if="row.time" :datetime="row.time">{{ clockTime(row.time) }}</time></span>
+          </button></li></ol></div>
+          <div class="replay-scene visual-board">
+            <div v-if="current" class="current-observation" :aria-live="playing ? 'off' : 'polite'"><span>{{ current.label }} · {{ clockTime(current.time) }}</span><span :class="['observation-state', current.state]">{{ current.stateLabel }}</span><h3>{{ current.title }}</h3><p>{{ current.result }}</p><button class="text-button" @click="openEvidence(current.id)">查看证据<Icon name="arrow" :size="16" /></button></div>
             <details v-if="replayGraph.nodes.length" class="report-fold"><summary>当前采集关系图</summary><DiagnosisTopology :graph="replayGraph" :current="current?.id" :selected="selectedNode" @select="selectReplayNode" @evidence="openEvidence" /></details>
           </div>
         </div>
@@ -286,14 +344,31 @@ onUnmounted(pause);
           <div v-if="evidenceError" role="alert" class="evidence-error"><span>证据读取失败：{{ evidenceError }}</span><button class="text-button" @click="$emit('retry-evidence')">重读证据</button></div>
         </div>
         <div v-if="!records.length && !evidenceError" class="workspace-empty">{{ selectedId ? '引用的现场证据暂不可读' : '尚无现场证据' }}</div>
+        <section v-if="records.length" class="review-summary" aria-label="现场证据概览">
+          <div><h3>证据台账</h3><p>按采集状态筛选；「已采集」不代表服务正常。</p></div>
+          <div class="review-pills" role="group" aria-label="按采集状态筛选">
+            <button v-for="item in evidenceFilters" :key="item.id" type="button" :class="item.id" :aria-pressed="evidenceState === item.id" @click="evidenceState = item.id">{{ item.label }} <strong>{{ item.count }}</strong></button>
+          </div>
+        </section>
         <div v-if="records.length" class="evidence-split"><div class="evidence-sidebar">
+          <header class="visual-heading"><Icon name="workflow" :size="18" /><div><h3>现场证据图</h3><p>按服务分组；选择编号查看具体记录。</p></div></header>
+          <div v-if="chartFilter" class="chart-filter"><span>仅看：{{ chartFilter.label }}</span><button type="button" class="text-button" @click="evidenceGroup = ''">查看全部对象</button></div>
           <label class="search-input"><Icon name="search" :size="16" /><input v-model="evidenceQuery" type="search" aria-label="筛选现场证据" placeholder="按对象、编号或观测筛选" /></label>
           <p v-if="!filteredGroups.length" class="muted" role="status">没有匹配的证据</p>
-          <nav ref="evidenceIndex" class="evidence-index" aria-label="按对象选择证据"><section v-for="group in filteredGroups" :key="group.id"><h3>{{ group.label || serviceLabel(group.service || group.id) }}<span>{{ group.evidence.length }}</span></h3>
-          <button v-for="row in group.evidence" :key="row.id" :aria-pressed="selectedRecord?.id === row.id" :class="{ selected: selectedRecord?.id === row.id }" @click="openEvidence(row.id)"><span class="evidence-code">{{ row.label }}</span><span><strong>{{ row.title }}</strong><small>{{ row.result }}</small></span></button>
-        </section></nav></div>
-          <article v-if="selectedRecord" class="evidence-detail"><header class="evidence-heading"><div><span class="eyebrow">{{ selectedRecord.label }} · {{ clockTime(selectedRecord.time) }}</span><h2>{{ selectedRecord.title }}</h2></div><div class="evidence-heading-actions"><span :class="['observation-state', selectedRecord.state]">{{ selectedRecord.stateLabel }}</span><button class="button source-button" @click="$emit('evidence', selectedRecord.id)">来源与原文<Icon name="arrow" :size="16" /></button></div></header>
-            <p v-if="selectedIsHidden" class="muted">当前证据不在筛选结果中。 <button class="text-button" @click="evidenceQuery = ''">清除筛选</button></p>
+          <nav ref="evidenceIndex" class="evidence-index evidence-map" aria-label="按对象选择证据">
+            <section v-for="group in filteredGroups" :key="group.id">
+              <h3><Icon name="server" :size="16" />{{ group.label || serviceLabel(group.service || group.id) }}<span>{{ group.evidence.length }} 条</span></h3>
+              <div class="evidence-nodes">
+                <button v-for="row in group.evidence" :key="row.id" type="button" :class="[row.state, { selected: selectedRecord?.id === row.id }]"
+                  :aria-pressed="selectedRecord?.id === row.id" :aria-label="`${row.label} · ${row.title} · ${row.stateLabel}`" :title="`${row.title} · ${row.stateLabel}`" @click="openEvidenceNode(row.id)">
+                  <span :class="['evidence-code', row.state]">{{ row.label }}</span><span>{{ row.kindLabel }}</span>
+                </button>
+              </div>
+            </section>
+          </nav>
+        </div>
+          <article v-if="selectedRecord" ref="evidenceDetail" class="evidence-detail" tabindex="-1" aria-label="当前证据详情"><header class="evidence-heading"><div><span class="eyebrow">{{ selectedRecord.label }} · {{ clockTime(selectedRecord.time) }}</span><h2>{{ selectedRecord.title }}</h2></div><div class="evidence-heading-actions"><span :class="['observation-state', selectedRecord.state]">{{ selectedRecord.stateLabel }}</span><button class="button source-button" @click="$emit('evidence', selectedRecord.id)">来源与原文<Icon name="arrow" :size="16" /></button></div></header>
+            <p v-if="selectedIsHidden" class="muted">当前证据不在筛选结果中。 <button class="text-button" @click="clearEvidenceFilters">清除筛选</button></p>
             <p class="evidence-result">{{ selectedRecord.result }}</p>
             <ol v-if="selectedEvents.length" class="event-chain"><li v-for="event in selectedEvents" :key="event.index"><time>{{ clockTime(event.time) }}</time><div><strong>{{ event.label }}</strong><p v-if="event.text">{{ event.text }}</p><details v-if="event.data && ['pid', 'request_id', 'instance_id'].some(key => event.data[key] != null)" class="event-identifiers"><summary>定位信息</summary><dl><template v-for="field in ['pid', 'request_id', 'instance_id']" :key="field"><template v-if="event.data[field] != null"><dt>{{ {pid:'进程号',request_id:'请求编号',instance_id:'实例编号'}[field] }}</dt><dd>{{ event.data[field] }}</dd></template></template></dl></details></div></li></ol>
             <dl v-else-if="selectedRecord.kind === 'configuration' && selectedRecord.payload" class="payload-table"><template v-for="(value, key) in selectedRecord.payload.values || {}" :key="key"><dt>{{ fieldLabel(key) }}</dt><dd><pre v-if="value !== null && typeof value === 'object'">{{ JSON.stringify(value, null, 2) }}</pre><template v-else>{{ value ?? '—' }}</template></dd></template></dl>
@@ -313,14 +388,18 @@ onUnmounted(pause);
       </template>
       <div v-if="tab === 'causes' || evidenceOrigin?.tab === 'causes'" v-show="tab === 'causes'">
         <div v-if="!candidates.length" class="workspace-empty">暂无候选原因</div>
-        <div v-else class="cause-split"><nav class="candidate-index" aria-label="选择候选原因"><button v-for="candidate in currentCandidates" :key="candidate.id" :class="{ selected: selectedCandidate?.id === candidate.id }" :aria-pressed="selectedCandidate?.id === candidate.id" @click="selectCandidate(candidate.id)">
+        <section v-if="candidates.length" class="review-summary" aria-label="候选原因概览">
+          <div><h3>候选判断</h3><p>停止排查不等于已排除；有支持证据也不等于已确认。</p></div>
+          <div class="review-pills"><span v-for="item in candidateStatuses" :key="item.label">{{ item.label }} <strong>{{ item.count }}</strong></span></div>
+        </section>
+        <div v-if="candidates.length" class="cause-split"><nav class="candidate-index" aria-label="选择候选原因"><header class="visual-heading"><Icon name="chart" :size="18" /><div><h3>候选节点</h3><p>选择候选，查看它对应的证据关系图。</p></div></header><button v-for="candidate in currentCandidates" :key="candidate.id" :class="{ selected: selectedCandidate?.id === candidate.id }" :aria-pressed="selectedCandidate?.id === candidate.id" @click="selectCandidate(candidate.id)">
           <span class="candidate-meta">{{ candidate.number }} · {{ candidate.type }}<span :class="candidate.status">{{ candidate.statusLabel }}</span></span><strong>{{ candidate.text }}</strong>
         </button><details v-if="pastCandidates.length" class="candidate-history" :open="pastCandidates.some(row => row.id === selectedCandidate?.id) || undefined"><summary>此前排查 · {{ pastCandidates.length }}</summary><button v-for="candidate in pastCandidates" :key="candidate.id" :class="{ selected: selectedCandidate?.id === candidate.id }" :aria-pressed="selectedCandidate?.id === candidate.id" @click="selectCandidate(candidate.id)"><span class="candidate-meta">{{ candidate.number }}<span>{{ candidate.statusLabel }}</span></span><strong>{{ candidate.text }}</strong></button></details></nav>
-          <article v-if="selectedCandidate" class="candidate-detail"><header><span class="eyebrow">{{ selectedCandidate.number }} · {{ selectedCandidate.type }}</span><h2>{{ selectedCandidate.text }}</h2><span :class="['conclusion-label', { confirmed: ['confirmed', 'supported'].includes(selectedCandidate.status) }]">{{ selectedCandidate.statusLabel }}</span></header>
-            <div v-if="candidateLinks.length" class="candidate-graph" aria-label="证据与候选关系"><h3>关联现场证据</h3><div class="relation-evidence"><button v-for="link in mainCandidateLinks" :key="link.id" :class="['relation-node', link.relation]" @click="openEvidence(link.id)"><span>{{ link.record?.label || '证据' }} · {{ relationLabel(link.relation) }}</span><strong>{{ link.record?.title || '证据尚不可读' }}</strong><small v-if="link.record">{{ link.record.result }}</small></button></div></div>
+          <article v-if="selectedCandidate" class="candidate-detail"><header class="candidate-root"><Icon name="workflow" :size="20" /><div><span class="eyebrow">{{ selectedCandidate.number }} · {{ selectedCandidate.type }}</span><h2>{{ selectedCandidate.text }}</h2><span :class="['conclusion-label', { confirmed: selectedCandidate.status === 'confirmed' }]">{{ selectedCandidate.statusLabel }}</span></div></header>
+            <div v-if="candidateLinks.length" class="candidate-graph" aria-label="证据与候选关系"><div class="relation-junction"><span><Icon name="workflow" :size="14" /> 关联现场证据 · {{ candidateLinks.length }} 条</span></div><p class="relation-note">线条只表示与当前候选有关；标签说明依据、支持、反驳或关系未定。</p><div class="relation-evidence relation-map"><button v-for="link in mainCandidateLinks" :key="link.id" :class="['relation-node', link.relation]" @click="openEvidence(link.id)"><span>{{ link.record?.label || '证据' }} · {{ relationLabel(link.relation) }}</span><strong>{{ link.record?.title || '证据尚不可读' }}</strong><small v-if="link.record">{{ link.record.result }}</small><Icon class="relation-open" name="arrow" :size="14" /></button></div></div>
             <p v-if="!candidateLinks.length" class="relation-empty">尚无关联的现场证据。</p>
             <details v-if="otherCandidateLinks.length" class="report-fold other-evidence"><summary>其他依据 · {{ otherCandidateLinks.length }}</summary><div class="relation-evidence"><button v-for="link in otherCandidateLinks" :key="link.id" :class="['relation-node', link.relation]" @click="openEvidence(link.id)"><span>{{ link.record?.label || '证据' }} · {{ relationLabel(link.relation) }}</span><strong>{{ link.record?.title || '现场记录' }}</strong><small v-if="link.record">{{ link.record.result }}</small></button></div></details>
-            <div v-if="!['confirmed', 'supported', 'excluded', 'dropped'].includes(selectedCandidate.status) && (selectedCandidate.question || selectedCandidate.nextCheck)" class="candidate-gap"><h3>待核实</h3><p>{{ selectedCandidate.question || selectedCandidate.nextCheck }}</p></div>
+            <div v-if="!['confirmed', 'supported', 'excluded', 'dropped'].includes(selectedCandidate.status) && (selectedCandidate.question || selectedCandidate.nextCheck)" class="candidate-gap"><h3>待核实</h3><p v-if="selectedCandidate.question">{{ selectedCandidate.question }}</p><p v-if="selectedCandidate.nextCheck && selectedCandidate.nextCheck !== selectedCandidate.question"><strong>拟核查：</strong>{{ selectedCandidate.nextCheck }}</p></div>
             <details v-if="selectedCandidate.limitation" class="report-fold"><summary>判断依据与保留项</summary><p>{{ selectedCandidate.limitation }}</p></details>
             <details v-if="selectedCandidate.original && selectedCandidate.original !== selectedCandidate.text" class="report-fold"><summary>候选原始描述</summary><p>{{ selectedCandidate.original }}</p></details>
           </article>
@@ -332,11 +411,12 @@ onUnmounted(pause);
 
 <style scoped>
 .diagnostic-workspace { min-width: 0; color: #323130; }
-.workspace-tabs { display: flex; flex-wrap: wrap; column-gap: 28px; border-bottom: 1px solid #e8e7e5; }
-.workspace-tabs button { display: flex; gap: 8px; align-items: center; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 16px 0; font: inherit; color: #605e5c; cursor: pointer; white-space: nowrap; }
-.workspace-tabs button.active { color: #0078d4; border-color: #0078d4; font-weight: 600; }
-.workspace-tabs span { color: #73716e; font-size: 12px; font-weight: 400; }
-.workspace-panel { padding-top: 28px; }
+.workspace-tabs { display: flex; flex-wrap: wrap; gap: 4px 8px; border-bottom: 1px solid var(--desk-line, #e8e7e5); }
+.workspace-tabs button { display: flex; gap: 8px; align-items: center; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 12px 14px; font: inherit; color: #4c5b6e; cursor: pointer; white-space: nowrap; border-radius: 7px 7px 0 0; }
+.workspace-tabs button:hover, .workspace-tabs button.active { background: #edf3fb; }
+.workspace-tabs button.active { color: #14539a; border-color: currentColor; font-weight: 700; }
+.workspace-tabs span { color: #485a71; font: 600 11px/1.5 ui-monospace, Consolas, monospace; background: #e9eef5; border-radius: 4px; padding: 0 4px; }
+.workspace-panel { padding-top: 20px; }
 h2 { font-size: 24px; line-height: 1.5; font-weight: 600; margin: 12px 0; overflow-wrap: anywhere; }
 h3 { margin: 0 0 16px; font-size: 14px; font-weight: 600; }
 h4 { font-size: 13px; margin: 16px 0 8px; }
@@ -344,12 +424,30 @@ p { line-height: 1.7; overflow-wrap: anywhere; }
 .conclusion-label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #9b6700; }
 .conclusion-label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #bf8b00; }
 .conclusion-label.confirmed { color: #107c41; }.conclusion-label.confirmed::before { background: #107c41; }
-.report-scope { color: #73716e; font-size: 12px; margin: 12px 0; }
+.report-lead { --lead-color: #184e86; --lead-bg: #f0f5fc; display: grid; gap: 18px 32px; padding: clamp(18px, 2.5vw, 28px); margin-bottom: 20px; border: 1px solid var(--desk-line, #d9e3ef); border-inline-start: 4px solid var(--lead-color); border-radius: 10px; background: var(--lead-bg); color: #172e47; }
+.report-lead.healthy { --lead-color: #1d6a52; --lead-bg: #edf7f3; }
+.report-lead.has-lead-evidence { grid-template-columns: minmax(0, 1fr) minmax(225px, 34%); }
+.lead-summary { align-self: center; min-width: 0; }
+.report-lead .conclusion-label { font-weight: 700; }
+.report-lead.healthy .conclusion-label { color: #1d6a52; }
+.report-lead.healthy .conclusion-label::before { background: currentColor; }
+.report-scope { color: #465a71; font-size: 13px; margin: 0; }
+.lead-evidence { min-width: 0; border-inline-start: 1px solid #ccd9e9; padding-inline-start: 20px; }
+.lead-evidence h3 { color: #3e526b; margin: 0 0 6px; font-size: 13px; }
+.lead-evidence button { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; background: transparent; border: 0; border-radius: 5px; padding: 8px 6px; text-align: start; color: #174e84; cursor: pointer; font: inherit; }
+.lead-evidence button:hover { background: #fff; }
+.lead-evidence code { font-size: 12px; font-weight: 700; }
+.lead-evidence span { overflow-wrap: anywhere; }
+.workspace-tabs button:focus-visible, .lead-evidence button:focus-visible { outline: 2px solid var(--lead-color, #14539a); outline-offset: 2px; }
+@media(max-width:760px) {
+  .report-lead.has-lead-evidence { grid-template-columns: minmax(0, 1fr); }
+  .lead-evidence { border-inline-start: 0; border-top: 1px solid #ccd9e9; padding: 12px 0 0; }
+}
 .checked-paths { list-style: none; padding: 0; font-size: 13px; }
 .checked-paths li { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 10px 0; border-bottom: 1px solid #edebe9; }
 .checked-paths span { color: #605e5c; }
-.report-lead h2 { font-size: 28px; line-height: 1.4; margin: 8px 0 12px; max-width: 900px; }
-.failure-story { padding: 32px 0; margin: 24px 0 0; border-top: 1px solid #e8e7e5; border-bottom: 1px solid #e8e7e5; }
+.report-lead h2 { font-size: clamp(24px, 2.4vw, 34px); line-height: 1.3; font-weight: 700; margin: 10px 0 12px; max-width: 900px; }
+.failure-story { padding: 16px 0 22px; margin: 0; border-bottom: 1px solid var(--desk-line, #e8e7e5); }
 .failure-story h3 { color: #605e5c; margin: 0; }
 .failure-flow { display: flex; list-style: none; padding: 0; margin: 28px 0 0; }
 .failure-flow li { flex: 1; min-width: 0; position: relative; padding: 0 32px; }
@@ -362,7 +460,24 @@ p { line-height: 1.7; overflow-wrap: anywhere; }
 .flow-arrow { position: absolute; right: -10px; top: 18px; color: #a19f9d; }
 .failure-flow button:hover .flow-symbol { border-color: #0078d4; transform: translateY(-2px); }
 .next-actions > h3 { display: flex; align-items: center; gap: 16px; font-size: 16px; }.next-actions > h3 > span { color: #73716e; font-size: 12px; font-weight: 400; }
-.map-evidence { padding: 20px 0 0; border-top: 1px solid #e8e7e5; }
+.service-map { margin-bottom: 24px; padding: 18px; border: 1px solid var(--line); border-radius: var(--panel-radius); background: #fff; }
+.map-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 8px 16px; }
+.map-heading p, .map-evidence p { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.map-key { flex: none; color: var(--danger); background: #fff1ed; border-radius: 99px; padding: 3px 10px; font-size: 12px; }
+.endpoint-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.endpoint-comparison button { --endpoint: #146747; --endpoint-bg: #eaf7f0; display: flex; align-items: center; gap: 10px; padding: 11px; text-align: left; border: 1px solid var(--line); border-radius: var(--control-radius); color: var(--endpoint); background: var(--endpoint-bg); }
+.endpoint-comparison button.failed { --endpoint: #a12920; --endpoint-bg: #fff1ed; }
+.endpoint-comparison button:hover { border-color: currentColor; }
+.endpoint-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--control-radius); background: #fff; flex: none; }
+.endpoint-port { display: grid; flex: 1; color: var(--text); font-size: 12px; }
+.endpoint-port strong { font-size: 22px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.endpoint-result { font-size: 12px; }
+@media(max-width: 700px) { .endpoint-comparison { grid-template-columns: 1fr; } }
+.map-evidence { padding-top: 12px; border-top: 1px solid var(--line); }
+.map-evidence h4 { margin: 0; font-size: 13px; }
+.map-observations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.map-observations button { white-space: normal; justify-content: flex-start; text-align: left; border-radius: var(--control-radius); padding: 5px 9px; background: var(--surface); font-size: 12px; }
+.map-observations button:hover { background: var(--accent-soft); }
 .candidate-history { margin: 16px 0; }.candidate-history > summary { font-size: 13px; color: #73716e; padding: 8px 12px; cursor: pointer; }
 .report-totals { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; color: #73716e; margin-top: 20px; }
 .fact-strip { display: flex; margin: 28px 0 32px; border-top: 1px solid #e8e7e5; border-bottom: 1px solid #e8e7e5; }
@@ -374,8 +489,6 @@ p { line-height: 1.7; overflow-wrap: anywhere; }
 .split-wide { display: grid; grid-template-columns: minmax(0, 1fr) 256px; gap: 32px; }
 .object-detail { padding-left: 24px; border-left: 1px solid #e8e7e5; }
 .object-detail h3 span { font-size: 12px; color: #73716e; margin-left: 8px; }
-.observation-link { width: 100%; text-align: left; border: 0; border-bottom: 1px solid #edebe9; padding: 12px 0; background: transparent; font: inherit; cursor: pointer; }
-.observation-link span { font-size: 11px; color: #73716e; display: block; }.observation-link strong { font-size: 12px; font-weight: 400; display: block; margin-top: 6px; overflow-wrap: anywhere; }
 .next-actions { margin-top: 32px; }.action-row { border-top: 1px solid #e8e7e5; }.action-row:last-child { border-bottom: 1px solid #e8e7e5; }
 .action-row summary { display: flex; align-items: flex-start; gap: 16px; padding: 18px 0; cursor: pointer; list-style: none; line-height: 1.7; font-size: 13px; }.action-row summary > span:nth-child(2) { flex: 1; }.action-row summary svg { flex-shrink: 0; margin-top: 4px; }
 .sequence { color: #0078d4; font-size: 12px; }.action-content { padding: 0 24px 20px 32px; }.action-content ul { font-size: 13px; padding-left: 18px; line-height: 1.8; }
@@ -413,7 +526,7 @@ p { line-height: 1.7; overflow-wrap: anywhere; }
 .hypothesis-node.confirmed strong, .hypothesis-node.confirmed svg, .hypothesis-node.supported strong { color: #107c41; }
 button:hover { color: #0078d4; }button:focus-visible, summary:focus-visible { outline: 2px solid #0078d4; outline-offset: 2px; }
 @media(max-width:1100px) { .split-wide { grid-template-columns: minmax(0, 1fr); }.object-detail { border-left: 0; padding-left: 0; border-top: 1px solid #e8e7e5; padding-top: 20px; }.process-split { grid-template-columns: minmax(200px, 40%) minmax(0, 1fr); gap: 20px; }.evidence-split, .cause-split { gap: 20px; } }
-@media(max-width:760px) { .workspace-tabs { gap: 20px; }.workspace-tabs button { font-size: 13px; }.workspace-panel { padding-top: 20px; }h2 { font-size: 20px; }.fact-strip { flex-direction: column; }.fact-strip button { border-right: 0; border-bottom: 1px solid #e8e7e5; padding: 16px 0; }.fact-strip button:last-child { border-bottom: 0; }.process-split, .evidence-split, .cause-split { grid-template-columns: minmax(0, 1fr); }.check-list { max-height: 260px; border-right: 0; border-bottom: 1px solid #e8e7e5; }.check-list time { display: block; }.evidence-index, .candidate-index { max-height: 260px; border-right: 0; padding-right: 0; border-bottom: 1px solid #e8e7e5; padding-bottom: 16px; }.evidence-heading { align-items: flex-start; flex-direction: column; gap: 0; }.event-chain li { grid-template-columns: 62px minmax(0, 1fr); gap: 8px; }.event-chain li > div { padding-left: 16px; }.replay-toolbar { align-items: flex-start; flex-wrap: wrap; }.replay-controls { margin-left: auto; } }
+@media(max-width:760px) { .workspace-tabs { gap: 4px; }.workspace-tabs button { padding-inline: 8px; }.workspace-tabs button { font-size: 13px; }.workspace-panel { padding-top: 20px; }h2 { font-size: 20px; }.fact-strip { flex-direction: column; }.fact-strip button { border-right: 0; border-bottom: 1px solid #e8e7e5; padding: 16px 0; }.fact-strip button:last-child { border-bottom: 0; }.process-split, .evidence-split, .cause-split { grid-template-columns: minmax(0, 1fr); }.check-list { max-height: 260px; border-right: 0; border-bottom: 1px solid #e8e7e5; }.check-list time { display: block; }.evidence-index, .candidate-index { max-height: 260px; border-right: 0; padding-right: 0; border-bottom: 1px solid #e8e7e5; padding-bottom: 16px; }.evidence-heading { align-items: flex-start; flex-direction: column; gap: 0; }.event-chain li { grid-template-columns: 62px minmax(0, 1fr); gap: 8px; }.event-chain li > div { padding-left: 16px; }.replay-toolbar { align-items: flex-start; flex-wrap: wrap; }.replay-controls { margin-left: auto; } }
 @media(prefers-reduced-motion:no-preference) { .workspace-panel { animation: reveal 180ms ease-out; } @keyframes reveal { from { opacity: .6; transform: translateY(3px); } to { opacity: 1; transform: none; } } }
 @media(max-width:760px) { .report-lead h2 { font-size: 26px; }.failure-flow { flex-direction: column; gap: 32px; }.failure-flow li, .failure-flow li:first-child, .failure-flow li:last-child { padding: 0 0 0 64px; }.flow-symbol { position: absolute; left: 0; top: 4px; }.failure-flow strong { font-size: 18px; }.flow-arrow { right: auto; left: 14px; top: auto; bottom: -28px; transform: rotate(90deg); }.failure-story { padding: 24px 0; } }
 @media(prefers-reduced-motion:reduce) { .flow-symbol { transition: none; }.failure-flow button:hover .flow-symbol { transform: none; } }
@@ -435,10 +548,69 @@ button:hover { color: #0078d4; }button:focus-visible, summary:focus-visible { ou
 .evidence-tools > button { margin-bottom: 8px; }
 .evidence-error { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: #a4262c; }
 .evidence-sidebar { min-width: 0; }
+.chart-filter { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; border-radius: 6px; background: var(--accent-soft); padding: 6px 8px; margin-bottom: 10px; font-size: 12px; overflow-wrap: anywhere; }
 .evidence-sidebar .search-input { margin: 0 16px 12px 0; width: auto; }
 .evidence-heading, .evidence-heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .evidence-heading-actions .source-button { margin: 0; }
 .payload-table dd, .evidence-detail, .candidate-detail, .candidate-index { min-width: 0; overflow-wrap: anywhere; }
 .payload-table pre { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; }
 @media(max-width:760px) { .finding-columns { grid-template-columns: minmax(0, 1fr); } }
+.review-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--panel-radius); background: #fff; }
+.review-summary p, .relation-note { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.review-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-pills > * { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--control-radius); color: var(--text); background: var(--surface); font-size: 12px; }
+.review-pills .abnormal { color: var(--danger); }
+.review-pills button:hover, .review-pills button[aria-pressed="true"] { border-color: var(--blue); background: var(--accent-soft); }
+.evidence-sidebar, .candidate-index, .evidence-detail, .candidate-detail { padding: 14px; border: 1px solid var(--line); border-radius: var(--panel-radius); background: #fff; align-self: start; }
+.evidence-index { border: 0; padding: 0; }
+.evidence-sidebar .search-input { max-width: none; margin: 0 0 14px; min-width: 0; }
+.evidence-index button, .candidate-index button { border-radius: var(--control-radius); }
+.evidence-code { align-self: start; padding: 2px 5px; border-radius: 5px; background: var(--surface); color: var(--blue); }
+.evidence-code.abnormal, .observation-state.abnormal { background: #fff1ed; color: var(--danger); }
+.evidence-heading > div { min-width: 0; }
+.observation-state { padding: 4px 8px; border-radius: var(--control-radius); background: var(--surface); }
+.evidence-result { margin: 14px 0; padding: 12px; border: 0; border-radius: var(--control-radius); background: var(--surface); overflow-wrap: anywhere; }
+.candidate-detail > header { padding: 12px 14px; border-radius: var(--control-radius); background: var(--surface); }
+.candidate-graph h3 .muted { font-size: 12px; font-weight: 400; }
+.relation-evidence { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 206px), 1fr)); gap: 8px; margin-top: 12px; }
+.relation-node { border: 1px solid var(--line); border-left: 2px dashed var(--muted); border-radius: var(--control-radius); background: var(--surface); }
+.relation-node:hover { background: var(--accent-soft); }
+.relation-node.citation span { color: var(--blue); }
+.relation-node.support span { color: var(--success); }
+.relation-node.contradict span { color: var(--danger); }
+.candidate-gap { margin-top: 12px; padding: 12px; border-radius: var(--control-radius); background: #fff7e7; }
+.candidate-gap p + p { margin-top: 8px; }
+.visual-board, .timeline-board { min-width: 0; align-self: start; border: 1px solid var(--line); border-radius: var(--panel-radius); background: #fff; padding: 14px; }
+.visual-heading { display: flex; align-items: start; gap: 9px; margin-bottom: 12px; color: var(--blue); }
+.visual-heading h3 { color: var(--text); }
+.visual-heading p { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.timeline-board .check-list { border: 0; }
+.timeline-board .check-list li { position: relative; }
+.timeline-board .check-list li:not(:last-child)::after { content: ""; position: absolute; top: 37px; bottom: -13px; left: 23px; border-left: 1px solid #b8cce2; pointer-events: none; }
+.timeline-board .check-list button { position: relative; align-items: start; border-radius: var(--control-radius); padding: 10px 8px; }
+.timeline-board .check-number { position: relative; z-index: 1; flex: none; display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid #bbd2ed; border-radius: 50%; background: #fff; font-variant-numeric: tabular-nums; }
+.timeline-board .selected .check-number { background: var(--blue); border-color: var(--blue); color: #fff; }
+.timeline-board .check-number.abnormal { border-color: #e4a89f; color: var(--danger); }
+.timeline-board .selected .check-number.abnormal { background: var(--danger); color: #fff; }
+.replay-scene .observation-state { margin-inline-start: 8px; display: inline-block; }
+.evidence-map section + section { margin-top: 14px; }
+.evidence-map h3 { align-items: center; gap: 6px; padding: 0 0 6px; margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.evidence-map h3 span { margin-inline-start: auto; flex: none; }
+.evidence-nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 90px), 1fr)); gap: 6px; border-inline-start: 2px solid var(--line); padding-inline-start: 9px; }
+.evidence-nodes button { display: grid; justify-items: start; gap: 3px; padding: 6px 8px; color: var(--muted); font-size: 11px; border: 1px solid var(--line); background: var(--surface); overflow-wrap: anywhere; }
+.evidence-nodes button:hover, .evidence-nodes button.selected { background: var(--accent-soft); border-color: var(--blue); color: var(--text); }
+.evidence-nodes button.abnormal:not(.selected) { border-inline-start-color: var(--danger); }
+.evidence-nodes button.partial, .evidence-nodes button.unavailable { border-style: dashed; }
+.evidence-detail { scroll-margin-top: 74px; }
+.candidate-detail > .candidate-root { display: flex; align-items: start; gap: 9px; border: 1px solid #bfd3ec; background: var(--accent-soft); }
+.candidate-root > svg { margin-top: 3px; color: var(--blue); }
+.candidate-graph { margin-top: 0; padding-top: 0; border-top: 0; }
+.relation-junction { display: grid; justify-items: center; color: var(--blue); }
+.relation-junction::before { content: ""; height: 15px; border-inline-start: 1px solid #92accb; }
+.relation-junction > span { display: flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); padding: 4px 8px; background: #fff; font-size: 12px; }
+.candidate-graph .relation-note { text-align: center; }
+.relation-map { padding: 10px; background: radial-gradient(#c8d6e7 1px, transparent 1px) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: var(--control-radius); }
+.relation-map .relation-node { padding-inline-end: 24px; }
+.relation-map .relation-node:not(:focus-visible)::after { content: ""; position: absolute; inset: 0 0 auto; height: 3px; border-radius: var(--control-radius) var(--control-radius) 0 0; background: #cad9ec; }
+.relation-open { position: absolute; right: 6px; top: 9px; color: var(--blue); }
 </style>

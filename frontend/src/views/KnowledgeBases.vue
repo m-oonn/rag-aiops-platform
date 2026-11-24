@@ -9,6 +9,8 @@ import DataTable from "../components/DataTable.vue";
 import Feedback from "../components/Feedback.vue";
 import Modal from "../components/Modal.vue";
 import Icon from "../components/Icon.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 const rows = ref([]),
   filter = ref(""),
   modal = ref(false),
@@ -23,9 +25,13 @@ const form = reactive({
   chunk_overlap: 120,
   retrieval_mode: "hybrid",
 });
+const accessFilter = ref('');
+const accessKey = row => row.is_public ? 'public' : 'personal';
+const accessChart = computed(() => breakdown(rows.value, accessKey,
+  key => key === 'public' ? '公开知识库' : '个人知识库', key => key === 'public' ? 'info' : 'muted'));
 const filtered = computed(() =>
   rows.value.filter((row) =>
-    `${row.name} ${row.description || ""}`
+    (!accessFilter.value || accessKey(row) === accessFilter.value) && `${row.name} ${row.description || ""}`
       .toLowerCase()
       .includes(filter.value.toLowerCase()),
   ),
@@ -128,6 +134,8 @@ async function remove(row) {
           aria-label="搜索知识库" /></label
       ><span class="muted">{{ filtered.length }} 个知识库</span>
     </div>
+    <InsightBreakdown v-if="!error" v-model="accessFilter" :items="accessChart" title="知识库访问范围" icon="book"
+      description="只统计当前账号可见的知识库；点击查看对应清单。" variant="composition" unit="个" />
     <Feedback
       :loading="loading"
       :error="error"

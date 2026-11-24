@@ -20,6 +20,8 @@ import DataTable from "../components/DataTable.vue";
 import Modal from "../components/Modal.vue";
 import Markdown from "../components/Markdown.vue";
 import Icon from "../components/Icon.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 const route = useRoute(),
   id = route.params.id;
 const kb = ref(null),
@@ -46,9 +48,12 @@ const focusDoc = ref(null),
   editingQA = ref(null);
 const upload = ref(null),
   qaDraft = reactive({ question: "", answer: "", qa_type: "single_hop" });
+const docStage = ref('');
+const documentChart = computed(() => breakdown(documents.value, doc => doc.status ?? 'unknown', docStatus, tone)
+  .sort((a, b) => Number(a.key) - Number(b.key)));
 const visible = computed(() =>
   documents.value.filter((doc) =>
-    doc.filename.toLowerCase().includes(docFilter.value.toLowerCase()),
+    (docStage.value === '' || (doc.status ?? 'unknown') === docStage.value) && doc.filename.toLowerCase().includes(docFilter.value.toLowerCase()),
   ),
 );
 const columns = [
@@ -359,8 +364,10 @@ async function reprocess(row) {
           设置
         </button>
       </nav>
-      <template v-if="activeTab === 'documents'"
-        ><div class="toolbar">
+      <template v-if="activeTab === 'documents'">
+        <InsightBreakdown v-model="docStage" :items="documentChart" title="文档入库阶段" icon="workflow"
+          description="点击阶段查看对应文档及分块结果。" variant="stages" unit="份" @update:model-value="selected = []" />
+        <div class="toolbar">
           <label class="search-input"
             ><Icon name="search" /><input
               v-model="docFilter"

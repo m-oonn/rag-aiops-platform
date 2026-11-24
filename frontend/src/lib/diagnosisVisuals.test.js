@@ -1,9 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { evidenceRows, logEvents, readableText, visualCandidates, topology, reportFacts, reportActions, reportOverview } from "./diagnosisVisuals";
+import { endpointComparison, evidenceRows, logEvents, readableText, visualCandidates, topology, reportFacts, reportActions, reportOverview } from "./diagnosisVisuals";
 const record = (id, kind, payload, second = 1, target = "host-a") => ({ evidence_id: id, kind, summary: JSON.stringify(payload), collected_at: `2026-11-14T01:00:${String(second).padStart(2, '0')}Z`, target_id: target });
 const nodeId = (service, target = "host-a") => JSON.stringify([target, service]);
 
 describe("diagnosis visual projections", () => {
+  it("compares only the paired, cited endpoints on the confirmed target", () => {
+    const code = "configured_downstream_endpoint_mismatch";
+    const refs = (...ids) => ids.map(evidence_id => ({ evidence_id }));
+    const rows = evidenceRows([
+      record("config", "configuration", { service: "app", values: { downstream_port: 6301 } }),
+      record("failed", "dependency_probe", { dependency: "app_upstream", port: 6301, tcp: "failed" }),
+      record("right", "dependency_probe", { dependency: "downstream", port: 6302, tcp: "ok", http: { status: 200 } }),
+    ]);
+    const diagnosis = { kind: "confirmed_cause", root_cause_code: code, cause_subject: "app", target_id: "host-a",
+      evidence: refs("config", "failed", "right"), asset_registration: { target_id: "host-a", dependency_services: { downstream: "downstream" } },
+      observed_findings: [{ code, target_id: "host-a", evidence_id: "config", scope: { service: "app", field: "downstream_port" }, related_evidence: refs("failed", "right") }],
+    };
+    expect(endpointComparison(diagnosis, rows)).toMatchObject([{ port: 6301, evidence: "failed" }, { port: 6302, evidence: "right" }]);
+    expect(endpointComparison({ ...diagnosis, kind: "localized_fault" }, rows)).toEqual([]);
+    expect(endpointComparison({ ...diagnosis, evidence: refs("config", "failed") }, rows)).toEqual([]);
+    expect(endpointComparison(diagnosis, rows.map(row => row.id === "right" ? { ...row, target: "host-b" } : row))).toEqual([]);
+  });
   it("keeps a partial inventory usable when dependency details contain null", () => {
     const rows = evidenceRows([record("inventory", "inventory", {
       configured_services: { web: {}, db: {} },

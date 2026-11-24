@@ -1,5 +1,7 @@
 <script setup>
-import { onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
+import { documentStages } from "../lib/documentStages";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
 import { request } from "../lib/api";
 import { useLoad, dateTime, docStatus, tone, runStatus } from "../lib/ui";
 import { getHistory, rememberRun, mergeHistoryList, markHistoryRunUnavailable } from "../lib/history";
@@ -48,6 +50,8 @@ watch(() => session.user?.id, () => {
   loadRecent();
 });
 onUnmounted(() => { recentVersion++; });
+const documentChart = computed(() => available.value[3] ? documentStages(stats.value)
+  .map(item => ({ ...item, to: { path: '/monitor', query: { status: item.key } } })) : []);
 const { loading, error, refresh } = useLoad(async () => {
   const recentRead = loadRecent();
   const paths = [
@@ -70,7 +74,7 @@ const { loading, error, refresh } = useLoad(async () => {
 });
 </script>
 <template>
-  <div class="page">
+  <div class="page dashboard-content">
     <PageHeader title="工作台"
       ><button class="button" :disabled="loading" @click="refresh()">
         <Icon name="refresh" :size="16" />刷新</button
@@ -95,7 +99,7 @@ const { loading, error, refresh } = useLoad(async () => {
           }}</strong
           ><span class="metric-link"
             >进入问答 <Icon name="arrow" :size="16" /></span></RouterLink
-        ><RouterLink to="/monitor"
+        ><RouterLink to="/monitor?status=processing"
           ><span>处理中</span
           ><strong>{{ stats.total_processing ?? "—" }}</strong
           ><span class="metric-link"
@@ -109,6 +113,8 @@ const { loading, error, refresh } = useLoad(async () => {
             >处理任务 <Icon name="arrow" :size="16" /></span
         ></RouterLink>
       </div>
+      <InsightBreakdown :items="documentChart" title="文档任务分布" icon="tasks" links variant="composition"
+        description="按当前账号的文档状态统计；点击一项进入对应任务列表。" />
       <div class="split-sections">
         <section>
           <div class="section-heading">

@@ -10,6 +10,46 @@ let wrapper;
 beforeEach(() => { sessionStorage.clear(); session.user = { id: 7, role: "user" }; });
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); });
 describe("diagnosis workspace interactions", () => {
+  it("opens the right evidence group and exact record from the charts", async () => {
+    wrapper = mount(DiagnosisWorkspace, { props });
+    const bars = wrapper.get('[aria-label="证据分布柱状图"]');
+    expect(bars.findAll("button")).toHaveLength(2);
+    await bars.findAll("button").find(node => node.attributes("aria-label").includes("5 条证据，5 条异常")).trigger("click");
+    expect(wrapper.get(".evidence-heading").text()).toContain("E02");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(5);
+    await button(wrapper, "查看全部对象").trigger("click");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(10);
+    await button(wrapper, "返回诊断报告").trigger("click");
+    const line = wrapper.get('[aria-label="异常发现折线图"]');
+    expect(line.get('button[aria-label^="E03："]').attributes("aria-label")).toContain("累计 1 条异常");
+    await line.get('button[aria-label^="E04："]').trigger("click");
+    expect(wrapper.get(".evidence-heading").text()).toContain("E04");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(10);
+  });
+  it("does not show charts for an empty diagnosis or count incomplete records as abnormal", async () => {
+    wrapper = mount(DiagnosisWorkspace, { props: { ...props, evidence: [] } });
+    expect(wrapper.find('[aria-label="本次诊断图表"]').exists()).toBe(false);
+    const unavailable = { ...evidence[1], summary: JSON.stringify({ service: "downstream", error: "timeout", matched_count: 0 }) };
+    await wrapper.setProps({ evidence: [unavailable] });
+    const point = wrapper.get('[aria-label="异常发现折线图"] button');
+    expect(point.attributes("aria-label")).toContain("未取得，累计 0 条异常");
+    await point.trigger("click");
+    expect(wrapper.get(".evidence-heading").text()).toContain("E01");
+  });
+  it("combines evidence status with search and clears both when reopening a citation", async () => {
+    wrapper = mount(DiagnosisWorkspace, { props });
+    await wrapper.get("#diagnosis-tab-evidence").trigger("click");
+    const abnormal = wrapper.findAll(".review-pills button").find(node => node.text().includes("发现异常"));
+    await abnormal.trigger("click");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(5);
+    await wrapper.get('input[type="search"]').setValue("E02");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(1);
+    await wrapper.get("#diagnosis-tab-causes").trigger("click");
+    await wrapper.get(".relation-node").trigger("click");
+    expect(wrapper.get('input[type="search"]').element.value).toBe("");
+    expect(wrapper.findAll(".evidence-index button")).toHaveLength(10);
+    expect(wrapper.get(".evidence-heading").text()).toContain("E02");
+  });
   it("restores navigation, evidence and replay cursor after remount without following later status", async () => {
     wrapper = mount(DiagnosisWorkspace, { props });
     await wrapper.get("#diagnosis-tab-process").trigger("click");

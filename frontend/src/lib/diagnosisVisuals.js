@@ -177,8 +177,9 @@ export function evidenceRows(items = [], investigation = {}) {
       (kind === "ports" && port != null && payload?.matched_count === 0) ||
       (kind === "dependency_probe" && (payload?.tcp === "failed" || payload?.http?.status >= 400 || payload?.http?.error || ["failed", "no_worker_reply"].includes(payload?.query))) ||
       logEvents(payload).some((event) => event.data?.status >= 400);
-    rows.set(id, { id, kind, payload, subject, port, time: item.collected_at || extra.collected_at || "",
-      title: [subject ? serviceLabel(subject) : (port != null ? `端口 ${port}` : ""), operationNames[kind] || "现场记录"].filter(Boolean).join(" · "),
+    const kindLabel = operationNames[kind] || "现场记录";
+    rows.set(id, { id, kind, kindLabel, payload, subject, port, time: item.collected_at || extra.collected_at || "",
+      title: [subject ? serviceLabel(subject) : (port != null ? `端口 ${port}` : ""), kindLabel].filter(Boolean).join(" · "),
       result: observationText(kind, payload, fallback),
       state: unavailable ? "unavailable" : partial ? "partial" : abnormal ? "abnormal" : "observed",
       stateLabel: unavailable ? "未取得" : partial ? "部分结果" : abnormal ? "发现异常" : "已采集",
@@ -365,6 +366,34 @@ export function reportOverview(diagnosis = {}, rows = []) {
     }
   }
   return { title, causeTitle, steps };
+}
+export function endpointComparison(diagnosis, rows) {
+  if (diagnosis?.kind !== "confirmed_cause" || diagnosis.root_cause_code !== "configured_downstream_endpoint_mismatch") return [];
+  const cited = new Set(evidenceIds(diagnosis.evidence));
+  const registration = diagnosis.asset_registration;
+  if (registration?.target_id !== diagnosis.target_id || !diagnosis.target_id) return [];
+  const relevant = rows.filter(row => row.target === diagnosis.target_id && cited.has(row.id));
+  const finding = diagnosis.observed_findings?.find(item => item.code === diagnosis.root_cause_code && item.target_id === diagnosis.target_id && item.scope?.service === diagnosis.cause_subject);
+  const field = finding?.scope?.field;
+  if (!field?.endsWith("_port")) return [];
+  const dependency = field.slice(0, -5);
+  const service = registration.dependency_services?.[dependency];
+  if (!service) return [];
+  const config = relevant.find(row => row.id === finding.evidence_id && row.kind === "configuration" && row.subject === diagnosis.cause_subject);
+  const configuredPort = config?.payload?.values?.[field];
+  const validPort = port => Number.isInteger(port) && port > 0 && port <= 65535;
+  if (!validPort(configuredPort)) return [];
+  const related = new Set(evidenceIds(finding.related_evidence));
+  const probes = relevant.filter(row => row.kind === "dependency_probe" && related.has(row.id));
+  const failed = probes.find(row => row.subject === `${diagnosis.cause_subject}_upstream` && row.payload?.port === configuredPort && row.payload?.tcp === "failed");
+  const registered = probes.find(row => {
+    const { port, tcp, http } = row.payload || {};
+    return row.subject === dependency && validPort(port) && port !== configuredPort && tcp === "ok" && http?.status >= 200 && http.status < 300;
+  });
+  return failed && registered ? [
+    { label: "应用配置的端口", port: configuredPort, detail: "连接失败", evidence: failed.id, tone: "failed" },
+    { label: `${serviceLabel(service)}登记端口`, port: registered.payload.port, detail: "连接成功", evidence: registered.id, tone: "reachable" },
+  ] : [];
 }
 export function reportFacts(diagnosis = {}, rows = []) {
   const findings = objectRows(diagnosis?.observed_findings);

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { documentStages } from "../lib/documentStages";
 import { request } from "../lib/api";
 import {
   confirmAction,
@@ -14,15 +15,18 @@ import {
 import PageHeader from "../components/PageHeader.vue";
 import Feedback from "../components/Feedback.vue";
 import DataTable from "../components/DataTable.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
 import Icon from "../components/Icon.vue";
 const route = useRoute(),
   router = useRouter(),
   rows = ref([]),
   selected = ref([]),
+  stats = ref(null),
   filter = computed(
     () =>
       ({
         FAILURE: "failed",
+        SUCCESS: "completed",
         STARTED: "processing",
         PROCESSING: "processing",
         PENDING: "pending",
@@ -35,6 +39,7 @@ const statuses = [
   ["processing", "处理中"],
   ["pending", "待处理"],
   ["failed", "失败"],
+  ["completed", "已完成"],
 ];
 const visible = computed(() =>
   rows.value.filter(
@@ -45,15 +50,26 @@ const visible = computed(() =>
           processing: ["PROCESSING", "STARTED", "RETRY"],
           pending: ["PENDING"],
           failed: ["FAILURE"],
+          completed: ["SUCCESS"],
         }[filter.value] || []
       ).includes(String(row.status)),
   ),
 );
+const taskChart = computed(() => documentStages(stats.value));
 const { loading, error, refresh } = useLoad(
   async () => {
-    rows.value = await request("/monitor/", {
-      query: { status_filter: filter.value },
-    });
+    const countsRequest = request('/monitor/stats').catch(() => null);
+    while (true) {
+      const status = filter.value;
+      const [list, counts] = await Promise.allSettled([
+        request('/monitor/', { query: { status_filter: status } }), countsRequest,
+      ]);
+      if (filter.value !== status) continue;
+      stats.value = counts.value;
+      if (list.status === 'rejected') throw list.reason;
+      rows.value = list.value;
+      break;
+    }
   },
   { interval: 15000 },
 );
@@ -114,6 +130,8 @@ function setStatus(value) {
         <Icon name="refresh" :size="16" />刷新
       </button></PageHeader
     >
+    <InsightBreakdown :model-value="filter" :items="taskChart" title="文档处理阶段" icon="tasks"
+      description="概览统计当前账号的全部文档；点击阶段查看该状态最近 50 条任务。" variant="stages" @update:model-value="setStatus" />
     <nav class="tabs">
       <button
         v-for="item in statuses"

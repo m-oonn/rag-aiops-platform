@@ -113,7 +113,7 @@ class QueueStats(BaseModel):
 
 @router.get("/", response_model=List[QueueItem])
 def get_queue_status(
-    status_filter: Optional[str] = None, # 'processing', 'pending', 'failed'
+    status_filter: Optional[str] = None, # 'processing', 'pending', 'failed', 'completed'
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -126,6 +126,8 @@ def get_queue_status(
         query = query.filter(KnowledgeDocument.status == 0)
     elif status_filter == 'failed':
         query = query.filter(KnowledgeDocument.status == 3)
+    elif status_filter == 'completed':
+        query = query.filter(KnowledgeDocument.status == 2)
         
     docs = query.order_by(desc(KnowledgeDocument.created_at)).limit(50).all()
     

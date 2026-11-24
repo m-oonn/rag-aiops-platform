@@ -15,6 +15,8 @@ import Feedback from "../components/Feedback.vue";
 import DataTable from "../components/DataTable.vue";
 import Markdown from "../components/Markdown.vue";
 import Modal from "../components/Modal.vue";
+import InsightBreakdown from "../components/InsightBreakdown.vue";
+import { breakdown } from "../lib/breakdown";
 import Icon from "../components/Icon.vue";
 
 const rows = ref([]);
@@ -47,9 +49,13 @@ const editForm = reactive({
   ground_truth: "",
   qa_type: "single_hop",
 });
+const evalStage = ref('');
+const stateOf = row => row.status ?? 'unknown';
+const evaluationChart = computed(() => breakdown(rows.value, stateOf, evalStatus, tone)
+  .sort((a, b) => [0, 4, 1, 2, 3, 'unknown'].indexOf(a.key) - [0, 4, 1, 2, 3, 'unknown'].indexOf(b.key)));
 const visible = computed(() =>
   rows.value.filter((row) =>
-    row.name.toLowerCase().includes(filter.value.toLowerCase()),
+    (evalStage.value === '' || stateOf(row) === evalStage.value) && row.name.toLowerCase().includes(filter.value.toLowerCase()),
   ),
 );
 const dialogTitle = computed(() =>
@@ -307,7 +313,8 @@ function downloadReport() {
         <Icon name="plus" :size="16" />新建评测
       </button>
     </PageHeader>
-
+    <InsightBreakdown v-if="!error" v-model="evalStage" :items="evaluationChart" title="评测任务阶段" icon="workflow"
+      description="按任务状态对照，点击阶段查看数据集、进度与报告。" variant="stages" @update:model-value="selected = []" />
     <div class="toolbar">
       <label class="search-input"
         ><Icon name="search" /><input
@@ -355,7 +362,10 @@ function downloadReport() {
         }}</span></template
       >
       <template #progress="{ row }"
-        >{{ row.completed_count || 0 }} / {{ row.total_count || 0 }}</template
+        ><div v-if="row.total_count > 0" class="progress-line">
+          <progress :value="row.completed_count ?? 0" :max="row.total_count" :aria-label="`${row.name}完成样本数`" />
+          <span>{{ row.completed_count ?? 0 }} / {{ row.total_count }}</span>
+        </div><span v-else>—</span></template
       >
       <template #created_at="{ row }">{{ dateTime(row.created_at) }}</template>
       <template #actions="{ row }"

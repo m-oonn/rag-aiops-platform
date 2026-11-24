@@ -76,6 +76,7 @@ onUnmounted(() => window.removeEventListener("session-expired", expired));
           >
             <Icon name="menu" />
           </button>
+          <div class="breadcrumb" aria-label="当前位置"><strong>{{ route.meta.title }}</strong></div>
         </div>
         <div class="topbar-right">
           <details class="account-menu">
